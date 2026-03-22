@@ -22,18 +22,51 @@ const supabase = createClient(
 );
 
 /* ═══════════════ CONSTANTS ═══════════════ */
-const ROLE  = { SUPERUSER:'superuser', ADMIN:'admin', USER:'user' };
+const ROLE  = { SUPERUSER:'superuser', ADMIN:'admin', USER:'user', EXTERNAL:'external' };
 const YEARS       = [1,2,3,4];
 const DEPARTMENTS = ['Computer Science','Computer with Statistics'];
 const DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
 const DEPT_COLOR  = {'Computer Science':'#4f9cf9','Computer with Statistics':'#7fda96'};
 const YEAR_COLORS = {1:'#4f9cf9',2:'#7fda96',3:'#f9a84f',4:'#da7ff0'};
 const YEAR_BG     = {1:'rgba(79,156,249,0.1)',2:'rgba(127,218,150,0.1)',3:'rgba(249,168,79,0.1)',4:'rgba(218,127,240,0.1)'};
-const ROLE_COLOR  = {superuser:'#f9a84f',admin:'#da7ff0',user:'#4f9cf9'};
-const ROLE_BG     = {superuser:'rgba(249,168,79,0.12)',admin:'rgba(218,127,240,0.12)',user:'rgba(79,156,249,0.12)'};
-const ROLE_LABEL  = {superuser:'⚡ Superuser',admin:'🛡 Admin',user:'Student'};
+const ROLE_COLOR  = {superuser:'#f9a84f',admin:'#da7ff0',user:'#4f9cf9',external:'#a8f94f'};
+const ROLE_BG     = {superuser:'rgba(249,168,79,0.12)',admin:'rgba(218,127,240,0.12)',user:'rgba(79,156,249,0.12)',external:'rgba(168,249,79,0.12)'};
+const ROLE_LABEL  = {superuser:'⚡ Superuser',admin:'🛡 Admin',user:'Student',external:'🌐 External'};
 const COLOR_MAP   = {blue:{bar:'#4f9cf9'},orange:{bar:'#f9a84f'},green:{bar:'#7fda96'},purple:{bar:'#da7ff0'}};
 const CARD_ACCENTS= ['#4f9cf9','#f9a84f','#7fda96','#da7ff0','#f97b7b','#a8f94f','#4ff9e4','#f94fcc'];
+
+/* ═══════════════ SMART SORT ═══════════════ */
+// Course code → department
+const CODE_TO_DEPT={
+  COS:'Computer Science',CSC:'Computer Science',CS:'Computer Science',
+  STA:'Computer with Statistics',STT:'Computer with Statistics',MAT:'Computer with Statistics',
+};
+function detectYearFromCode(code){
+  const m=code.match(/(\d+)/);if(!m)return null;
+  const n=parseInt(m[1]);
+  if(n>=100&&n<200)return 1;if(n>=200&&n<300)return 2;
+  if(n>=300&&n<400)return 3;if(n>=400&&n<500)return 4;
+  return null;
+}
+function detectDeptFromCode(code){
+  const p=code.replace(/[^a-zA-Z]/g,'').toUpperCase();
+  for(const k of Object.keys(CODE_TO_DEPT).sort((a,b)=>b.length-a.length))
+    {if(p.startsWith(k))return CODE_TO_DEPT[k];}
+  return null;
+}
+function detectMetadata(data){
+  const name=(data.courseName||'').trim();
+  const title=(data.chapterTitle||'').toLowerCase();
+  const result={year:null,semester:null,department:null};
+  if(name){result.year=detectYearFromCode(name);result.department=detectDeptFromCode(name);}
+  if(!result.semester){
+    const s1=['introduction','intro','foundations','basics','fundamentals','first'];
+    const s2=['advanced','continuation','second','further','design','implementation'];
+    if(s1.some(w=>title.includes(w)))result.semester=1;
+    else if(s2.some(w=>title.includes(w)))result.semester=2;
+  }
+  return result;
+}
 const RES_ICONS   = {link:'🔗',video:'▶️',pdf:'📄',doc:'📝'};
 const CACHE_KEY   = id => `sh-course-cache-${id}`;
 
@@ -180,7 +213,15 @@ async function dbSaveCourse(entry,courseData){
 async function dbDeleteCourse(id){await supabase.from('courses').delete().eq('id',id);}
 async function dbLoadProgress(username){const{data}=await supabase.from('progress').select('*').eq('username',username);const out={};(data||[]).forEach(r=>{out[r.course_id]={viewed:r.viewed,openedQs:r.opened_qs||[]};});return out;}
 async function dbSaveProgress(username,progress){const rows=Object.entries(progress).map(([cid,p])=>({username,course_id:cid,viewed:p.viewed,opened_qs:p.openedQs}));if(rows.length>0)await supabase.from('progress').upsert(rows,{onConflict:'username,course_id'});}
-async function resolveRole(username){const admins=await dbLoadAdmins();return admins.includes(username.toLowerCase())?ROLE.ADMIN:ROLE.USER;}
+async function resolveRole(username){
+  const admins=await dbLoadAdmins();
+  if(admins.includes(username.toLowerCase())) return ROLE.ADMIN;
+  try{
+    const{data}=await supabase.from('users').select('account_type').eq('username',username).single();
+    if(data?.account_type==='external') return ROLE.EXTERNAL;
+  }catch{}
+  return ROLE.USER;
+}
 
 // Resources
 async function dbLoadResources(courseId){try{const{data}=await supabase.from('resources').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
@@ -450,7 +491,7 @@ function Chatbot({context}){
 /* ═══════════════ AUTH SCREEN ═══════════════ */
 function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
   const[tab,setTab]=useState('signin');
-  const[f,setF]=useState({username:'',password:'',confirm:'',year:3});
+  const[f,setF]=useState({username:'',password:'',confirm:'',year:3,accountType:'student'});
   const[errs,setErrs]=useState({});const[loading,setLoading]=useState(false);
   const set=(k,v)=>{setF(p=>({...p,[k]:v}));setErrs(p=>({...p,[k]:''}));};
 
@@ -492,9 +533,10 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
     try{
       const users=await dbLoadUsers();
       if(users.find(u=>u.username.toLowerCase()===f.username.toLowerCase())){setErrs({username:'Username already taken.'});setLoading(false);return;}
-      const nu={username:f.username,pw_hash:hashStr(f.password),display_name:f.username,year:f.year,created_at:new Date().toISOString()};
+      const isExternal = f.accountType==='external';
+      const nu={username:f.username,pw_hash:hashStr(f.password),display_name:f.username,year:isExternal?0:f.year,account_type:isExternal?'external':'student',created_at:new Date().toISOString()};
       await dbSaveUser(nu);
-      onLogin({username:nu.username,displayName:nu.display_name,year:nu.year,role:ROLE.USER});
+      onLogin({username:nu.username,displayName:nu.display_name,year:nu.year,role:isExternal?ROLE.EXTERNAL:ROLE.USER});
     }catch{setErrs({password:'Connection error. Try again.'});setLoading(false);}
   };
 
@@ -524,15 +566,38 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
             </div>
           ):(
             <div className="fade-in">
+              {/* Account type */}
+              <div style={{marginBottom:18}}>
+                <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>ACCOUNT TYPE</div>
+                <div style={{display:'flex',gap:8}}>
+                  <button onClick={()=>set('accountType','student')} style={{flex:1,padding:'10px 8px',borderRadius:8,cursor:'pointer',border:`1px solid ${f.accountType==='student'?'#4f9cf970':'var(--border)'}`,background:f.accountType==='student'?'rgba(79,156,249,.1)':'var(--input-bg)',color:f.accountType==='student'?'#4f9cf9':'var(--muted)',fontWeight:f.accountType==='student'?700:400,fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
+                    <span>🎓</span> Enrolled Student
+                  </button>
+                  <button onClick={()=>set('accountType','external')} style={{flex:1,padding:'10px 8px',borderRadius:8,cursor:'pointer',border:`1px solid ${f.accountType==='external'?'#a8f94f70':'var(--border)'}`,background:f.accountType==='external'?'rgba(168,249,79,.1)':'var(--input-bg)',color:f.accountType==='external'?'#a8f94f':'var(--muted)',fontWeight:f.accountType==='external'?700:400,fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
+                    <span>🌐</span> External / Visitor
+                  </button>
+                </div>
+                {f.accountType==='external'&&(
+                  <div style={{background:'rgba(168,249,79,.06)',border:'1px solid rgba(168,249,79,.2)',borderRadius:7,padding:'8px 12px',marginTop:8,fontSize:11,color:'#a8f94f',lineHeight:1.6}}>
+                    Full read access to all years &amp; courses. No year required. Progress is saved to your account.
+                  </div>
+                )}
+              </div>
+
               <Field label="USERNAME" value={f.username} onChange={e=>set('username',e.target.value)} placeholder="min 3 chars, no spaces" error={errs.username}/>
               <Field label="PASSWORD" type="password" value={f.password} onChange={e=>set('password',e.target.value)} placeholder="min 6 characters" error={errs.password}/>
               <Field label="CONFIRM PASSWORD" type="password" value={f.confirm} onChange={e=>set('confirm',e.target.value)} placeholder="repeat password" error={errs.confirm}/>
-              <div style={{marginBottom:18}}>
-                <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>YOUR YEAR</div>
-                <div style={{display:'flex',gap:8}}>
-                  {YEARS.map(y=><button key={y} onClick={()=>set('year',y)} style={{flex:1,padding:'10px 0',borderRadius:8,cursor:'pointer',border:`1px solid ${f.year===y?YEAR_COLORS[y]+'70':'var(--border)'}`,background:f.year===y?YEAR_BG[y]:'var(--input-bg)',color:f.year===y?YEAR_COLORS[y]:'var(--muted)',fontWeight:f.year===y?700:400,fontSize:13}}>Yr {y}</button>)}
+
+              {/* Year picker — only for enrolled students */}
+              {f.accountType==='student'&&(
+                <div style={{marginBottom:18}}>
+                  <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>YOUR YEAR</div>
+                  <div style={{display:'flex',gap:8}}>
+                    {YEARS.map(y=><button key={y} onClick={()=>set('year',y)} style={{flex:1,padding:'10px 0',borderRadius:8,cursor:'pointer',border:`1px solid ${f.year===y?YEAR_COLORS[y]+'70':'var(--border)'}`,background:f.year===y?YEAR_BG[y]:'var(--input-bg)',color:f.year===y?YEAR_COLORS[y]:'var(--muted)',fontWeight:f.year===y?700:400,fontSize:13}}>Yr {y}</button>)}
+                  </div>
                 </div>
-              </div>
+              )}
+
               <button onClick={signUp} disabled={loading} style={{width:'100%',background:loading?'var(--border)':'#4f9cf9',border:'none',borderRadius:8,color:loading?'var(--muted)':'#000',cursor:loading?'not-allowed':'pointer',padding:'12px 0',fontSize:14,fontWeight:700}}>
                 {loading?'Creating account…':'Create Account'}
               </button>
@@ -689,14 +754,23 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
   const[progress,setProgress]=useState('');
   const[error,setError]=useState('');
   const[copied,setCopied]=useState(false);
+  const[smartSortMsg,setSmartSortMsg]=useState('');
   const fileRef=useRef();
 
   const copyPrompt=()=>{navigator.clipboard.writeText(JSON_PROMPT);setCopied(true);setTimeout(()=>setCopied(false),2000);};
 
-  const saveEntry=async(data)=>{
+  const saveEntry=async(data,autoDetected)=>{
     if(!data.chapterTitle) throw new Error('Missing chapterTitle in response');
+    // Apply smart sort — use detected values, fall back to current picker values
+    const finalYear     = autoDetected?.year      || year;
+    const finalSemester = autoDetected?.semester  || semester;
+    const finalDept     = autoDetected?.department|| department;
+    // Update pickers so user can see what was auto-applied
+    if(autoDetected?.year)      setYear(autoDetected.year);
+    if(autoDetected?.semester)  setSemester(autoDetected.semester);
+    if(autoDetected?.department)setDepartment(autoDetected.department);
     const id=`c-${Date.now()}`;
-    const entry={id,year,semester,department,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+    const entry={id,year:finalYear,semester:finalSemester,department:finalDept,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
     if(adminMode){
       await onDone(null,entry,data);
     } else {
@@ -736,19 +810,29 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
       const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`Server error ${res.status}`);}
       const data=await res.json();
+      setProgress('Applying smart sort…');
+      const detected=detectMetadata(data);
+      if(detected.year||detected.department||detected.semester){
+        setSmartSortMsg(`✨ Smart sort: ${[detected.year?`Year ${detected.year}`:'',detected.semester?`Sem ${detected.semester}`:'',detected.department?DEPT_SHORT[detected.department]:''].filter(Boolean).join(' · ')}`);
+      }
       setProgress('Saving course…');
-      await saveEntry(data);
+      await saveEntry(data,detected);
     }catch(e){setError('Failed: '+e.message);setStatus('idle');setProgress('');}
   };
 
   const processPaste=async()=>{
-    setError('');
+    setError('');setSmartSortMsg('');
     try{
       const data=JSON.parse(pasteText.replace(/```json|```/g,'').trim());
       if(!data.chapterTitle) throw new Error('Missing chapterTitle');
-      setStatus('processing');setProgress('Saving course…');
-      await saveEntry(data);
-    }catch(e){setError('Invalid JSON: '+e.message);}
+      setStatus('processing');setProgress('Applying smart sort…');
+      const detected=detectMetadata(data);
+      if(detected.year||detected.department||detected.semester){
+        setSmartSortMsg(`✨ Smart sort: ${[detected.year?`Year ${detected.year}`:'',detected.semester?`Sem ${detected.semester}`:'',detected.department?DEPT_SHORT[detected.department]:''].filter(Boolean).join(' · ')}`);
+      }
+      setProgress('Saving course…');
+      await saveEntry(data,detected);
+    }catch(e){setError('Invalid JSON: '+e.message);setStatus('idle');}
   };
 
   const fileType = file ? getFileType(file.name) : null;
@@ -865,6 +949,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
         )}
 
         {/* Status */}
+        {smartSortMsg&&<div style={{background:'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.25)',borderRadius:8,padding:'8px 14px',color:'#a8f94f',fontSize:12,marginBottom:10,display:'flex',alignItems:'center',gap:8}}><span>✨</span>{smartSortMsg.replace('✨ Smart sort: ','')}<span style={{color:'var(--muted)',fontSize:11,marginLeft:4}}>— pickers updated above</span></div>}
         {error&&<div style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,padding:'9px 14px',color:'#f05050',fontSize:12.5,marginBottom:10}}>{error}</div>}
         {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>{progress||'Processing…'}</div>}
         {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':`✓ Course added — Year ${year}, Semester ${semester}, ${DEPT_SHORT[department]}!`}</div>}
@@ -1504,24 +1589,23 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 
 /* ═══════════════ HOME ═══════════════ */
 function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme}){
-  const[activeYear,setActiveYear]=useState(user.year||1);
+  const isExternal=user.role===ROLE.EXTERNAL;
+  const[activeYear,setActiveYear]=useState(isExternal?'all':(user.year||1));
   const[activeSemester,setActiveSemester]=useState(1);
   const[activeDept,setActiveDept]=useState('all');
   const[search,setSearch]=useState('');const[showBookmarks,setShowBookmarks]=useState(false);
-  const isPriv=user.role!==ROLE.USER;
+  const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
 
   const visible=courses.filter(c=>{
-    const matchYear=c.year===activeYear;
-    const matchSem=c.semester===activeSemester;
+    const matchYear=activeYear==='all'||c.year===activeYear;
+    const matchSem=activeYear==='all'||c.semester===activeSemester;
     const matchDept=activeDept==='all'||c.department===activeDept;
     const matchSearch=!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase());
     return matchYear&&matchSem&&matchDept&&matchSearch;
   });
 
-  // Count for each semester within current year
-  const semCount=s=>courses.filter(c=>c.year===activeYear&&c.semester===s).length;
-  // Count per dept within current year+sem
-  const deptCount=d=>courses.filter(c=>c.year===activeYear&&c.semester===activeSemester&&(d==='all'||c.department===d)).length;
+  const semCount=s=>courses.filter(c=>(activeYear==='all'||c.year===activeYear)&&c.semester===s).length;
+  const deptCount=d=>courses.filter(c=>(activeYear==='all'||c.year===activeYear)&&(activeYear==='all'||c.semester===activeSemester)&&(d==='all'||c.department===d)).length;
 
   const bookmarkedCourses=courses.filter(c=>bookmarks.includes(c.id));
   const pct=id=>{const cp=progress[id];const m=courses.find(c=>c.id===id);if(!cp||!m||m.qCount===0)return 0;return Math.round((cp.openedQs?.length||0)/m.qCount*100);};
@@ -1543,6 +1627,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3,flexWrap:'wrap'}}>
                 <RolePill role={user.role}/>
                 {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Yr {user.year} · @{user.username}</Mono>}
+                {isExternal&&<Mono color="#a8f94f" size={9}>@{user.username} · External</Mono>}
                 {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
               </div>
             </div>
@@ -1577,6 +1662,13 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       <div className="stagger-1" style={{marginBottom:16}}>
         <Mono color="var(--muted)" size={9}>BROWSE BY YEAR</Mono>
         <div className="year-tabs" style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:10}}>
+          {/* External users get an "All Years" tab */}
+          {isExternal&&(
+            <button className="year-tab" onClick={()=>selectYear('all')} style={{background:activeYear==='all'?'rgba(168,249,79,.1)':'var(--surface)',border:`1px solid ${activeYear==='all'?'rgba(168,249,79,.4)':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'10px 18px',transition:'var(--transition)',textAlign:'left'}}>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:activeYear==='all'?'#a8f94f':'var(--text)'}}>All Years</div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:activeYear==='all'?'#a8f94faa':'var(--muted)',marginTop:2}}>{courses.length} courses</div>
+            </button>
+          )}
           {YEARS.map(y=>{const active=activeYear===y;const st=yearStat(y);return(
             <button key={y} className="year-tab" onClick={()=>selectYear(y)} style={{background:active?YEAR_BG[y]:'var(--surface)',border:`1px solid ${active?YEAR_COLORS[y]+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'10px 18px',transition:'var(--transition)',textAlign:'left'}}>
               <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:active?YEAR_COLORS[y]:'var(--text)'}}>Year {y}</div>
@@ -1586,27 +1678,27 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         </div>
       </div>
 
-      {/* Semester tabs */}
-      <div className="stagger-2" style={{marginBottom:20}}>
+      {/* Semester tabs — hidden when All Years selected */}
+      {activeYear!=='all'&&<div className="stagger-2" style={{marginBottom:20}}>
         <Mono color="var(--muted)" size={9}>SEMESTER</Mono>
         <div style={{display:'flex',gap:8,marginTop:8}}>
           {[1,2].map(s=>{
             const active=activeSemester===s;
             const count=semCount(s);
-            const accent=YEAR_COLORS[activeYear];
+            const accent=typeof activeYear==='number'?YEAR_COLORS[activeYear]:'#4f9cf9';
             return(
-              <button key={s} onClick={()=>setActiveSemester(s)} style={{background:active?YEAR_BG[activeYear]:'var(--surface)',border:`1px solid ${active?accent+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'9px 20px',transition:'var(--transition)',display:'flex',alignItems:'center',gap:8}}>
+              <button key={s} onClick={()=>setActiveSemester(s)} style={{background:active?(typeof activeYear==='number'?YEAR_BG[activeYear]:'rgba(79,156,249,.1)'):'var(--surface)',border:`1px solid ${active?accent+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'9px 20px',transition:'var(--transition)',display:'flex',alignItems:'center',gap:8}}>
                 <span style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:active?accent:'var(--text)'}}>Semester {s}</span>
                 <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:active?`${accent}20`:'var(--border)',color:active?accent:'var(--muted)',borderRadius:10,padding:'2px 7px'}}>{count}</span>
               </button>
             );
           })}
         </div>
-      </div>
+      </div>}
 
       {/* Search */}
       <div className="stagger-3" style={{marginBottom:16}}>
-        <SearchBar value={search} onChange={setSearch} placeholder={`Search Year ${activeYear} Sem ${activeSemester}${activeDept!=='all'?' · '+DEPT_SHORT[activeDept]:''} courses…`}/>
+        <SearchBar value={search} onChange={setSearch} placeholder={activeYear==='all'?`Search all courses…`:`Search Year ${activeYear} Sem ${activeSemester}${activeDept!=='all'?' · '+DEPT_SHORT[activeDept]:''} courses…`}/>
       </div>
 
       {/* Department filter */}
@@ -1626,12 +1718,12 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         </div>
       </div>
 
-      <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''} · YEAR {activeYear} · SEM {activeSemester}{activeDept!=='all'?` · ${DEPT_SHORT[activeDept]}`:''}{search?` · "${search}"`:''}</Mono>
+      <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''}{activeYear==='all'?` · ALL YEARS`:` · YEAR ${activeYear} · SEM ${activeSemester}`}{activeDept!=='all'?` · ${DEPT_SHORT[activeDept]}`:''}{search?` · "${search}"`:''}</Mono>
 
       {visible.length===0?(
         <div style={{textAlign:'center',padding:'55px 20px',border:'1px dashed var(--border)',borderRadius:16,marginTop:16}}>
           <div style={{fontSize:34,marginBottom:12}}>📚</div>
-          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>{search?'No courses match your search':`No Year ${activeYear} Semester ${activeSemester} courses yet`}</div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>{search?'No courses match your search':activeYear==='all'?'No courses yet':`No Year ${activeYear} Semester ${activeSemester} courses yet`}</div>
           <p style={{color:'var(--muted)',fontSize:13}}>{search?'Try a different keyword':(isPriv?'Open the panel to add courses.':'Check back later.')}</p>
         </div>
       ):(
