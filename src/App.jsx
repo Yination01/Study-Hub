@@ -2,8 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════╗
  * ║                      S T U D Y H U B                            ║
  * ║                                                                  ║
- * ║  © 2025 Yination. All rights reserved.                           ║
- * ║  Nacos '027 — Computer Science Department                        ║
+ * ║  © 2025 Yination. All rights reserved.                           |
  * ║                                                                  ║
  * ║  This software and its source code are proprietary and           ║
  * ║  confidential. Unauthorised copying, modification, distribution  ║
@@ -20,11 +19,11 @@ import { createClient } from '@supabase/supabase-js';
    SUPERUSER CONFIG  ← change before deploying
 ═══════════════════════════════════════════════ */
 const SUPERUSER_USERNAME = 'yination';
-const SUPERUSER_PASSWORD = 'nacos@owner027';
+const SUPERUSER_PASSWORD = 'Ucwme50p';
 const APP_VERSION        = '2.0.0';
 const COPYRIGHT_YEAR     = '2025';
 const COPYRIGHT_NAME     = 'Yination';
-const COPYRIGHT_ORG      = "Nacos '027";
+const COPYRIGHT_ORG      = "Excalibur";
 
 /* ═══════════════════════════════════════════════
    SUPABASE CLIENT
