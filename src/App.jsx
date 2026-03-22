@@ -13,7 +13,7 @@ import { createClient } from '@supabase/supabase-js';
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '3.5.0';
+const APP_VERSION    = '3.6.0';
 const COPYRIGHT_YEAR = '2025';
 
 const supabase = createClient(
@@ -24,14 +24,20 @@ const supabase = createClient(
 /* ═══════════════ CONSTANTS ═══════════════ */
 const ROLE  = { SUPERUSER:'superuser', ADMIN:'admin', USER:'user', EXTERNAL:'external' };
 const YEARS       = [1,2,3,4];
-const DEPARTMENTS = ['Computer Science','Computer with Statistics'];
-const DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
-const DEPT_COLOR  = {'Computer Science':'#4f9cf9','Computer with Statistics':'#7fda96'};
+// These are seeded defaults — overridden at runtime by loadDepartments()
+let DEPARTMENTS = ['Computer Science','Computer with Statistics'];
+let DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
+let DEPT_COLOR  = {'Computer Science':'#4f9cf9','Computer with Statistics':'#7fda96'};
+// Dynamic user types — overridden at runtime by loadUserTypes()
+let USER_TYPES  = [
+  {id:'ut-student', label:'Enrolled Student',  shortCode:'Student',  roleKey:'user',     color:'#4f9cf9', description:'Currently enrolled students'},
+  {id:'ut-external',label:'External / Visitor',shortCode:'External', roleKey:'external', color:'#a8f94f', description:'Non-enrolled users'},
+];
 const YEAR_COLORS = {1:'#4f9cf9',2:'#7fda96',3:'#f9a84f',4:'#da7ff0'};
 const YEAR_BG     = {1:'rgba(79,156,249,0.1)',2:'rgba(127,218,150,0.1)',3:'rgba(249,168,79,0.1)',4:'rgba(218,127,240,0.1)'};
 const ROLE_COLOR  = {superuser:'#f9a84f',admin:'#da7ff0',user:'#4f9cf9',external:'#a8f94f'};
 const ROLE_BG     = {superuser:'rgba(249,168,79,0.12)',admin:'rgba(218,127,240,0.12)',user:'rgba(79,156,249,0.12)',external:'rgba(168,249,79,0.12)'};
-const ROLE_LABEL  = {superuser:'⚡ Superuser',admin:'🛡 Admin',user:'Student',external:'🌐 External'};
+const ROLE_ICON   = {superuser:'⚡',admin:'🛡',user:'🎓',external:'🌐',guest:'👀'};
 const COLOR_MAP   = {blue:{bar:'#4f9cf9'},orange:{bar:'#f9a84f'},green:{bar:'#7fda96'},purple:{bar:'#da7ff0'}};
 const CARD_ACCENTS= ['#4f9cf9','#f9a84f','#7fda96','#da7ff0','#f97b7b','#a8f94f','#4ff9e4','#f94fcc'];
 
@@ -228,6 +234,52 @@ async function dbLoadResources(courseId){try{const{data}=await supabase.from('re
 async function dbAddResource(r){try{await supabase.from('resources').insert(r);}catch(e){console.error(e);}}
 async function dbDeleteResource(id){try{await supabase.from('resources').delete().eq('id',id);}catch{}}
 
+// Assignments
+async function dbLoadAssignments(courseId){try{const{data}=await supabase.from('assignments').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
+async function dbSaveAssignment(a){try{await supabase.from('assignments').insert(a);}catch(e){console.error(e);}}
+async function dbDeleteAssignment(id){try{await supabase.from('assignments').delete().eq('id',id);}catch{}}
+
+// CAs / Tests
+async function dbLoadCAs(courseId){try{const{data}=await supabase.from('course_cas').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
+async function dbSaveCA(a){try{await supabase.from('course_cas').insert(a);}catch(e){console.error(e);}}
+async function dbDeleteCA(id){try{await supabase.from('course_cas').delete().eq('id',id);}catch{}}
+
+// Dynamic departments
+async function loadDepartments(){
+  try{
+    const{data}=await supabase.from('departments').select('*').order('name');
+    if(data?.length){
+      DEPARTMENTS=data.map(d=>d.name);
+      DEPT_SHORT=Object.fromEntries(data.map(d=>[d.name,d.short_code]));
+      DEPT_COLOR=Object.fromEntries(data.map(d=>[d.name,d.color||'#4f9cf9']));
+    }
+  }catch{}
+}
+async function dbAddDepartment(dept){await supabase.from('departments').insert(dept);}
+async function dbDeleteDepartment(id){await supabase.from('departments').delete().eq('id',id);}
+
+// Dynamic user types
+async function loadUserTypes(){
+  try{
+    const{data}=await supabase.from('user_types').select('*').order('created_at');
+    if(data?.length) USER_TYPES=data.map(d=>({id:d.id,label:d.label,shortCode:d.short_code,roleKey:d.role_key,color:d.color||'#4f9cf9',description:d.description||''}));
+  }catch{}
+}
+async function dbAddUserType(ut){await supabase.from('user_types').insert(ut);}
+async function dbDeleteUserType(id){await supabase.from('user_types').delete().eq('id',id);}
+
+// Helper — get display label for a user based on role + account_type
+function getUserTypeLabel(role,accountType){
+  if(role===ROLE.SUPERUSER) return '⚡ Superuser';
+  if(role===ROLE.ADMIN)     return '🛡 Admin';
+  if(role===ROLE.EXTERNAL||accountType==='external'){
+    const ut=USER_TYPES.find(u=>u.roleKey==='external');
+    return `🌐 ${ut?.shortCode||'External'}`;
+  }
+  const ut=USER_TYPES.find(u=>u.roleKey==='user');
+  return `🎓 ${ut?.shortCode||'Student'}`;
+}
+
 // Community
 async function dbLoadCommunity(courseId){try{const{data}=await supabase.from('community_posts').select('*').eq('course_id',courseId).order('upvote_count',{ascending:false});return data||[];}catch{return[];}}
 async function dbSubmitPost(post){try{await supabase.from('community_posts').insert(post);}catch(e){console.error(e);}}
@@ -315,16 +367,13 @@ const Mono=({children,color='#4f9cf9',size=10})=>(<span style={{fontFamily:"'IBM
 const SectionLabel=({children})=>(<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:3,textTransform:'uppercase',color:'#f9a84f',marginBottom:20,display:'flex',alignItems:'center',gap:10}}>{children}<div style={{flex:1,height:1,background:'var(--border)'}}/></div>);
 const Field=({label,type='text',value,onChange,placeholder,error,disabled})=>(<div style={{marginBottom:14}}>{label&&<div style={{fontSize:11,color:'var(--muted)',marginBottom:5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{label}</div>}<input type={type} value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} style={{width:'100%',background:disabled?'rgba(0,0,0,.2)':'var(--input-bg)',border:`1px solid ${error?'#f05050':'var(--border)'}`,borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>{error&&<div style={{color:'#f05050',fontSize:11,marginTop:4}}>{error}</div>}</div>);
 const Avatar=({name,size=32})=>{const ini=name?name.slice(0,2).toUpperCase():'??';const hue=name?name.split('').reduce((a,c)=>a+c.charCodeAt(0),0)%360:200;return<div style={{width:size,height:size,borderRadius:'50%',background:`hsl(${hue},55%,25%)`,border:`2px solid hsl(${hue},55%,45%)`,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'IBM Plex Mono',monospace",fontSize:size*.33,color:`hsl(${hue},80%,80%)`,flexShrink:0}}>{ini}</div>;};
-const RoleBadge=({role})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:ROLE_BG[role],color:ROLE_COLOR[role],border:`1px solid ${ROLE_COLOR[role]}40`,borderRadius:5,padding:'3px 8px',letterSpacing:1,display:'inline-flex',alignItems:'center',gap:4}}>{ROLE_LABEL[role]}</span>);
-
-/* Larger pill used in headers/profile areas */
-const RolePill=({role})=>{
-  const icons={superuser:'⚡',admin:'🛡',user:'🎓'};
-  return(
-    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,background:ROLE_BG[role],color:ROLE_COLOR[role],border:`1px solid ${ROLE_COLOR[role]}50`,borderRadius:20,padding:'4px 12px',letterSpacing:1,display:'inline-flex',alignItems:'center',gap:5,fontWeight:600}}>
-      {icons[role]} {role.toUpperCase()}
-    </span>
-  );
+const RoleBadge=({role,accountType})=>{
+  const col=ROLE_COLOR[role]||ROLE_COLOR.user;
+  return(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:ROLE_BG[role]||ROLE_BG.user,color:col,border:`1px solid ${col}40`,borderRadius:5,padding:'3px 8px',letterSpacing:1,display:'inline-flex',alignItems:'center',gap:4}}>{getUserTypeLabel(role,accountType)}</span>);
+};
+const RolePill=({role,accountType})=>{
+  const col=ROLE_COLOR[role]||ROLE_COLOR.user;
+  return(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,background:ROLE_BG[role]||ROLE_BG.user,color:col,border:`1px solid ${col}50`,borderRadius:20,padding:'4px 12px',letterSpacing:1,display:'inline-flex',alignItems:'center',gap:5,fontWeight:600}}>{getUserTypeLabel(role,accountType)}</span>);
 };
 const ProgressBar=({pct,color='#4f9cf9'})=>(<div style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><Mono color="var(--muted)" size={9}>PROGRESS</Mono><Mono color={color} size={9}>{pct}%</Mono></div><div style={{height:3,background:'var(--border)',borderRadius:2}}><div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2,transition:'width .5s ease'}}/></div></div>);
 
@@ -513,7 +562,7 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
       const users=await dbLoadUsers();const user=users.find(u=>u.username.toLowerCase()===f.username.toLowerCase());
       if(!user||user.pw_hash!==hashStr(f.password)){setErrs({password:'Incorrect username or password.'});setLoading(false);return;}
       const role=await resolveRole(user.username);
-      onLogin({username:user.username,displayName:user.display_name||user.username,year:user.year,role});
+      onLogin({username:user.username,displayName:user.display_name||user.username,year:user.year,role,accountType:user.account_type||'student'});
     }catch{setErrs({password:'Connection error. Try again.'});setLoading(false);}
   };
 
@@ -971,6 +1020,164 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
 }
 
 
+/* ═══════════════ ASSIGNMENTS TAB ═══════════════ */
+function AssignmentsTab({courseId,user}){
+  const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
+  const[form,setForm]=useState({title:'',description:'',due_date:'',marks:'',file_url:''});
+  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
+  const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
+  const isSU2=user.role===ROLE.SUPERUSER;
+  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
+
+  const load=async()=>{const d=await dbLoadAssignments(courseId);setItems(d);};
+  useEffect(()=>{load();},[courseId]);
+
+  const save=async()=>{
+    if(!form.title.trim())return;setLoading(true);
+    const a={id:`as-${Date.now()}`,course_id:courseId,title:form.title,description:form.description,due_date:form.due_date||null,marks:form.marks?parseInt(form.marks):null,file_url:form.file_url||null,added_by:user.username,added_at:new Date().toISOString()};
+    if(isSU2){await dbSaveAssignment(a);await load();}
+    else{await dbSubmitPending('add_resource',user.username,{...a,_table:'assignments'});flash('✓ Submitted for superuser approval.');}
+    setForm({title:'',description:'',due_date:'',marks:'',file_url:''});setShowForm(false);setLoading(false);
+  };
+  const del=async id=>{
+    if(isSU2){await dbDeleteAssignment(id);await load();}
+    else{await dbSubmitPending('delete_resource',user.username,{id,_table:'assignments'});flash('✓ Deletion submitted for approval.');}
+  };
+
+  const overdue=d=>d&&new Date(d)<new Date();
+  return(
+    <div className="fade-up">
+      <SectionLabel>Assignments</SectionLabel>
+      {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:12}}>{msg}</div>}
+      {!isPriv&&<div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',fontSize:12,color:'var(--muted)',marginBottom:14}}>📋 Assignments posted by your lecturers will appear here.</div>}
+      {isPriv&&(
+        <button onClick={()=>setShowForm(s=>!s)} style={{background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.25)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600,marginBottom:14}}>
+          {showForm?'✕ Cancel':isSU2?'+ Add Assignment':'+ Request Assignment'}
+        </button>
+      )}
+      {showForm&&isPriv&&(
+        <div className="scale-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:16}}>
+          <Field label="TITLE *" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Lab Report 1"/>
+          <Field label="DESCRIPTION" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="What is required…"/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+            <Field label="DUE DATE" type="date" value={form.due_date} onChange={e=>setForm(f=>({...f,due_date:e.target.value}))}/>
+            <Field label="MARKS (optional)" type="number" value={form.marks} onChange={e=>setForm(f=>({...f,marks:e.target.value}))} placeholder="e.g. 20"/>
+          </div>
+          <Field label="FILE / LINK (optional)" value={form.file_url} onChange={e=>setForm(f=>({...f,file_url:e.target.value}))} placeholder="https://..."/>
+          <button onClick={save} disabled={loading||!form.title.trim()} style={{background:'#f9a84f',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>
+            {loading?'Saving…':isSU2?'Save Assignment':'Submit for Approval'}
+          </button>
+        </div>
+      )}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {items.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No assignments posted yet.</div>}
+        {items.map((a,i)=>(
+          <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${overdue(a.due_date)?'rgba(240,80,80,.25)':'var(--border)'}`,borderRadius:10,padding:'14px 17px'}}>
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
+              <div style={{flex:1}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:5}}>
+                  <span style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{a.title}</span>
+                  {a.marks&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(249,168,79,.15)',color:'#f9a84f',borderRadius:4,padding:'2px 7px'}}>{a.marks} marks</span>}
+                  {a.due_date&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:overdue(a.due_date)?'rgba(240,80,80,.15)':'rgba(127,218,150,.15)',color:overdue(a.due_date)?'#f05050':'#7fda96',borderRadius:4,padding:'2px 7px'}}>Due {new Date(a.due_date).toLocaleDateString()}{overdue(a.due_date)?'  ⚠ Overdue':''}</span>}
+                </div>
+                {a.description&&<p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.6,margin:'0 0 5px'}}>{a.description}</p>}
+                {a.file_url&&<a href={a.file_url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:'#4f9cf9',textDecoration:'none'}}>📎 View file / link</a>}
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:6}}>Posted by @{a.added_by} · {new Date(a.added_at).toLocaleDateString()}</div>
+              </div>
+              {isPriv&&<button onClick={()=>del(a.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13,flexShrink:0}}>{isSU2?'✕':'↑'}</button>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ CA / TESTS TAB ═══════════════ */
+const CA_TYPES=['CA','Test','Quiz','Lab','Other'];
+const CA_COLORS={CA:'#da7ff0',Test:'#f05050',Quiz:'#4f9cf9',Lab:'#7fda96',Other:'#f9a84f'};
+
+function CATab({courseId,user}){
+  const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
+  const[form,setForm]=useState({title:'',type:'CA',description:'',date:'',marks:'',file_url:''});
+  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
+  const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
+  const isSU2=user.role===ROLE.SUPERUSER;
+  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
+
+  const load=async()=>{const d=await dbLoadCAs(courseId);setItems(d);};
+  useEffect(()=>{load();},[courseId]);
+
+  const save=async()=>{
+    if(!form.title.trim())return;setLoading(true);
+    const a={id:`ca-${Date.now()}`,course_id:courseId,title:form.title,type:form.type,description:form.description,date:form.date||null,marks:form.marks?parseInt(form.marks):null,file_url:form.file_url||null,added_by:user.username,added_at:new Date().toISOString()};
+    if(isSU2){await dbSaveCA(a);await load();}
+    else{await dbSubmitPending('add_resource',user.username,{...a,_table:'course_cas'});flash('✓ Submitted for superuser approval.');}
+    setForm({title:'',type:'CA',description:'',date:'',marks:'',file_url:''});setShowForm(false);setLoading(false);
+  };
+  const del=async id=>{
+    if(isSU2){await dbDeleteCA(id);await load();}
+    else{await dbSubmitPending('delete_resource',user.username,{id,_table:'course_cas'});flash('✓ Deletion submitted for approval.');}
+  };
+
+  return(
+    <div className="fade-up">
+      <SectionLabel>CAs / Tests / Quizzes</SectionLabel>
+      {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:12}}>{msg}</div>}
+      {!isPriv&&<div style={{background:'rgba(218,127,240,.05)',border:'1px solid rgba(218,127,240,.15)',borderRadius:8,padding:'9px 13px',fontSize:12,color:'var(--muted)',marginBottom:14}}>📝 Continuous Assessments and tests for this course will appear here.</div>}
+      {isPriv&&(
+        <button onClick={()=>setShowForm(s=>!s)} style={{background:'rgba(218,127,240,.1)',border:'1px solid rgba(218,127,240,.25)',borderRadius:8,color:'#da7ff0',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600,marginBottom:14}}>
+          {showForm?'✕ Cancel':isSU2?'+ Add CA / Test':'+ Request CA / Test'}
+        </button>
+      )}
+      {showForm&&isPriv&&(
+        <div className="scale-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:16}}>
+          <Field label="TITLE *" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. CA 1 — Data Structures"/>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>TYPE</div>
+            <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
+              {CA_TYPES.map(t=><button key={t} onClick={()=>setForm(f=>({...f,type:t}))} style={{padding:'6px 13px',borderRadius:7,border:`1px solid ${form.type===t?CA_COLORS[t]:'var(--border)'}`,background:form.type===t?`${CA_COLORS[t]}15`:'var(--input-bg)',color:form.type===t?CA_COLORS[t]:'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:form.type===t?600:400}}>{t}</button>)}
+            </div>
+          </div>
+          <Field label="DESCRIPTION (optional)" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Topics covered, format…"/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+            <Field label="DATE" type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/>
+            <Field label="MARKS (optional)" type="number" value={form.marks} onChange={e=>setForm(f=>({...f,marks:e.target.value}))} placeholder="e.g. 30"/>
+          </div>
+          <Field label="FILE / LINK (optional)" value={form.file_url} onChange={e=>setForm(f=>({...f,file_url:e.target.value}))} placeholder="https://past paper link…"/>
+          <button onClick={save} disabled={loading||!form.title.trim()} style={{background:'#da7ff0',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>
+            {loading?'Saving…':isSU2?'Save':'Submit for Approval'}
+          </button>
+        </div>
+      )}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {items.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No CAs or tests posted yet.</div>}
+        {items.map((a,i)=>{
+          const col=CA_COLORS[a.type]||'#da7ff0';
+          return(
+            <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${col}25`,borderRadius:10,padding:'14px 17px',borderLeft:`3px solid ${col}`}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
+                <div style={{flex:1}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:5}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${col}18`,color:col,borderRadius:4,padding:'2px 7px',fontWeight:600}}>{a.type}</span>
+                    <span style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{a.title}</span>
+                    {a.marks&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(249,168,79,.15)',color:'#f9a84f',borderRadius:4,padding:'2px 7px'}}>{a.marks} marks</span>}
+                    {a.date&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(136,146,164,.1)',color:'var(--muted)',borderRadius:4,padding:'2px 7px'}}>{new Date(a.date).toLocaleDateString()}</span>}
+                  </div>
+                  {a.description&&<p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.6,margin:'0 0 5px'}}>{a.description}</p>}
+                  {a.file_url&&<a href={a.file_url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:'#4f9cf9',textDecoration:'none'}}>📎 View file / past paper</a>}
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:6}}>Posted by @{a.added_by} · {new Date(a.added_at).toLocaleDateString()}</div>
+                </div>
+                {isPriv&&<button onClick={()=>del(a.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13,flexShrink:0}}>{isSU2?'✕':'↑'}</button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════ COMMUNITY BOARD ═══════════════ */
 function CommunityBoard({courseId,user}){
   const[posts,setPosts]=useState([]);const[myVotes,setMyVotes]=useState([]);const[showForm,setShowForm]=useState(false);
@@ -1123,7 +1330,7 @@ function ResourcesTab({courseId,user}){
 }
 
 /* ═══════════════ COURSE VIEW ═══════════════ */
-const ALL_TABS=[{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
+const ALL_TABS=[{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
 
 function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark}){
   const[tab,setTab]=useState('concepts');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
@@ -1152,7 +1359,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>← All Courses</button>
         </div>
         <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-          <RolePill role={user.role}/>
+          <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
           <div style={{background:YEAR_BG[course.year],border:`1px solid ${accent}40`,borderRadius:6,padding:'4px 12px'}}><Mono color={accent} size={9}>Year {course.year} · Semester {course.semester||1}</Mono></div>
           {course.data?.department&&<div style={{background:`${DEPT_COLOR[course.data.department]||'#4f9cf9'}12`,border:`1px solid ${DEPT_COLOR[course.data.department]||'#4f9cf9'}30`,borderRadius:6,padding:'4px 12px'}}><Mono color={DEPT_COLOR[course.data.department]||'#4f9cf9'} size={9}>{DEPT_SHORT[course.data.department]||'CS'}</Mono></div>}
           {!isPriv&&<div style={{fontSize:12,color:'var(--muted)'}}>{cp.openedQs.length}/{totalQ} revealed</div>}
@@ -1218,6 +1425,8 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
         </div>
       )}
 
+      {tab==='assignments'&&<AssignmentsTab courseId={course.id} user={user}/>}
+      {tab==='ca'&&<CATab courseId={course.id} user={user}/>}
       {tab==='resources'&&<ResourcesTab courseId={course.id} user={user}/>}
       {tab==='community'&&<CommunityBoard courseId={course.id} user={user}/>}
 
@@ -1429,7 +1638,7 @@ function ManageAdminsTab(){
           <div key={i} style={{background:'var(--surface)',border:`1px solid ${isAdm?'rgba(218,127,240,.2)':'var(--border)'}`,borderRadius:10,padding:'13px 17px',display:'flex',alignItems:'center',gap:13,flexWrap:'wrap'}}>
             <Avatar name={u.display_name||u.username}/>
             <div style={{flex:1,minWidth:140}}><div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>@{u.username} · Yr {u.year}</div></div>
-            <RoleBadge role={isAdm?ROLE.ADMIN:ROLE.USER}/>
+            <RoleBadge role={isAdm?ROLE.ADMIN:ROLE.USER} accountType={u.account_type}/>
             <button onClick={()=>toggleAdmin(u)} disabled={busy===u.username} style={{background:isAdm?'rgba(240,80,80,.1)':'rgba(218,127,240,.1)',border:`1px solid ${isAdm?'rgba(240,80,80,.3)':'rgba(218,127,240,.3)'}`,borderRadius:7,color:isAdm?'#f05050':'#da7ff0',cursor:'pointer',padding:'6px 14px',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>
               {busy===u.username?'…':isAdm?'Demote':'→ Make Admin'}
             </button>
@@ -1437,6 +1646,155 @@ function ManageAdminsTab(){
         );})}
         {filtered.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10}}>No users found.</div>}
       </div>
+    </div>
+  );
+}
+
+/* ═══════════════ SETTINGS TAB (superuser only) ═══════════════ */
+function SettingsTab({onReload}){
+  const[depts,setDepts]=useState([]);const[types,setTypes]=useState([]);
+  const[deptForm,setDeptForm]=useState({name:'',short_code:'',color:'#4f9cf9'});
+  const[typeForm,setTypeForm]=useState({label:'',short_code:'',role_key:'user',color:'#4f9cf9',description:''});
+  const[msg,setMsg]=useState('');const[section,setSection]=useState('depts');
+  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
+
+  const loadAll=async()=>{
+    const[{data:d},{data:t}]=await Promise.all([
+      supabase.from('departments').select('*').order('name'),
+      supabase.from('user_types').select('*').order('created_at')
+    ]);
+    setDepts(d||[]);setTypes(t||[]);
+  };
+  useEffect(()=>{loadAll();},[]);
+
+  const addDept=async()=>{
+    if(!deptForm.name.trim()||!deptForm.short_code.trim())return;
+    const id=`dept-${Date.now()}`;
+    await dbAddDepartment({id,name:deptForm.name,short_code:deptForm.short_code,color:deptForm.color,created_at:new Date().toISOString()});
+    setDeptForm({name:'',short_code:'',color:'#4f9cf9'});
+    await loadAll();await loadDepartments();onReload?.();
+    flash(`✓ Department "${deptForm.name}" added.`);
+  };
+  const delDept=async(id,name)=>{
+    if(!confirm(`Remove department "${name}"? This won't delete courses already assigned to it.`))return;
+    await dbDeleteDepartment(id);await loadAll();await loadDepartments();onReload?.();
+    flash(`Department removed.`);
+  };
+
+  const addType=async()=>{
+    if(!typeForm.label.trim()||!typeForm.short_code.trim())return;
+    const id=`ut-${Date.now()}`;
+    await dbAddUserType({id,label:typeForm.label,short_code:typeForm.short_code,role_key:typeForm.role_key,color:typeForm.color,description:typeForm.description,created_at:new Date().toISOString()});
+    setTypeForm({label:'',short_code:'',role_key:'user',color:'#4f9cf9',description:''});
+    await loadAll();await loadUserTypes();
+    flash(`✓ User type "${typeForm.label}" added.`);
+  };
+  const delType=async(id,label)=>{
+    if(!confirm(`Remove user type "${label}"?`))return;
+    await dbDeleteUserType(id);await loadAll();await loadUserTypes();
+    flash(`User type removed.`);
+  };
+
+  const PRESET_COLORS=['#4f9cf9','#7fda96','#f9a84f','#da7ff0','#f05050','#a8f94f','#4ff9e4','#f94fcc','#ff9f43','#54a0ff'];
+
+  return(
+    <div className="fade-up">
+      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'11px 15px',marginBottom:20,display:'flex',gap:10,alignItems:'center'}}>
+        <span style={{fontSize:18}}>⚙️</span>
+        <div><div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Platform Settings</div><div style={{color:'var(--muted)',fontSize:12}}>Add departments and user types. Changes take effect immediately across the site.</div></div>
+      </div>
+      {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:14}}>{msg}</div>}
+
+      {/* Sub-tabs */}
+      <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:20}}>
+        {[{id:'depts',label:'🏫 Departments'},{id:'types',label:'👥 User Types'}].map(t=>(
+          <button key={t.id} onClick={()=>setSection(t.id)} style={{background:'none',border:'none',borderBottom:section===t.id?'2px solid #f9a84f':'2px solid transparent',color:section===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:section===t.id?600:400}}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* DEPARTMENTS */}
+      {section==='depts'&&(
+        <div className="fade-in">
+          {/* Add form */}
+          <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:18}}>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)',letterSpacing:2,marginBottom:12}}>ADD DEPARTMENT</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 120px',gap:10,marginBottom:10}}>
+              <Field label="FULL NAME" value={deptForm.name} onChange={e=>setDeptForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Computer Engineering"/>
+              <Field label="SHORT CODE" value={deptForm.short_code} onChange={e=>setDeptForm(f=>({...f,short_code:e.target.value}))} placeholder="e.g. CE"/>
+            </div>
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>COLOUR</div>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
+                {PRESET_COLORS.map(c=>(
+                  <button key={c} onClick={()=>setDeptForm(f=>({...f,color:c}))} style={{width:24,height:24,borderRadius:'50%',background:c,border:deptForm.color===c?'3px solid var(--text)':'2px solid transparent',cursor:'pointer',padding:0}}/>
+                ))}
+                <input type="color" value={deptForm.color} onChange={e=>setDeptForm(f=>({...f,color:e.target.value}))} style={{width:28,height:28,borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',background:'none',padding:2}}/>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:deptForm.color}}>{deptForm.color}</span>
+              </div>
+            </div>
+            <button onClick={addDept} disabled={!deptForm.name.trim()||!deptForm.short_code.trim()} style={{background:!deptForm.name.trim()?'var(--border)':'#4f9cf9',border:'none',borderRadius:7,color:!deptForm.name.trim()?'var(--muted)':'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>Add Department</button>
+          </div>
+          {/* List */}
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {depts.map(d=>(
+              <div key={d.id} className="fade-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:9,padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+                <div style={{width:14,height:14,borderRadius:'50%',background:d.color,flexShrink:0,boxShadow:`0 0 6px ${d.color}80`}}/>
+                <div style={{flex:1}}><div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{d.name}</div></div>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${d.color}18`,color:d.color,borderRadius:4,padding:'2px 8px'}}>{d.short_code}</span>
+                <button onClick={()=>delDept(d.id,d.name)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13}}>✕</button>
+              </div>
+            ))}
+            {depts.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:20,border:'1px dashed var(--border)',borderRadius:8,fontSize:13}}>No departments yet.</div>}
+          </div>
+        </div>
+      )}
+
+      {/* USER TYPES */}
+      {section==='types'&&(
+        <div className="fade-in">
+          <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:18}}>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)',letterSpacing:2,marginBottom:12}}>ADD USER TYPE</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 130px',gap:10,marginBottom:10}}>
+              <Field label="FULL LABEL" value={typeForm.label} onChange={e=>setTypeForm(f=>({...f,label:e.target.value}))} placeholder="e.g. Postgraduate Student"/>
+              <Field label="SHORT CODE" value={typeForm.short_code} onChange={e=>setTypeForm(f=>({...f,short_code:e.target.value}))} placeholder="e.g. PG"/>
+            </div>
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>ACCESS LEVEL</div>
+              <div style={{display:'flex',gap:8}}>
+                {[{k:'user',label:'🎓 Student-like (year-based)'},{k:'external',label:'🌐 External (all years)'}].map(o=>(
+                  <button key={o.k} onClick={()=>setTypeForm(f=>({...f,role_key:o.k}))} style={{flex:1,padding:'8px 10px',borderRadius:7,border:`1px solid ${typeForm.role_key===o.k?'#f9a84f70':'var(--border)'}`,background:typeForm.role_key===o.k?'rgba(249,168,79,.08)':'var(--input-bg)',color:typeForm.role_key===o.k?'#f9a84f':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:typeForm.role_key===o.k?600:400}}>{o.label}</button>
+                ))}
+              </div>
+            </div>
+            <Field label="DESCRIPTION (optional)" value={typeForm.description} onChange={e=>setTypeForm(f=>({...f,description:e.target.value}))} placeholder="e.g. Alumni with read-only access"/>
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>BADGE COLOUR</div>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
+                {PRESET_COLORS.map(c=>(
+                  <button key={c} onClick={()=>setTypeForm(f=>({...f,color:c}))} style={{width:24,height:24,borderRadius:'50%',background:c,border:typeForm.color===c?'3px solid var(--text)':'2px solid transparent',cursor:'pointer',padding:0}}/>
+                ))}
+                <input type="color" value={typeForm.color} onChange={e=>setTypeForm(f=>({...f,color:e.target.value}))} style={{width:28,height:28,borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',background:'none',padding:2}}/>
+              </div>
+            </div>
+            <button onClick={addType} disabled={!typeForm.label.trim()||!typeForm.short_code.trim()} style={{background:!typeForm.label.trim()?'var(--border)':'#da7ff0',border:'none',borderRadius:7,color:!typeForm.label.trim()?'var(--muted)':'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>Add User Type</button>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {types.map(t=>(
+              <div key={t.id} className="fade-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:9,padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+                <div style={{width:14,height:14,borderRadius:'50%',background:t.color,flexShrink:0,boxShadow:`0 0 6px ${t.color}80`}}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{t.label}</div>
+                  {t.description&&<div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{t.description}</div>}
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:3}}>Access: {t.role_key}</div>
+                </div>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${t.color}18`,color:t.color,borderRadius:4,padding:'2px 8px'}}>{t.short_code}</span>
+                <button onClick={()=>delType(t.id,t.label)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13}}>✕</button>
+              </div>
+            ))}
+            {types.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:20,border:'1px dashed var(--border)',borderRadius:8,fontSize:13}}>No user types yet.</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1469,7 +1827,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
     {id:'courses',label:'Courses'},
     {id:'users',label:'Users'},
     {id:'analytics',label:'📊 Analytics'},
-    ...(isSU2?[{id:'approvals',label:'approvals',pendingCount},{id:'admins',label:'⚡ Manage Admins'}]:[])
+    ...(isSU2?[{id:'approvals',label:'approvals',pendingCount},{id:'admins',label:'⚡ Manage Admins'},{id:'settings',label:'⚙️ Settings'}]:[])
   ];
 
   const filtered=(filterY===0?courses:courses.filter(c=>c.year===filterY)).filter(c=>filterSem===0||c.semester===filterSem).filter(c=>filterDept==='all'||c.department===filterDept).filter(c=>!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase()));
@@ -1484,7 +1842,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
               <div style={{width:1,height:20,background:'var(--border)'}}/>
               <div style={{display:'flex',alignItems:'center',gap:10}}>
                 <Mono color={isSU2?'#f9a84f':'#da7ff0'} size={9}>{isSU2?'SUPERUSER PANEL':'ADMIN PANEL'}</Mono>
-                <RolePill role={user.role}/>
+                <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
               </div>
             </div>
             <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)'}}>Manage StudyHub</h2>
@@ -1561,7 +1919,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
                 <div key={i} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
                   <Avatar name={u.display_name||u.username}/>
                   <div style={{flex:1}}><div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>@{u.username} · Yr {u.year} · {new Date(u.created_at).toLocaleDateString()}</div></div>
-                  <RolePill role={isAdm?ROLE.ADMIN:ROLE.USER}/>
+                  <RolePill role={isAdm?ROLE.ADMIN:ROLE.USER} accountType={u.account_type}/>
                   <div style={{background:YEAR_BG[u.year],border:`1px solid ${YEAR_COLORS[u.year]}40`,borderRadius:5,padding:'3px 9px'}}><Mono color={YEAR_COLORS[u.year]} size={9}>Yr {u.year}</Mono></div>
                 </div>
               );})}
@@ -1573,6 +1931,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         {tab==='analytics'&&<AnalyticsTab courses={courses}/>}
         {tab==='approvals'&&isSU2&&<ApprovalsTab onCourseChange={onCoursesChange} courses={courses} reviewerUsername={user.username}/>}
         {tab==='admins'&&isSU2&&<ManageAdminsTab/>}
+        {tab==='settings'&&isSU2&&<SettingsTab onReload={()=>onCoursesChange([...courses])}/>}
       </div>
       {showUpload&&(
         isSU2
@@ -1625,7 +1984,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
             <div>
               <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
               <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3,flexWrap:'wrap'}}>
-                <RolePill role={user.role}/>
+                <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
                 {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Yr {user.year} · @{user.username}</Mono>}
                 {isExternal&&<Mono color="#a8f94f" size={9}>@{user.username} · External</Mono>}
                 {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
@@ -1773,8 +2132,9 @@ export default function App(){
   const[loading,setLoading]=useState(false);
 
   useEffect(()=>{
+    // Load dynamic config first, then courses
+    Promise.all([loadDepartments(),loadUserTypes()]).catch(()=>{});
     dbLoadCourseIndex().then(setCourses).catch(async()=>{
-      // Offline fallback: try to rebuild index from localStorage cache
       const cached=[];
       for(let i=0;i<localStorage.length;i++){
         const k=localStorage.key(i);
