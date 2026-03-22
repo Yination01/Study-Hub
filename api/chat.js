@@ -1,5 +1,5 @@
 /**
- * StudyHub — Chat API
+ * StudyHub — Chat API (powered by Groq)
  * © 2025 Yination & Excalibur. All rights reserved.
  */
 
@@ -13,55 +13,50 @@ export default async function handler(req, res) {
   const { messages, context } = req.body || {};
   if (!messages?.length) return res.status(400).json({ error: 'Missing messages' });
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Groq API key not configured' });
 
-  const systemContext = context?.chapterTitle
+  const systemPrompt = context?.chapterTitle
     ? `You are StudyBot, an expert academic tutor built into StudyHub.
 The student is currently studying: "${context.chapterTitle}" (${context.courseName || 'unknown course'}).
-${context.summary ? `Course content summary:\n${context.summary}` : ''}
+${context.summary ? `Course content summary: ${context.summary}` : ''}
 
 Your role:
 - Answer questions about this course material clearly and thoroughly
-- Explain concepts in simple terms with real examples
+- Explain concepts in simple terms with real-world examples
 - Generate extra practice questions with full worked answers when asked
-- When generating questions, format them clearly numbered like: "Q1. [question]" then "Answer: [answer]"
-- Keep responses focused on the course material
+- When generating questions, number them clearly: "Q1. [question]" then "Answer: [answer]"
 - Be encouraging and supportive
-- Use plain text, no markdown symbols like ** or ##`
+- Use plain text only — no markdown symbols like ** or ##`
     : `You are StudyBot, an expert academic tutor built into StudyHub.
-Help students understand their course material, explain concepts, and generate practice questions.
-Be clear, thorough, and encouraging. Use plain text without markdown symbols.`;
-
-  const contents = [
-    { role: 'user', parts: [{ text: systemContext }] },
-    { role: 'model', parts: [{ text: 'Understood. I am StudyBot, ready to help.' }] },
-    ...messages.map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }]
-    }))
-  ];
+Help students understand their course material, explain concepts clearly, and generate practice questions with full answers.
+Be encouraging, clear, and thorough. Use plain text only — no markdown.`;
 
   try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents,
-          generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
-        })
-      }
-    );
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
+        ],
+        temperature: 0.7,
+        max_tokens: 2048
+      })
+    });
 
-    if (!geminiRes.ok) {
-      const err = await geminiRes.text();
-      return res.status(502).json({ error: 'Gemini error', detail: err });
+    if (!groqRes.ok) {
+      const err = await groqRes.text();
+      return res.status(502).json({ error: 'Groq API error', detail: err });
     }
 
-    const data = await geminiRes.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.';
+    const data = await groqRes.json();
+    const text = data.choices?.[0]?.message?.content || 'Sorry, I could not generate a response.';
     return res.status(200).json({ reply: text });
 
   } catch (err) {
