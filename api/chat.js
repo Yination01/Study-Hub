@@ -1,9 +1,6 @@
 /**
  * StudyHub — Chat API
  * © 2025 Yination & Excalibur. All rights reserved.
- *
- * POST /api/chat
- * Body: { messages: [{role, content}], context: { courseName, chapterTitle, summary } }
  */
 
 export default async function handler(req, res) {
@@ -19,7 +16,6 @@ export default async function handler(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
 
-  // Build system context
   const systemContext = context?.chapterTitle
     ? `You are StudyBot, an expert academic tutor built into StudyHub.
 The student is currently studying: "${context.chapterTitle}" (${context.courseName || 'unknown course'}).
@@ -30,29 +26,25 @@ Your role:
 - Explain concepts in simple terms with real examples
 - Generate extra practice questions with full worked answers when asked
 - When generating questions, format them clearly numbered like: "Q1. [question]" then "Answer: [answer]"
-- Keep responses focused on the course material but explain related concepts if helpful
+- Keep responses focused on the course material
 - Be encouraging and supportive
-- Use plain text, no markdown symbols like ** or ## — just clean readable text`
+- Use plain text, no markdown symbols like ** or ##`
     : `You are StudyBot, an expert academic tutor built into StudyHub.
 Help students understand their course material, explain concepts, and generate practice questions.
 Be clear, thorough, and encouraging. Use plain text without markdown symbols.`;
 
-  // Convert messages to Gemini format
-  const geminiMessages = messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }]
-  }));
-
-  // Prepend system as first user message if needed
   const contents = [
     { role: 'user', parts: [{ text: systemContext }] },
-    { role: 'model', parts: [{ text: 'Understood. I am StudyBot, ready to help with this course material.' }] },
-    ...geminiMessages
+    { role: 'model', parts: [{ text: 'Understood. I am StudyBot, ready to help.' }] },
+    ...messages.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }))
   ];
 
   try {
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
