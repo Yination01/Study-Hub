@@ -6,12 +6,12 @@
  * Body: { base64Data: string, filename: string }
  */
 
-// Increase Vercel's default 4.5MB body limit to 20MB
+// Increase Vercel's default 4.5MB body limit to 100MB
 // A 14MB PDF becomes ~19MB when base64 encoded — this covers most lecture notes
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '20mb',
+      sizeLimit: '100mb',
     },
   },
 };
