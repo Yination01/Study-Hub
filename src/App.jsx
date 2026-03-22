@@ -164,15 +164,15 @@ async function dbSaveUser(u){await supabase.from('users').upsert(u,{onConflict:'
 async function dbLoadAdmins(){const{data}=await supabase.from('admins').select('username');return(data||[]).map(r=>r.username.toLowerCase());}
 async function dbSetAdmins(list){await supabase.from('admins').delete().neq('username','__none__');if(list.length>0)await supabase.from('admins').insert(list.map(u=>({username:u.toLowerCase()})));}
 async function dbLoadCourseIndex(){
-  const{data}=await supabase.from('courses').select('id,year,course_name,chapter_title,concept_count,term_count,q_count,added_at').order('added_at',{ascending:false});
-  return(data||[]).map(r=>({id:r.id,year:r.year,courseName:r.course_name,chapterTitle:r.chapter_title,conceptCount:r.concept_count,termCount:r.term_count,qCount:r.q_count,addedAt:r.added_at}));
+  const{data}=await supabase.from('courses').select('id,year,semester,course_name,chapter_title,concept_count,term_count,q_count,added_at').order('added_at',{ascending:false});
+  return(data||[]).map(r=>({id:r.id,year:r.year,semester:r.semester||1,courseName:r.course_name,chapterTitle:r.chapter_title,conceptCount:r.concept_count,termCount:r.term_count,qCount:r.q_count,addedAt:r.added_at}));
 }
 async function dbLoadCourseData(id){
   const{data}=await supabase.from('courses').select('data').eq('id',id).single();
   return data?.data||null;
 }
 async function dbSaveCourse(entry,courseData){
-  await supabase.from('courses').upsert({id:entry.id,year:entry.year,course_name:entry.courseName,chapter_title:entry.chapterTitle,concept_count:entry.conceptCount,term_count:entry.termCount,q_count:entry.qCount,added_at:entry.addedAt,data:courseData},{onConflict:'id'});
+  await supabase.from('courses').upsert({id:entry.id,year:entry.year,semester:entry.semester||1,course_name:entry.courseName,chapter_title:entry.chapterTitle,concept_count:entry.conceptCount,term_count:entry.termCount,q_count:entry.qCount,added_at:entry.addedAt,data:courseData},{onConflict:'id'});
 }
 async function dbDeleteCourse(id){await supabase.from('courses').delete().eq('id',id);}
 async function dbLoadProgress(username){const{data}=await supabase.from('progress').select('*').eq('username',username);const out={};(data||[]).forEach(r=>{out[r.course_id]={viewed:r.viewed,openedQs:r.opened_qs||[]};});return out;}
@@ -558,7 +558,7 @@ Return ONLY valid JSON with this exact structure:
 Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none, chapters 4-8 with EXACTLY 3 takeaways each, questions EXACTLY 25 exam-style with full worked answers. Return ONLY the JSON.`;
 
 function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
-  const[year,setYear]=useState(1);const[pasteText,setPasteText]=useState('');const[status,setStatus]=useState('idle');const[error,setError]=useState('');const[copied,setCopied]=useState(false);
+  const[year,setYear]=useState(1);const[semester,setSemester]=useState(1);const[pasteText,setPasteText]=useState('');const[status,setStatus]=useState('idle');const[error,setError]=useState('');const[copied,setCopied]=useState(false);
   const copyPrompt=()=>{navigator.clipboard.writeText(JSON_PROMPT);setCopied(true);setTimeout(()=>setCopied(false),2000);};
   const go=async()=>{
     setError('');
@@ -567,14 +567,13 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
       if(!data.chapterTitle)throw new Error('Missing chapterTitle');
       setStatus('processing');
       if(adminMode){
-        // Admin mode: build entry and pass to parent for approval submission
         const id=`c-${Date.now()}`;
-        const entry={id,year,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+        const entry={id,year,semester,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
         await onDone(null,entry,data);
         setStatus('done');
       } else {
         const id=`c-${Date.now()}`;
-        const entry={id,year,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+        const entry={id,year,semester,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
         await dbSaveCourse(entry,data);
         const idx=await dbLoadCourseIndex();setStatus('done');setTimeout(()=>onDone(idx),700);
       }
@@ -592,6 +591,12 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
             {YEARS.map(y=><button key={y} onClick={()=>setYear(y)} style={{flex:1,padding:'9px 0',borderRadius:8,cursor:'pointer',border:`1px solid ${year===y?YEAR_COLORS[y]+'70':'var(--border)'}`,background:year===y?YEAR_BG[y]:'var(--input-bg)',color:year===y?YEAR_COLORS[y]:'var(--muted)',fontWeight:year===y?700:400,fontSize:13}}>Year {y}</button>)}
           </div>
         </div>
+        <div style={{marginBottom:18}}>
+          <Mono color="var(--muted)" size={10}>SEMESTER</Mono>
+          <div style={{display:'flex',gap:8,marginTop:8}}>
+            {[1,2].map(s=><button key={s} onClick={()=>setSemester(s)} style={{flex:1,padding:'9px 0',borderRadius:8,cursor:'pointer',border:`1px solid ${semester===s?YEAR_COLORS[year]+'70':'var(--border)'}`,background:semester===s?YEAR_BG[year]:'var(--input-bg)',color:semester===s?YEAR_COLORS[year]:'var(--muted)',fontWeight:semester===s?700:400,fontSize:13}}>Semester {s}</button>)}
+          </div>
+        </div>
         <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:10,padding:'14px 16px',marginBottom:16}}>
           <div style={{fontSize:12,fontWeight:600,color:'#4f9cf9',marginBottom:10}}>How to generate a study guide</div>
           <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.8}}><span style={{color:'var(--text)'}}>Step 1</span> — Open Claude.ai, ChatGPT, or any AI<br/><span style={{color:'var(--text)'}}>Step 2</span> — Upload your PDF<br/><span style={{color:'var(--text)'}}>Step 3</span> — Copy and paste this prompt:</div>
@@ -604,7 +609,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
         <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder={'{\n  "courseName": "COS 341",\n  "chapterTitle": "Memory System",\n  ...\n}'} rows={9} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:12,fontFamily:"'IBM Plex Mono',monospace",resize:'vertical',marginBottom:12}}/>
         {error&&<div style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,padding:'9px 14px',color:'#f05050',fontSize:12.5,marginBottom:10}}>{error}</div>}
         {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>{adminMode?'Submitting request…':'Saving course…'}</div>}
-        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':'✓ Course added to Year '+year+'!'}</div>}
+        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':'✓ Course added to Year '+year+', Semester '+semester+'!'}</div>}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
           <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>Cancel</button>
           <button onClick={go} disabled={!pasteText.trim()||status==='processing'||status==='done'} style={{background:!pasteText.trim()||status==='processing'||status==='done'?'var(--border)':adminMode?'#da7ff0':'#4f9cf9',border:'none',borderRadius:8,color:!pasteText.trim()||status==='processing'||status==='done'?'var(--muted)':'#000',cursor:'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}>
@@ -776,7 +781,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const isBookmarked=bookmarks.includes(course.id);
 
   // Cache for offline use
-  useEffect(()=>{try{localStorage.setItem(CACHE_KEY(course.id),JSON.stringify({data:d,year:course.year,cachedAt:Date.now()}));}catch{};},[]);
+  useEffect(()=>{try{localStorage.setItem(CACHE_KEY(course.id),JSON.stringify({data:d,year:course.year,semester:course.semester||1,cachedAt:Date.now()}));}catch{};},[]);
   useEffect(()=>{if(!cp.viewed){const n={...progress,[course.id]:{...cp,viewed:true}};onProgressUpdate(n);}},[]);
 
   const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!cp.openedQs.includes(idx)){const n={...progress,[course.id]:{...cp,openedQs:[...cp.openedQs,idx]}};onProgressUpdate(n);}};
@@ -795,7 +800,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
         <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 16px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>← All Courses</button>
         <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
           <RolePill role={user.role}/>
-          <div style={{background:YEAR_BG[course.year],border:`1px solid ${accent}40`,borderRadius:6,padding:'4px 12px'}}><Mono color={accent} size={9}>Year {course.year}</Mono></div>
+          <div style={{background:YEAR_BG[course.year],border:`1px solid ${accent}40`,borderRadius:6,padding:'4px 12px'}}><Mono color={accent} size={9}>Year {course.year} · Semester {course.semester||1}</Mono></div>
           {!isPriv&&<div style={{fontSize:12,color:'var(--muted)'}}>{cp.openedQs.length}/{totalQ} revealed</div>}
           <button onClick={()=>toggleBookmark(course.id)} title={isBookmarked?'Remove bookmark':'Bookmark'} style={{background:isBookmarked?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${isBookmarked?'#f9a84f':'var(--border)'}`,borderRadius:8,color:isBookmarked?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>
             {isBookmarked?'🔖':'🔖'}
@@ -908,7 +913,7 @@ function AnalyticsTab({courses}){
         {courseStats.map((c,i)=>(
           <div key={c.id} style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',padding:'12px 14px',gap:8,borderTop:'1px solid var(--border)',alignItems:'center'}}>
             <div>
-              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:2}}>Yr {c.year} · {c.courseName}</div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:2}}>Yr {c.year} · Sem {c.semester||1} · {c.courseName}</div>
               <div style={{fontSize:13,color:'var(--text)'}}>{c.chapterTitle}</div>
             </div>
             <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:13,color:'#4f9cf9',fontWeight:600}}>{c.views}</div>
@@ -1085,7 +1090,7 @@ function ManageAdminsTab(){
 /* ═══════════════ ADMIN PANEL ═══════════════ */
 function AdminPanel({user,courses,onClose,onCoursesChange}){
   const isSU2=user.role===ROLE.SUPERUSER;
-  const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
+  const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
 
   useEffect(()=>{
     Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});
@@ -1113,7 +1118,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
     ...(isSU2?[{id:'approvals',label:'approvals',pendingCount},{id:'admins',label:'⚡ Manage Admins'}]:[])
   ];
 
-  const filtered=(filterY===0?courses:courses.filter(c=>c.year===filterY)).filter(c=>!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase()));
+  const filtered=(filterY===0?courses:courses.filter(c=>c.year===filterY)).filter(c=>filterSem===0||c.semester===filterSem).filter(c=>!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase()));
 
   return(
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',backdropFilter:'blur(8px)',zIndex:2000,overflow:'auto'}}>
@@ -1154,20 +1159,28 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         {tab==='courses'&&(
           <div className="fade-up">
             {!isSU2&&<div style={{background:'rgba(218,127,240,.06)',border:'1px solid rgba(218,127,240,.2)',borderRadius:8,padding:'9px 14px',fontSize:12,color:'#da7ff0',marginBottom:14}}>🛡 As Admin, your Add and Delete actions will be queued for superuser approval.</div>}
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:10}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10,flexWrap:'wrap',gap:10}}>
               <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
                 {[{label:'All',y:0},...YEARS.map(y=>({label:`Yr ${y}`,y}))].map(({label,y})=>(
                   <button key={y} onClick={()=>setFilterY(y)} style={{background:filterY===y?(y===0?'rgba(136,146,164,.1)':YEAR_BG[y]):'none',border:`1px solid ${filterY===y?(y===0?'#8892a4':YEAR_COLORS[y])+'60':'var(--border)'}`,borderRadius:20,color:filterY===y?(y===0?'#8892a4':YEAR_COLORS[y]):'var(--muted)',cursor:'pointer',padding:'5px 14px',fontSize:12,fontWeight:filterY===y?600:400}}>{label}</button>
                 ))}
-                <SearchBar value={search} onChange={setSearch} placeholder="Search courses…"/>
               </div>
               <button onClick={()=>setShowUpload(true)} style={{background:'#4f9cf9',border:'none',borderRadius:8,color:'#000',cursor:'pointer',padding:'9px 18px',fontSize:13,fontWeight:700}}>+ {isSU2?'Add Course':'Request Course'}</button>
+            </div>
+            <div style={{display:'flex',gap:8,marginBottom:14,alignItems:'center'}}>
+              {[{label:'All Semesters',s:0},...[1,2].map(s=>({label:`Semester ${s}`,s}))].map(({label,s})=>(
+                <button key={s} onClick={()=>setFilterSem(s)} style={{background:filterSem===s?'rgba(79,156,249,.1)':'none',border:`1px solid ${filterSem===s?'rgba(79,156,249,.4)':'var(--border)'}`,borderRadius:20,color:filterSem===s?'#4f9cf9':'var(--muted)',cursor:'pointer',padding:'5px 14px',fontSize:12,fontWeight:filterSem===s?600:400}}>{label}</button>
+              ))}
+              <SearchBar value={search} onChange={setSearch} placeholder="Search courses…"/>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:9}}>
               {filtered.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12}}>No courses here yet.</div>}
               {filtered.map(c=>(
                 <div key={c.id} className="fade-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'13px 17px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-                  <div style={{background:YEAR_BG[c.year],border:`1px solid ${YEAR_COLORS[c.year]}40`,borderRadius:5,padding:'3px 9px'}}><Mono color={YEAR_COLORS[c.year]} size={9}>Yr {c.year}</Mono></div>
+                  <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                    <div style={{background:YEAR_BG[c.year],border:`1px solid ${YEAR_COLORS[c.year]}40`,borderRadius:5,padding:'3px 9px'}}><Mono color={YEAR_COLORS[c.year]} size={9}>Yr {c.year}</Mono></div>
+                    <div style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:5,padding:'3px 9px'}}><Mono color="#4f9cf9" size={9}>Sem {c.semester||1}</Mono></div>
+                  </div>
                   <div style={{flex:1,minWidth:160}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>{c.courseName}</div><div style={{fontSize:14,color:'var(--text)',marginTop:2}}>{c.chapterTitle}</div></div>
                   <div style={{display:'flex',gap:6}}><Tag color="#4f9cf9">{c.conceptCount} concepts</Tag><Tag color="#7fda96">{c.qCount} questions</Tag></div>
                   <button onClick={()=>doDelete(c.id)} title={isSU2?'Delete permanently':'Submit deletion request'} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:6,color:'#f05050',cursor:'pointer',padding:'5px 12px',fontSize:11,flexShrink:0}}>{isSU2?'✕ Delete':'↑ Request Delete'}</button>
@@ -1214,19 +1227,27 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 /* ═══════════════ HOME ═══════════════ */
 function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme}){
   const[activeYear,setActiveYear]=useState(user.year||1);
+  const[activeSemester,setActiveSemester]=useState(1);
   const[search,setSearch]=useState('');const[showBookmarks,setShowBookmarks]=useState(false);
   const isPriv=user.role!==ROLE.USER;
 
+  // Courses matching current year + semester + search
   const visible=courses.filter(c=>{
     const matchYear=c.year===activeYear;
+    const matchSem=c.semester===activeSemester;
     const matchSearch=!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase());
-    return matchYear&&matchSearch;
+    return matchYear&&matchSem&&matchSearch;
   });
 
-  const bookmarkedCourses=courses.filter(c=>bookmarks.includes(c.id));
+  // Count for each semester within current year
+  const semCount=s=>courses.filter(c=>c.year===activeYear&&c.semester===s).length;
 
+  const bookmarkedCourses=courses.filter(c=>bookmarks.includes(c.id));
   const pct=id=>{const cp=progress[id];const m=courses.find(c=>c.id===id);if(!cp||!m||m.qCount===0)return 0;return Math.round((cp.openedQs?.length||0)/m.qCount*100);};
   const yearStat=y=>{const yc=courses.filter(c=>c.year===y);if(!yc.length)return null;return `${yc.filter(c=>progress[c.id]?.viewed).length}/${yc.length} started`;};
+
+  // When switching year, reset semester to 1
+  const selectYear=y=>{setActiveYear(y);setActiveSemester(1);setSearch('');};
 
   return(
     <div style={{maxWidth:990,margin:'0 auto',padding:'34px 20px 88px'}}>
@@ -1260,7 +1281,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:10}}>
             {bookmarkedCourses.map(c=>(
               <div key={c.id} onClick={()=>onSelectCourse(c.id)} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px',cursor:'pointer',borderLeft:`3px solid ${YEAR_COLORS[c.year]}`}}>
-                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:3}}>Yr {c.year} · {c.courseName}</div>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:3}}>Yr {c.year} · Sem {c.semester} · {c.courseName}</div>
                 <div style={{fontSize:13,color:'var(--text)',fontWeight:500}}>{c.chapterTitle}</div>
               </div>
             ))}
@@ -1269,11 +1290,11 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       )}
 
       {/* Year tabs */}
-      <div className="stagger-1" style={{marginBottom:22}}>
+      <div className="stagger-1" style={{marginBottom:16}}>
         <Mono color="var(--muted)" size={9}>BROWSE BY YEAR</Mono>
         <div className="year-tabs" style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:10}}>
           {YEARS.map(y=>{const active=activeYear===y;const st=yearStat(y);return(
-            <button key={y} className="year-tab" onClick={()=>{setActiveYear(y);setSearch('');}} style={{background:active?YEAR_BG[y]:'var(--surface)',border:`1px solid ${active?YEAR_COLORS[y]+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'10px 18px',transition:'var(--transition)',textAlign:'left'}}>
+            <button key={y} className="year-tab" onClick={()=>selectYear(y)} style={{background:active?YEAR_BG[y]:'var(--surface)',border:`1px solid ${active?YEAR_COLORS[y]+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'10px 18px',transition:'var(--transition)',textAlign:'left'}}>
               <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:active?YEAR_COLORS[y]:'var(--text)'}}>Year {y}</div>
               {st&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:active?YEAR_COLORS[y]+'aa':'var(--muted)',marginTop:2}}>{st}</div>}
             </button>
@@ -1281,17 +1302,35 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         </div>
       </div>
 
-      {/* Search */}
+      {/* Semester tabs */}
       <div className="stagger-2" style={{marginBottom:20}}>
-        <SearchBar value={search} onChange={setSearch} placeholder={`Search Year ${activeYear} courses…`}/>
+        <Mono color="var(--muted)" size={9}>SEMESTER</Mono>
+        <div style={{display:'flex',gap:8,marginTop:8}}>
+          {[1,2].map(s=>{
+            const active=activeSemester===s;
+            const count=semCount(s);
+            const accent=YEAR_COLORS[activeYear];
+            return(
+              <button key={s} onClick={()=>setActiveSemester(s)} style={{background:active?YEAR_BG[activeYear]:'var(--surface)',border:`1px solid ${active?accent+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'9px 20px',transition:'var(--transition)',display:'flex',alignItems:'center',gap:8}}>
+                <span style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:active?accent:'var(--text)'}}>Semester {s}</span>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:active?`${accent}20`:'var(--border)',color:active?accent:'var(--muted)',borderRadius:10,padding:'2px 7px'}}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''} · YEAR {activeYear}{search?` · "${search}"`:''}</Mono>
+      {/* Search */}
+      <div className="stagger-3" style={{marginBottom:16}}>
+        <SearchBar value={search} onChange={setSearch} placeholder={`Search Year ${activeYear} Sem ${activeSemester} courses…`}/>
+      </div>
+
+      <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''} · YEAR {activeYear} · SEMESTER {activeSemester}{search?` · "${search}"`:''}</Mono>
 
       {visible.length===0?(
         <div style={{textAlign:'center',padding:'55px 20px',border:'1px dashed var(--border)',borderRadius:16,marginTop:16}}>
           <div style={{fontSize:34,marginBottom:12}}>📚</div>
-          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>{search?'No courses match your search':'No Year '+activeYear+' courses yet'}</div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>{search?'No courses match your search':`No Year ${activeYear} Semester ${activeSemester} courses yet`}</div>
           <p style={{color:'var(--muted)',fontSize:13}}>{search?'Try a different keyword':(isPriv?'Open the panel to add courses.':'Check back later.')}</p>
         </div>
       ):(
@@ -1307,7 +1346,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
                   {viewed&&<div style={{width:7,height:7,borderRadius:'50%',background:'#7fda96'}} title="Visited"/>}
                   {bm&&<span style={{fontSize:12}}>🔖</span>}
                 </div>
-                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:accent,letterSpacing:2,textTransform:'uppercase',marginBottom:4}}>{c.courseName}</div>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:accent,letterSpacing:2,textTransform:'uppercase',marginBottom:4}}>{c.courseName} · SEM {c.semester}</div>
                 <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:'var(--text)',marginBottom:11,lineHeight:1.3,paddingRight:30}}>{c.chapterTitle}</div>
                 <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
                   <Tag color={accent}>{c.conceptCount} concepts</Tag>
@@ -1344,7 +1383,7 @@ export default function App(){
       for(let i=0;i<localStorage.length;i++){
         const k=localStorage.key(i);
         if(k?.startsWith('sh-course-cache-')){
-          try{const d=JSON.parse(localStorage.getItem(k));if(d?.data)cached.push({id:k.replace('sh-course-cache-',''),year:d.year,courseName:d.data.courseName,chapterTitle:d.data.chapterTitle,conceptCount:d.data.keyConcepts?.length||0,termCount:d.data.definitions?.length||0,qCount:d.data.questions?.length||0,addedAt:'Cached'});}catch{}
+          try{const d=JSON.parse(localStorage.getItem(k));if(d?.data)cached.push({id:k.replace('sh-course-cache-',''),year:d.year,semester:d.semester||1,courseName:d.data.courseName,chapterTitle:d.data.chapterTitle,conceptCount:d.data.keyConcepts?.length||0,termCount:d.data.definitions?.length||0,qCount:d.data.questions?.length||0,addedAt:'Cached'});}catch{}
         }
       }
       if(cached.length>0)setCourses(cached);
@@ -1357,13 +1396,15 @@ export default function App(){
 
   const handleSelect=async id=>{
     setLoading(true);
-    let data=null,year=null;
-    try{data=await dbLoadCourseData(id);year=courses.find(c=>c.id===id)?.year;}
-    catch{
-      // Offline: try cache
-      try{const c=JSON.parse(localStorage.getItem(CACHE_KEY(id)));data=c?.data;year=c?.year;}catch{}
+    let data=null,year=null,semester=1;
+    try{
+      data=await dbLoadCourseData(id);
+      const meta=courses.find(c=>c.id===id);
+      year=meta?.year;semester=meta?.semester||1;
+    }catch{
+      try{const c=JSON.parse(localStorage.getItem(CACHE_KEY(id)));data=c?.data;year=c?.year;semester=c?.semester||1;}catch{}
     }
-    if(data){setActive({id,data,year});setView('course');}
+    if(data){setActive({id,data,year,semester});setView('course');}
     setLoading(false);
   };
 
