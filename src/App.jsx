@@ -16,16 +16,13 @@ import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 /* ═══════════════════════════════════════════════
-   SUPERUSER CONFIG
+   CONFIG
 ═══════════════════════════════════════════════ */
 const SUPERUSER_USERNAME = 'yination';
 const SUPERUSER_PASSWORD = 'ucwme50p';
-const APP_VERSION        = '2.2.0';
+const APP_VERSION        = '3.0.0';
 const COPYRIGHT_YEAR     = '2025';
 
-/* ═══════════════════════════════════════════════
-   SUPABASE
-═══════════════════════════════════════════════ */
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -82,102 +79,67 @@ const isSU = u => u?.toLowerCase() === SUPERUSER_USERNAME.toLowerCase();
 async function dbLoadUsers() { const { data } = await supabase.from('users').select('*'); return data || []; }
 async function dbSaveUser(u) { await supabase.from('users').upsert(u, { onConflict: 'username' }); }
 async function dbLoadAdmins() { const { data } = await supabase.from('admins').select('username'); return (data || []).map(r => r.username.toLowerCase()); }
-async function dbSetAdmins(list) { await supabase.from('admins').delete().neq('username', '__none__'); if (list.length > 0) await supabase.from('admins').insert(list.map(u => ({ username: u.toLowerCase() }))); }
+async function dbSetAdmins(list) { await supabase.from('admins').delete().neq('username','__none__'); if (list.length > 0) await supabase.from('admins').insert(list.map(u => ({ username: u.toLowerCase() }))); }
 async function dbLoadCourseIndex() {
   const { data } = await supabase.from('courses').select('id,year,course_name,chapter_title,concept_count,term_count,q_count,added_at').order('added_at', { ascending: false });
-  return (data || []).map(r => ({ id: r.id, year: r.year, courseName: r.course_name, chapterTitle: r.chapter_title, conceptCount: r.concept_count, termCount: r.term_count, qCount: r.q_count, addedAt: r.added_at }));
+  return (data || []).map(r => ({ id:r.id, year:r.year, courseName:r.course_name, chapterTitle:r.chapter_title, conceptCount:r.concept_count, termCount:r.term_count, qCount:r.q_count, addedAt:r.added_at }));
 }
 async function dbLoadCourseData(id) { const { data } = await supabase.from('courses').select('data').eq('id', id).single(); return data?.data || null; }
-async function dbSaveCourse(entry, courseData) { await supabase.from('courses').upsert({ id: entry.id, year: entry.year, course_name: entry.courseName, chapter_title: entry.chapterTitle, concept_count: entry.conceptCount, term_count: entry.termCount, q_count: entry.qCount, added_at: entry.addedAt, data: courseData }, { onConflict: 'id' }); }
+async function dbSaveCourse(entry, courseData) {
+  await supabase.from('courses').upsert({ id:entry.id, year:entry.year, course_name:entry.courseName, chapter_title:entry.chapterTitle, concept_count:entry.conceptCount, term_count:entry.termCount, q_count:entry.qCount, added_at:entry.addedAt, data:courseData }, { onConflict:'id' });
+}
 async function dbDeleteCourse(id) { await supabase.from('courses').delete().eq('id', id); }
-async function dbLoadProgress(username) { const { data } = await supabase.from('progress').select('*').eq('username', username); const out = {}; (data || []).forEach(r => { out[r.course_id] = { viewed: r.viewed, openedQs: r.opened_qs || [] }; }); return out; }
-async function dbSaveProgress(username, progress) { const rows = Object.entries(progress).map(([cid, p]) => ({ username, course_id: cid, viewed: p.viewed, opened_qs: p.openedQs })); if (rows.length > 0) await supabase.from('progress').upsert(rows, { onConflict: 'username,course_id' }); }
-async function resolveRole(username) { if (isSU(username)) return ROLE.SUPERUSER; const admins = await dbLoadAdmins(); return admins.includes(username.toLowerCase()) ? ROLE.ADMIN : ROLE.USER; }
+async function dbLoadProgress(username) {
+  const { data } = await supabase.from('progress').select('*').eq('username', username);
+  const out = {}; (data || []).forEach(r => { out[r.course_id] = { viewed:r.viewed, openedQs:r.opened_qs||[] }; }); return out;
+}
+async function dbSaveProgress(username, progress) {
+  const rows = Object.entries(progress).map(([cid, p]) => ({ username, course_id:cid, viewed:p.viewed, opened_qs:p.openedQs }));
+  if (rows.length > 0) await supabase.from('progress').upsert(rows, { onConflict:'username,course_id' });
+}
+async function resolveRole(username) {
+  if (isSU(username)) return ROLE.SUPERUSER;
+  const admins = await dbLoadAdmins();
+  return admins.includes(username.toLowerCase()) ? ROLE.ADMIN : ROLE.USER;
+}
 
 /* ═══════════════════════════════════════════════
-   AI — PDF processed DIRECTLY from browser
-   This bypasses Vercel's 4.5MB body limit entirely.
-   VITE_GEMINI_API_KEY is exposed in the built JS
-   but is rate-limited and the app requires login.
+   CHAT (Groq via /api/chat)
 ═══════════════════════════════════════════════ */
-const GEMINI_PROMPT = `You are an expert academic study guide generator.
-Return ONLY a valid JSON object — no markdown fences, no preamble, no trailing text.
-
-Structure:
-{
-  "courseName": "short course code e.g. COS 341",
-  "chapterTitle": "chapter or topic title",
-  "keyConcepts": [{"title":"","description":"one sentence","color":"blue|orange|green|purple"}],
-  "definitions": [{"term":"","definition":""}],
-  "mechanisms": [{"title":"","body":"step-by-step explanation; use \\n\\n for paragraph breaks"}],
-  "algorithms": [{"name":"","description":"","note":""}],
-  "chapters": [{"num":"Chapter X","name":"","takeaways":["","",""]}],
-  "questions": [{"question":"","answer":""}]
-}
-
-Rules:
-- keyConcepts: 12-18 items, rotate colors
-- definitions: ALL bolded/important terms, 20-35 items
-- mechanisms: 4-7 important processes explained step-by-step
-- algorithms: only if the doc has algorithms/methods to compare; empty [] otherwise
-- chapters: 4-8 section blocks, each with EXACTLY 3 non-obvious takeaways
-- questions: EXACTLY 25 challenging varied exam-style questions with full worked answers.
-  Mix types: definition, calculation/trace, comparison, application, explain why, scenario-based.
-  Keep ALL worked examples from the source document.
-- Preserve chronological order of the source material.
-- Return ONLY the JSON object, nothing else.`;
-
-async function processPDF(base64Data, filename) {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error('Gemini API key not set. Add VITE_GEMINI_API_KEY to Vercel environment variables.');
-
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { inlineData: { mimeType: 'application/pdf', data: base64Data } },
-            { text: `${GEMINI_PROMPT}\n\nFilename hint: ${filename || 'unknown'}` }
-          ]
-        }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 8192 }
-      })
-    }
-  );
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `Gemini error ${res.status}`);
-  }
-
-  const data = await res.json();
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const clean = raw.replace(/```json|```/g, '').trim();
-  if (!clean) throw new Error('Empty response from Gemini');
-  return JSON.parse(clean);
-}
-
-/* Chat still goes through /api/chat (small payloads, key stays server-side) */
 async function sendChatMessage(messages, context) {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, context })
   });
-  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Server error ${res.status}`); }
+  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Error ${res.status}`); }
   return (await res.json()).reply;
 }
 
 /* ═══════════════════════════════════════════════
+   JSON FORMAT GUIDE (shown in paste modal)
+═══════════════════════════════════════════════ */
+const JSON_PROMPT = `Generate a StudyHub JSON study guide for this PDF.
+Return ONLY valid JSON with this exact structure:
+{
+  "courseName": "e.g. COS 341",
+  "chapterTitle": "full chapter title",
+  "keyConcepts": [{"title":"","description":"one sentence","color":"blue|orange|green|purple"}],
+  "definitions": [{"term":"","definition":""}],
+  "mechanisms": [{"title":"","body":"step-by-step; use \\n\\n for paragraph breaks"}],
+  "algorithms": [{"name":"","description":"","note":""}],
+  "chapters": [{"num":"Chapter X","name":"","takeaways":["","",""]}],
+  "questions": [{"question":"","answer":""}]
+}
+Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none, chapters 4-8 with EXACTLY 3 takeaways each, questions EXACTLY 25 exam-style with full worked answers. Return ONLY the JSON.`;
+
+/* ═══════════════════════════════════════════════
    SMALL UI ATOMS
 ═══════════════════════════════════════════════ */
-const Tag = ({ children, color = '#4f9cf9' }) => (
+const Tag = ({ children, color='#4f9cf9' }) => (
   <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, background:`${color}18`, color, borderRadius:4, padding:'2px 8px', marginRight:5, display:'inline-block' }}>{children}</span>
 );
-const Mono = ({ children, color = '#4f9cf9', size = 10 }) => (
+const Mono = ({ children, color='#4f9cf9', size=10 }) => (
   <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:size, color, letterSpacing:2, textTransform:'uppercase' }}>{children}</span>
 );
 const SectionLabel = ({ children }) => (
@@ -195,7 +157,7 @@ const Field = ({ label, type='text', value, onChange, placeholder, error, disabl
 );
 const Avatar = ({ name, size=32 }) => {
   const ini = name ? name.slice(0,2).toUpperCase() : '??';
-  const hue = name ? name.split('').reduce((a,c)=>a+c.charCodeAt(0),0)%360 : 200;
+  const hue = name ? name.split('').reduce((a,c) => a+c.charCodeAt(0), 0)%360 : 200;
   return <div style={{ width:size, height:size, borderRadius:'50%', background:`hsl(${hue},55%,25%)`, border:`2px solid hsl(${hue},55%,45%)`, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'IBM Plex Mono',monospace", fontSize:size*.33, color:`hsl(${hue},80%,80%)`, flexShrink:0 }}>{ini}</div>;
 };
 const RoleBadge = ({ role }) => (
@@ -218,8 +180,7 @@ const ProgressBar = ({ pct, color='#4f9cf9' }) => (
 ═══════════════════════════════════════════════ */
 function InstallPrompt() {
   const [prompt, setPrompt] = useState(null);
-  const [show, setShow]     = useState(false);
-
+  const [show, setShow] = useState(false);
   useEffect(() => {
     if (window.matchMedia('(display-mode: standalone)').matches) return;
     if (localStorage.getItem('pwa-dismissed')) return;
@@ -227,22 +188,15 @@ function InstallPrompt() {
     window.addEventListener('beforeinstallprompt', h);
     return () => window.removeEventListener('beforeinstallprompt', h);
   }, []);
-
-  const install = async () => {
-    if (!prompt) return;
-    prompt.prompt();
-    await prompt.userChoice;
-    setShow(false); setPrompt(null);
-  };
+  const install = async () => { if (!prompt) return; prompt.prompt(); await prompt.userChoice; setShow(false); setPrompt(null); };
   const dismiss = () => { setShow(false); localStorage.setItem('pwa-dismissed','1'); };
-
   if (!show) return null;
   return (
     <div className="slide-down" style={{ position:'fixed', top:16, left:'50%', transform:'translateX(-50%)', background:'#1a1e27', border:'1px solid #4f9cf940', borderRadius:12, padding:'12px 18px', display:'flex', alignItems:'center', gap:12, zIndex:500, boxShadow:'0 4px 24px rgba(0,0,0,.5)', maxWidth:360, width:'calc(100% - 32px)' }}>
       <div style={{ fontSize:24 }}>📲</div>
       <div style={{ flex:1 }}>
         <div style={{ fontSize:13, fontWeight:600, color:'#fff', marginBottom:2 }}>Install StudyHub</div>
-        <div style={{ fontSize:11, color:'#8892a4' }}>Add to your home screen for quick access</div>
+        <div style={{ fontSize:11, color:'#8892a4' }}>Add to your home screen</div>
       </div>
       <div style={{ display:'flex', gap:8, flexShrink:0 }}>
         <button onClick={dismiss} style={{ background:'none', border:'1px solid #252a36', borderRadius:7, color:'#8892a4', cursor:'pointer', padding:'6px 10px', fontSize:11 }}>Later</button>
@@ -258,13 +212,13 @@ function InstallPrompt() {
 const CopyrightBar = () => (
   <div style={{ position:'fixed', bottom:0, left:0, right:0, background:'#0d0f14', borderTop:'1px solid #1a1e27', padding:'8px 20px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:100, flexWrap:'wrap', gap:6 }}>
     <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-      <span style={{ fontFamily:"'DM Serif Display',serif", fontSize:14, color:'#4f9cf9', letterSpacing:-0.3 }}>StudyHub</span>
+      <span style={{ fontFamily:"'DM Serif Display',serif", fontSize:14, color:'#4f9cf9' }}>StudyHub</span>
       <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:8, color:'#3a3f4f', letterSpacing:1 }}>v{APP_VERSION}</span>
     </div>
     <div style={{ display:'flex', alignItems:'center', gap:8 }}>
       <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:8, color:'#3a3f4f', letterSpacing:1 }}>© {COPYRIGHT_YEAR} · OWNED BY</span>
       <span style={{ fontFamily:"'DM Serif Display',serif", fontSize:13, color:'#f9a84f' }}>Yination</span>
-      <span style={{ color:'#3a3f4f', fontSize:10, fontFamily:"'IBM Plex Mono',monospace" }}>&</span>
+      <span style={{ color:'#3a3f4f', fontSize:10 }}>&</span>
       <span style={{ fontFamily:"'DM Serif Display',serif", fontSize:13, color:'#f9a84f' }}>Excalibur</span>
       <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:8, color:'#3a3f4f', letterSpacing:1 }}>· ALL RIGHTS RESERVED</span>
     </div>
@@ -272,7 +226,7 @@ const CopyrightBar = () => (
 );
 
 /* ═══════════════════════════════════════════════
-   CHATBOT
+   CHATBOT (Groq — free & fast)
 ═══════════════════════════════════════════════ */
 const QUICK_PROMPTS = [
   'Explain this topic simply',
@@ -293,8 +247,8 @@ function Chatbot({ context }) {
   useEffect(() => {
     if (open && messages.length === 0) {
       setMessages([{ role:'assistant', content: context?.chapterTitle
-        ? `Hi! I'm StudyBot. I can see you're studying "${context.chapterTitle}". Ask me anything — explanations, examples, or extra practice questions.`
-        : `Hi! I'm StudyBot. Ask me anything about your course material.` }]);
+        ? `Hi! I'm StudyBot. I can see you're studying "${context.chapterTitle}". Ask me anything — I can explain concepts, give examples, or generate extra practice questions.`
+        : `Hi! I'm StudyBot. Ask me anything about your course material — explanations, examples, or extra practice questions.` }]);
     }
   }, [open]);
 
@@ -320,7 +274,7 @@ function Chatbot({ context }) {
 
   return (
     <>
-      <button onClick={() => setOpen(o=>!o)} title="StudyBot — AI Tutor" style={{ position:'fixed', bottom:52, right:22, width:52, height:52, borderRadius:'50%', border:'none', cursor:'pointer', zIndex:200, background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)', boxShadow:open?'none':'0 4px 24px rgba(79,156,249,0.4)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, transition:'all .2s', animation:open?'none':'pulse 3s ease infinite' }}>
+      <button onClick={() => setOpen(o=>!o)} title="StudyBot" style={{ position:'fixed', bottom:52, right:22, width:52, height:52, borderRadius:'50%', border:'none', cursor:'pointer', zIndex:200, background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)', boxShadow:open?'none':'0 4px 24px rgba(79,156,249,0.4)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, transition:'all .2s', animation:open?'none':'pulse 3s ease infinite' }}>
         {open ? '✕' : '🤖'}
       </button>
 
@@ -331,7 +285,7 @@ function Chatbot({ context }) {
               <div style={{ width:32, height:32, borderRadius:'50%', background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>🤖</div>
               <div>
                 <div style={{ fontSize:13, fontWeight:600, color:'#fff' }}>StudyBot</div>
-                <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, color:'#4f9cf9', letterSpacing:1 }}>AI TUTOR · GEMINI</div>
+                <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, color:'#4f9cf9', letterSpacing:1 }}>AI TUTOR · GROQ</div>
               </div>
             </div>
             <button onClick={() => setMessages([])} style={{ background:'none', border:'none', color:'#8892a4', cursor:'pointer', fontSize:11, fontFamily:"'IBM Plex Mono',monospace", letterSpacing:1 }}>CLEAR</button>
@@ -345,11 +299,9 @@ function Chatbot({ context }) {
           )}
 
           <div style={{ flex:1, overflowY:'auto', padding:'12px 12px 6px' }}>
-            {messages.map((m, i) => (
+            {messages.map((m,i) => (
               <div key={i} style={{ display:'flex', justifyContent:m.role==='user'?'flex-end':'flex-start', marginBottom:10 }}>
-                {m.role === 'assistant' && (
-                  <div style={{ width:24, height:24, borderRadius:'50%', background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, flexShrink:0, marginRight:7, marginTop:2 }}>🤖</div>
-                )}
+                {m.role==='assistant' && <div style={{ width:24, height:24, borderRadius:'50%', background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, flexShrink:0, marginRight:7, marginTop:2 }}>🤖</div>}
                 <div style={{ maxWidth:'78%', background:m.role==='user'?'linear-gradient(135deg,#4f9cf9,#7f5ff9)':'#252a36', color:m.role==='user'?'#fff':'#e2e6f0', borderRadius:m.role==='user'?'14px 14px 4px 14px':'14px 14px 14px 4px', padding:'9px 12px', fontSize:13, lineHeight:1.65, whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{m.content}</div>
               </div>
             ))}
@@ -373,11 +325,9 @@ function Chatbot({ context }) {
           )}
 
           <div style={{ padding:'9px 11px', borderTop:'1px solid #252a36', display:'flex', gap:8, alignItems:'flex-end' }}>
-            <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-              placeholder="Ask anything… (Enter to send)" rows={1}
+            <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}} placeholder="Ask anything… (Enter to send)" rows={1}
               style={{ flex:1, background:'#0d0f14', border:'1px solid #252a36', borderRadius:10, padding:'8px 11px', color:'#fff', fontSize:13, fontFamily:"'DM Sans',sans-serif", resize:'none', maxHeight:80, lineHeight:1.5 }}/>
-            <button onClick={() => send()} disabled={!input.trim()||loading} style={{ width:35, height:35, borderRadius:'50%', border:'none', flexShrink:0, background:!input.trim()||loading?'#252a36':'linear-gradient(135deg,#4f9cf9,#7f5ff9)', color:!input.trim()||loading?'#8892a4':'#fff', cursor:!input.trim()||loading?'not-allowed':'pointer', fontSize:16, display:'flex', alignItems:'center', justifyContent:'center' }}>↑</button>
+            <button onClick={()=>send()} disabled={!input.trim()||loading} style={{ width:35, height:35, borderRadius:'50%', border:'none', flexShrink:0, background:!input.trim()||loading?'#252a36':'linear-gradient(135deg,#4f9cf9,#7f5ff9)', color:!input.trim()||loading?'#8892a4':'#fff', cursor:!input.trim()||loading?'not-allowed':'pointer', fontSize:16, display:'flex', alignItems:'center', justifyContent:'center' }}>↑</button>
           </div>
         </div>
       )}
@@ -440,10 +390,10 @@ function AuthScreen({ onLogin }) {
           <div style={{ fontFamily:"'DM Serif Display',serif", fontSize:40, color:'#fff', letterSpacing:-1, lineHeight:1 }}>Study<span style={{ color:'#4f9cf9' }}>Hub</span></div>
           <p style={{ color:'#8892a4', fontSize:13, marginTop:8 }}>AI-powered course companion</p>
         </div>
-        <div style={{ background:'#13161d', border:'1px solid #252a36', borderRadius:16, padding:'30px 30px' }}>
+        <div style={{ background:'#13161d', border:'1px solid #252a36', borderRadius:16, padding:'30px' }}>
           <div style={{ display:'flex', background:'#0d0f14', borderRadius:10, padding:4, marginBottom:26 }}>
             {['signin','signup'].map(t => (
-              <button key={t} onClick={() => { setTab(t); setErrs({}); }} style={{ flex:1, padding:'9px 0', borderRadius:7, border:'none', background:tab===t?'#1a1e27':'none', color:tab===t?'#fff':'#8892a4', cursor:'pointer', fontSize:13, fontWeight:tab===t?600:400 }}>
+              <button key={t} onClick={()=>{ setTab(t); setErrs({}); }} style={{ flex:1, padding:'9px 0', borderRadius:7, border:'none', background:tab===t?'#1a1e27':'none', color:tab===t?'#fff':'#8892a4', cursor:'pointer', fontSize:13, fontWeight:tab===t?600:400 }}>
                 {t==='signin'?'Sign In':'Sign Up'}
               </button>
             ))}
@@ -458,7 +408,7 @@ function AuthScreen({ onLogin }) {
             </>
           ) : (
             <>
-              <Field label="DISPLAY NAME (optional)" value={f.displayName} onChange={e=>set('displayName',e.target.value)} placeholder="e.g. Peter"/>
+              <Field label="DISPLAY NAME (optional)" value={f.displayName} onChange={e=>set('displayName',e.target.value)} placeholder="e.g. Tunde"/>
               <Field label="USERNAME" value={f.username} onChange={e=>set('username',e.target.value)} placeholder="min 3 chars, no spaces" error={errs.username}/>
               <Field label="PASSWORD" type="password" value={f.password} onChange={e=>set('password',e.target.value)} placeholder="min 6 characters" error={errs.password}/>
               <Field label="CONFIRM PASSWORD" type="password" value={f.confirm} onChange={e=>set('confirm',e.target.value)} placeholder="repeat password" error={errs.confirm}/>
@@ -466,7 +416,7 @@ function AuthScreen({ onLogin }) {
                 <div style={{ fontSize:11, color:'#8892a4', marginBottom:8, fontFamily:"'IBM Plex Mono',monospace", letterSpacing:1 }}>YOUR YEAR</div>
                 <div style={{ display:'flex', gap:8 }}>
                   {YEARS.map(y => (
-                    <button key={y} onClick={() => set('year',y)} style={{ flex:1, padding:'10px 0', borderRadius:8, cursor:'pointer', border:`1px solid ${f.year===y?YEAR_COLORS[y]+'70':'#252a36'}`, background:f.year===y?YEAR_BG[y]:'#0d0f14', color:f.year===y?YEAR_COLORS[y]:'#8892a4', fontWeight:f.year===y?700:400, fontSize:13 }}>Yr {y}</button>
+                    <button key={y} onClick={()=>set('year',y)} style={{ flex:1, padding:'10px 0', borderRadius:8, cursor:'pointer', border:`1px solid ${f.year===y?YEAR_COLORS[y]+'70':'#252a36'}`, background:f.year===y?YEAR_BG[y]:'#0d0f14', color:f.year===y?YEAR_COLORS[y]:'#8892a4', fontWeight:f.year===y?700:400, fontSize:13 }}>Yr {y}</button>
                   ))}
                 </div>
               </div>
@@ -483,7 +433,7 @@ function AuthScreen({ onLogin }) {
             <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, color:'#3a3f4f' }}>&</span>
             <span style={{ fontFamily:"'DM Serif Display',serif", fontSize:13, color:'#f9a84f' }}>Excalibur</span>
           </div>
-          <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, color:'#3a3f4f', letterSpacing:1 }}>ALL RIGHTS RESERVED · UNAUTHORISED USE PROHIBITED</span>
+          <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, color:'#3a3f4f', letterSpacing:1 }}>ALL RIGHTS RESERVED</span>
         </div>
       </div>
     </div>
@@ -491,105 +441,85 @@ function AuthScreen({ onLogin }) {
 }
 
 /* ═══════════════════════════════════════════════
-   UPLOAD MODAL
+   UPLOAD MODAL — paste JSON only
 ═══════════════════════════════════════════════ */
 function UploadModal({ onClose, onDone }) {
-  const [mode, setMode]     = useState('ai');
-  const [file, setFile]     = useState(null);
-  const [year, setYear]     = useState(1);
+  const [year, setYear]         = useState(1);
   const [pasteText, setPasteText] = useState('');
-  const [status, setStatus] = useState('idle');
-  const [error, setError]   = useState('');
-  const [progress, setProgress] = useState('');
-  const ref = useRef();
+  const [status, setStatus]     = useState('idle');
+  const [error, setError]       = useState('');
+  const [copied, setCopied]     = useState(false);
 
-  const saveAndClose = async (data) => {
-    const id = `c-${Date.now()}`;
-    const entry = { id, year, courseName:data.courseName||'Course', chapterTitle:data.chapterTitle||'Chapter', conceptCount:data.keyConcepts?.length||0, termCount:data.definitions?.length||0, qCount:data.questions?.length||0, addedAt:new Date().toLocaleDateString() };
-    await dbSaveCourse(entry, data);
-    const idx = await dbLoadCourseIndex();
-    setStatus('done');
-    setTimeout(() => onDone(idx), 700);
+  const copyPrompt = () => {
+    navigator.clipboard.writeText(JSON_PROMPT);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
-  const goAI = async () => {
-    if (!file) return;
-    setStatus('processing'); setError(''); setProgress('Reading PDF…');
-    try {
-      const b64 = await new Promise((res,rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result.split(',')[1]);
-        r.onerror = () => rej(new Error('Read failed'));
-        r.readAsDataURL(file);
-      });
-      setProgress('Sending to Gemini AI…');
-      const data = await processPDF(b64, file.name);
-      setProgress('Saving course…');
-      await saveAndClose(data);
-    } catch (e) { setError('Failed: '+e.message); setStatus('error'); setProgress(''); }
-  };
-
-  const goPaste = async () => {
+  const go = async () => {
     setError('');
     try {
       const data = JSON.parse(pasteText.replace(/```json|```/g,'').trim());
-      if (!data.chapterTitle) throw new Error('Missing chapterTitle');
-      setStatus('processing'); setProgress('Saving course…');
-      await saveAndClose(data);
-    } catch (e) { setError('Invalid JSON: '+e.message); }
+      if (!data.chapterTitle) throw new Error('Missing chapterTitle — make sure the JSON is complete');
+      setStatus('processing');
+      const id = `c-${Date.now()}`;
+      const entry = { id, year, courseName:data.courseName||'Course', chapterTitle:data.chapterTitle, conceptCount:data.keyConcepts?.length||0, termCount:data.definitions?.length||0, qCount:data.questions?.length||0, addedAt:new Date().toLocaleDateString() };
+      await dbSaveCourse(entry, data);
+      const idx = await dbLoadCourseIndex();
+      setStatus('done');
+      setTimeout(() => onDone(idx), 700);
+    } catch (e) { setError('Invalid JSON: '+e.message); setStatus('idle'); }
   };
-
-  const disabled = status==='processing'||status==='done'||(mode==='ai'&&!file)||(mode==='paste'&&!pasteText.trim());
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.88)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1500, padding:20, overflowY:'auto' }}>
-      <div className="fade" style={{ background:'#13161d', border:'1px solid #252a36', borderRadius:16, padding:'28px 32px', maxWidth:500, width:'100%', margin:'auto' }}>
-        <div style={{ fontFamily:"'DM Serif Display',serif", fontSize:22, color:'#fff', marginBottom:6 }}>Add Course</div>
+      <div className="fade" style={{ background:'#13161d', border:'1px solid #252a36', borderRadius:16, padding:'28px 32px', maxWidth:540, width:'100%', margin:'auto' }}>
+        <div style={{ fontFamily:"'DM Serif Display',serif", fontSize:22, color:'#fff', marginBottom:4 }}>Add Course</div>
+        <p style={{ color:'#8892a4', fontSize:13, marginBottom:20 }}>Generate a study guide using Claude, ChatGPT, or any AI — then paste the JSON here.</p>
 
-        <div style={{ display:'flex', background:'#0d0f14', borderRadius:10, padding:4, marginBottom:20 }}>
-          {[{id:'ai',label:'✨ AI Upload (Gemini)'},{id:'paste',label:'📋 Paste JSON'}].map(m => (
-            <button key={m.id} onClick={() => { setMode(m.id); setError(''); setStatus('idle'); }} style={{ flex:1, padding:'8px 0', borderRadius:7, border:'none', background:mode===m.id?'#1a1e27':'none', color:mode===m.id?'#fff':'#8892a4', cursor:'pointer', fontSize:12, fontWeight:mode===m.id?600:400 }}>{m.label}</button>
-          ))}
-        </div>
-
+        {/* Year picker */}
         <div style={{ marginBottom:18 }}>
           <Mono color="#8892a4" size={10}>ASSIGN TO YEAR</Mono>
           <div style={{ display:'flex', gap:8, marginTop:8 }}>
-            {YEARS.map(y => (<button key={y} onClick={() => setYear(y)} style={{ flex:1, padding:'9px 0', borderRadius:8, cursor:'pointer', border:`1px solid ${year===y?YEAR_COLORS[y]+'70':'#252a36'}`, background:year===y?YEAR_BG[y]:'#0d0f14', color:year===y?YEAR_COLORS[y]:'#8892a4', fontWeight:year===y?700:400, fontSize:13 }}>Year {y}</button>))}
+            {YEARS.map(y => (<button key={y} onClick={()=>setYear(y)} style={{ flex:1, padding:'9px 0', borderRadius:8, cursor:'pointer', border:`1px solid ${year===y?YEAR_COLORS[y]+'70':'#252a36'}`, background:year===y?YEAR_BG[y]:'#0d0f14', color:year===y?YEAR_COLORS[y]:'#8892a4', fontWeight:year===y?700:400, fontSize:13 }}>Year {y}</button>))}
           </div>
         </div>
 
-        {mode==='ai' && (
-          <>
-            <p style={{ color:'#8892a4', fontSize:12.5, marginBottom:12 }}>Upload a PDF — Gemini reads it and generates concepts, definitions, mechanisms &amp; <strong style={{ color:'#f9a84f' }}>25 practice questions</strong>. Processed directly in your browser — no file size limit.</p>
-            <div onClick={() => ref.current?.click()} style={{ border:`2px dashed ${file?'#7fda96':'#252a36'}`, borderRadius:10, padding:'20px', textAlign:'center', cursor:'pointer', marginBottom:12, background:file?'rgba(127,218,150,0.04)':'#0d0f14' }}>
-              <div style={{ fontSize:22, marginBottom:5 }}>{file?'✅':'📄'}</div>
-              <div style={{ color:file?'#7fda96':'#8892a4', fontSize:13 }}>{file?file.name:'Click to select a PDF'}</div>
-              <input ref={ref} type="file" accept=".pdf" onChange={e => { const f=e.target.files[0]; if(f?.type==='application/pdf'){setFile(f);setError('');}else setError('PDF only.'); }} style={{ display:'none' }}/>
+        {/* How to guide */}
+        <div style={{ background:'rgba(79,156,249,0.05)', border:'1px solid #4f9cf920', borderRadius:10, padding:'14px 16px', marginBottom:16 }}>
+          <div style={{ fontSize:12, fontWeight:600, color:'#4f9cf9', marginBottom:10 }}>How to generate a study guide</div>
+          <div style={{ fontSize:12, color:'#8892a4', lineHeight:1.8 }}>
+            <span style={{ color:'#fff' }}>Step 1</span> — Open Claude.ai, ChatGPT, or any AI<br/>
+            <span style={{ color:'#fff' }}>Step 2</span> — Upload your PDF<br/>
+            <span style={{ color:'#fff' }}>Step 3</span> — Copy and paste this prompt:
+          </div>
+          <div style={{ marginTop:10, background:'#0d0f14', border:'1px solid #252a36', borderRadius:8, padding:'10px 12px', display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10 }}>
+            <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:'#8892a4', lineHeight:1.6, flex:1 }}>
+              Generate a StudyHub JSON study guide for this PDF…
             </div>
-          </>
-        )}
+            <button onClick={copyPrompt} style={{ background:copied?'rgba(127,218,150,0.1)':'rgba(79,156,249,0.1)', border:`1px solid ${copied?'#7fda9640':'#4f9cf930'}`, borderRadius:6, color:copied?'#7fda96':'#4f9cf9', cursor:'pointer', padding:'5px 12px', fontSize:11, fontFamily:"'IBM Plex Mono',monospace", flexShrink:0 }}>
+              {copied?'✓ Copied':'Copy Prompt'}
+            </button>
+          </div>
+          <div style={{ fontSize:12, color:'#8892a4', lineHeight:1.8, marginTop:10 }}>
+            <span style={{ color:'#fff' }}>Step 4</span> — Copy the JSON the AI produces<br/>
+            <span style={{ color:'#fff' }}>Step 5</span> — Paste it in the box below
+          </div>
+        </div>
 
-        {mode==='paste' && (
-          <>
-            <p style={{ color:'#8892a4', fontSize:12.5, marginBottom:10 }}>Generate a study guide in Claude, ChatGPT, or any AI — paste the JSON here.</p>
-            <textarea value={pasteText} onChange={e => setPasteText(e.target.value)} placeholder={'{\n  "courseName": "COS 341",\n  "chapterTitle": "Memory System",\n  ...\n}'} rows={9} style={{ width:'100%', background:'#0d0f14', border:'1px solid #252a36', borderRadius:8, padding:'11px 14px', color:'#e2e6f0', fontSize:12, fontFamily:"'IBM Plex Mono',monospace", resize:'vertical', marginBottom:10 }}/>
-          </>
-        )}
+        {/* Paste area */}
+        <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)}
+          placeholder={'{\n  "courseName": "COS 341",\n  "chapterTitle": "Memory System",\n  "keyConcepts": [...],\n  ...\n}'}
+          rows={10} style={{ width:'100%', background:'#0d0f14', border:'1px solid #252a36', borderRadius:8, padding:'12px 14px', color:'#e2e6f0', fontSize:12, fontFamily:"'IBM Plex Mono',monospace", resize:'vertical', marginBottom:12 }}/>
 
         {error && <div style={{ background:'rgba(240,80,80,0.1)', border:'1px solid #f05050', borderRadius:8, padding:'9px 14px', color:'#f05050', fontSize:12.5, marginBottom:10 }}>{error}</div>}
-        {status==='processing' && (
-          <div style={{ background:'rgba(79,156,249,0.08)', border:'1px solid #4f9cf930', borderRadius:8, padding:'10px 14px', color:'#4f9cf9', fontSize:13, marginBottom:10, display:'flex', alignItems:'center', gap:10 }}>
-            <span style={{ animation:'spin 1s linear infinite', display:'inline-block' }}>⟳</span>
-            {progress||'Processing…'}
-          </div>
-        )}
+        {status==='processing' && <div style={{ background:'rgba(79,156,249,0.08)', border:'1px solid #4f9cf930', borderRadius:8, padding:'10px 14px', color:'#4f9cf9', fontSize:13, marginBottom:10, display:'flex', alignItems:'center', gap:10 }}><span style={{ animation:'spin 1s linear infinite', display:'inline-block' }}>⟳</span>Saving course…</div>}
         {status==='done' && <div style={{ background:'rgba(127,218,150,0.08)', border:'1px solid #7fda9640', borderRadius:8, padding:'10px 14px', color:'#7fda96', fontSize:13, marginBottom:10 }}>✓ Course added to Year {year}!</div>}
 
-        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:4 }}>
+        <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
           <button onClick={onClose} style={{ background:'none', border:'1px solid #252a36', borderRadius:8, color:'#8892a4', cursor:'pointer', padding:'9px 18px', fontSize:13 }}>Cancel</button>
-          <button onClick={mode==='ai'?goAI:goPaste} disabled={disabled} style={{ background:disabled?'#252a36':'#4f9cf9', border:'none', borderRadius:8, color:disabled?'#8892a4':'#000', cursor:disabled?'not-allowed':'pointer', padding:'9px 22px', fontSize:13, fontWeight:700 }}>
-            {status==='processing'?'Processing…':status==='done'?'Done!':mode==='ai'?'Generate with Gemini':'Save Course'}
+          <button onClick={go} disabled={!pasteText.trim()||status==='processing'||status==='done'} style={{ background:!pasteText.trim()||status==='processing'||status==='done'?'#252a36':'#4f9cf9', border:'none', borderRadius:8, color:!pasteText.trim()||status==='processing'||status==='done'?'#8892a4':'#000', cursor:!pasteText.trim()||status==='processing'||status==='done'?'not-allowed':'pointer', padding:'9px 22px', fontSize:13, fontWeight:700 }}>
+            {status==='processing'?'Saving…':status==='done'?'Done!':'Save Course'}
           </button>
         </div>
       </div>
@@ -607,11 +537,11 @@ const ALL_TABS = [
 ];
 
 function CourseView({ course, user, progress, onBack, onProgressUpdate }) {
-  const [tab, setTab]   = useState('concepts');
+  const [tab, setTab]     = useState('concepts');
   const [openQ, setOpenQ] = useState(null);
   const [filter, setFilter] = useState('');
-  const d = course.data;
-  const cp = progress[course.id]||{ viewed:false, openedQs:[] };
+  const d   = course.data;
+  const cp  = progress[course.id]||{ viewed:false, openedQs:[] };
   const isPriv = user.role!==ROLE.USER;
 
   useEffect(() => { if(!cp.viewed){ const n={...progress,[course.id]:{...cp,viewed:true}}; onProgressUpdate(n); } }, []);
@@ -627,7 +557,7 @@ function CourseView({ course, user, progress, onBack, onProgressUpdate }) {
   const tabs    = ALL_TABS.filter(t=>t.id!=='algorithms'||hasAlgo);
   const filteredQ = (d.questions||[]).filter(q=>!filter||q.question.toLowerCase().includes(filter.toLowerCase()));
   const accent  = YEAR_COLORS[course.year]||'#4f9cf9';
-  const chatCtx = { courseName:d.courseName, chapterTitle:d.chapterTitle, summary:[d.keyConcepts?.slice(0,5).map(c=>c.title).join(', '),d.chapters?.map(c=>c.name).join(', ')].filter(Boolean).join(' | ') };
+  const chatCtx = { courseName:d.courseName, chapterTitle:d.chapterTitle, summary:[d.keyConcepts?.slice(0,5).map(c=>c.title).join(', '), d.chapters?.map(c=>c.name).join(', ')].filter(Boolean).join(' | ') };
 
   return (
     <div style={{ maxWidth:940, margin:'0 auto', padding:'28px 20px 80px' }}>
@@ -638,6 +568,7 @@ function CourseView({ course, user, progress, onBack, onProgressUpdate }) {
           {!isPriv && <div style={{ fontSize:12, color:'#8892a4' }}>{cp.openedQs.length}/{totalQ} revealed</div>}
         </div>
       </div>
+
       <div style={{ borderBottom:'1px solid #252a36', paddingBottom:24, marginBottom:30 }}>
         <Mono>{d.courseName}</Mono>
         <h1 style={{ fontFamily:"'DM Serif Display',serif", fontSize:'clamp(22px,4vw,38px)', color:'#fff', lineHeight:1.15, margin:'8px 0 10px' }}>{d.chapterTitle}</h1>
@@ -648,40 +579,39 @@ function CourseView({ course, user, progress, onBack, onProgressUpdate }) {
         </div>
         {!isPriv && <ProgressBar pct={pct} color={accent}/>}
       </div>
+
       <div style={{ display:'flex', gap:4, flexWrap:'wrap', borderBottom:'1px solid #252a36', marginBottom:30 }}>
-        {tabs.map(t => (<button key={t.id} onClick={() => setTab(t.id)} style={{ background:tab===t.id?'#4f9cf918':'none', border:'none', borderBottom:tab===t.id?'2px solid #4f9cf9':'2px solid transparent', color:tab===t.id?'#4f9cf9':'#8892a4', cursor:'pointer', padding:'9px 15px', fontSize:13, fontWeight:tab===t.id?600:400 }}>{t.label}</button>))}
+        {tabs.map(t => (<button key={t.id} onClick={()=>setTab(t.id)} style={{ background:tab===t.id?'#4f9cf918':'none', border:'none', borderBottom:tab===t.id?'2px solid #4f9cf9':'2px solid transparent', color:tab===t.id?'#4f9cf9':'#8892a4', cursor:'pointer', padding:'9px 15px', fontSize:13, fontWeight:tab===t.id?600:400 }}>{t.label}</button>))}
       </div>
 
-      {tab==='concepts' && <div className="fade"><SectionLabel>Key Concepts</SectionLabel><div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))', gap:12 }}>{(d.keyConcepts||[]).map((c,i)=><div key={i} style={{ background:'#1a1e27', border:'1px solid #252a36', borderRadius:10, padding:'15px 17px', borderLeft:`3px solid ${(COLOR_MAP[c.color]||COLOR_MAP.blue).bar}` }}><div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:11, fontWeight:600, color:'#fff', marginBottom:5 }}>{c.title}</div><p style={{ fontSize:12.5, color:'#8892a4', lineHeight:1.65, margin:0 }}>{c.description}</p></div>)}</div></div>}
-      {tab==='definitions' && <div className="fade"><SectionLabel>Terms & Definitions</SectionLabel><div style={{ background:'#1a1e27', border:'1px solid #252a36', borderRadius:10, overflow:'hidden' }}>{(d.definitions||[]).map((def,i)=><div key={i} style={{ display:'grid', gridTemplateColumns:'190px 1fr', borderBottom:i<d.definitions.length-1?'1px solid #252a36':'none' }}><div style={{ padding:'12px 14px', fontFamily:"'IBM Plex Mono',monospace", fontSize:11, fontWeight:600, color:'#7fda96', background:'#13161d' }}>{def.term}</div><div style={{ padding:'12px 14px', fontSize:13, color:'#e2e6f0', lineHeight:1.7 }}>{def.definition}</div></div>)}</div></div>}
-      {tab==='mechanisms' && <div className="fade"><SectionLabel>Mechanisms Explained</SectionLabel><div style={{ display:'flex', flexDirection:'column', gap:13 }}>{(d.mechanisms||[]).map((m,i)=><div key={i} style={{ background:'#1a1e27', border:'1px solid #252a36', borderRadius:10, padding:'18px 22px' }}><div style={{ fontFamily:"'DM Serif Display',serif", fontSize:17, color:'#fff', marginBottom:10 }}>{m.title}</div><p style={{ fontSize:13, color:'#8892a4', lineHeight:1.85, margin:0, whiteSpace:'pre-line' }}>{m.body}</p></div>)}</div></div>}
-      {tab==='algorithms' && hasAlgo && <div className="fade"><SectionLabel>Algorithms & Methods</SectionLabel><div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(228px,1fr))', gap:11 }}>{(d.algorithms||[]).map((a,i)=><div key={i} style={{ background:'#1a1e27', border:'1px solid #252a36', borderRadius:8, padding:'13px 15px' }}><div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:'#da7ff0', fontWeight:600, marginBottom:5 }}>{a.name}</div><p style={{ fontSize:12, color:'#8892a4', lineHeight:1.65, margin:0 }}>{a.description}</p>{a.note&&<p style={{ fontSize:11, color:'#f9a84f', marginTop:5, marginBottom:0 }}>{a.note}</p>}</div>)}</div></div>}
-      {tab==='takeaways' && <div className="fade"><SectionLabel>Takeaways Per Chapter</SectionLabel><div style={{ display:'flex', flexDirection:'column', gap:15 }}>{(d.chapters||[]).map((ch,i)=><div key={i} style={{ background:'#13161d', border:'1px solid #252a36', borderRadius:12, padding:'18px 22px' }}><div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, color:'#8892a4', letterSpacing:2, textTransform:'uppercase', marginBottom:3 }}>{ch.num}</div><div style={{ fontFamily:"'DM Serif Display',serif", fontSize:17, color:'#fff', marginBottom:11 }}>{ch.name}</div><div style={{ display:'flex', flexDirection:'column', gap:9 }}>{(ch.takeaways||[]).map((t,j)=><div key={j} style={{ display:'flex', gap:11, alignItems:'flex-start', fontSize:13, color:'#e2e6f0' }}><span style={{ color:'#da7ff0', flexShrink:0 }}>→</span><span>{t}</span></div>)}</div></div>)}</div></div>}
+      {tab==='concepts'&&<div className="fade"><SectionLabel>Key Concepts</SectionLabel><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))',gap:12}}>{(d.keyConcepts||[]).map((c,i)=><div key={i} style={{background:'#1a1e27',border:'1px solid #252a36',borderRadius:10,padding:'15px 17px',borderLeft:`3px solid ${(COLOR_MAP[c.color]||COLOR_MAP.blue).bar}`}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'#fff',marginBottom:5}}>{c.title}</div><p style={{fontSize:12.5,color:'#8892a4',lineHeight:1.65,margin:0}}>{c.description}</p></div>)}</div></div>}
+      {tab==='definitions'&&<div className="fade"><SectionLabel>Terms & Definitions</SectionLabel><div style={{background:'#1a1e27',border:'1px solid #252a36',borderRadius:10,overflow:'hidden'}}>{(d.definitions||[]).map((def,i)=><div key={i} style={{display:'grid',gridTemplateColumns:'190px 1fr',borderBottom:i<d.definitions.length-1?'1px solid #252a36':'none'}}><div style={{padding:'12px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'#7fda96',background:'#13161d'}}>{def.term}</div><div style={{padding:'12px 14px',fontSize:13,color:'#e2e6f0',lineHeight:1.7}}>{def.definition}</div></div>)}</div></div>}
+      {tab==='mechanisms'&&<div className="fade"><SectionLabel>Mechanisms Explained</SectionLabel><div style={{display:'flex',flexDirection:'column',gap:13}}>{(d.mechanisms||[]).map((m,i)=><div key={i} style={{background:'#1a1e27',border:'1px solid #252a36',borderRadius:10,padding:'18px 22px'}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'#fff',marginBottom:10}}>{m.title}</div><p style={{fontSize:13,color:'#8892a4',lineHeight:1.85,margin:0,whiteSpace:'pre-line'}}>{m.body}</p></div>)}</div></div>}
+      {tab==='algorithms'&&hasAlgo&&<div className="fade"><SectionLabel>Algorithms & Methods</SectionLabel><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(228px,1fr))',gap:11}}>{(d.algorithms||[]).map((a,i)=><div key={i} style={{background:'#1a1e27',border:'1px solid #252a36',borderRadius:8,padding:'13px 15px'}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'#da7ff0',fontWeight:600,marginBottom:5}}>{a.name}</div><p style={{fontSize:12,color:'#8892a4',lineHeight:1.65,margin:0}}>{a.description}</p>{a.note&&<p style={{fontSize:11,color:'#f9a84f',marginTop:5,marginBottom:0}}>{a.note}</p>}</div>)}</div></div>}
+      {tab==='takeaways'&&<div className="fade"><SectionLabel>Takeaways Per Chapter</SectionLabel><div style={{display:'flex',flexDirection:'column',gap:15}}>{(d.chapters||[]).map((ch,i)=><div key={i} style={{background:'#13161d',border:'1px solid #252a36',borderRadius:12,padding:'18px 22px'}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#8892a4',letterSpacing:2,textTransform:'uppercase',marginBottom:3}}>{ch.num}</div><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'#fff',marginBottom:11}}>{ch.name}</div><div style={{display:'flex',flexDirection:'column',gap:9}}>{(ch.takeaways||[]).map((t,j)=><div key={j} style={{display:'flex',gap:11,alignItems:'flex-start',fontSize:13,color:'#e2e6f0'}}><span style={{color:'#da7ff0',flexShrink:0}}>→</span><span>{t}</span></div>)}</div></div>)}</div></div>}
 
-      {tab==='questions' && (
+      {tab==='questions'&&(
         <div className="fade">
           <SectionLabel>Practice Questions & Answers</SectionLabel>
-          {!isPriv && <div style={{ background:'rgba(79,156,249,0.05)', border:'1px solid #4f9cf920', borderRadius:8, padding:'9px 13px', marginBottom:14, display:'flex', justifyContent:'space-between', fontSize:12, color:'#8892a4' }}>
+          {!isPriv&&<div style={{background:'rgba(79,156,249,0.05)',border:'1px solid #4f9cf920',borderRadius:8,padding:'9px 13px',marginBottom:14,display:'flex',justifyContent:'space-between',fontSize:12,color:'#8892a4'}}>
             <span>Click to reveal answers — progress saved automatically.</span>
-            <span style={{ color:'#4f9cf9', fontFamily:"'IBM Plex Mono',monospace", fontSize:10 }}>{cp.openedQs.length}/{totalQ} opened</span>
+            <span style={{color:'#4f9cf9',fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>{cp.openedQs.length}/{totalQ} opened</span>
           </div>}
-          <input placeholder="Search questions…" value={filter} onChange={e=>setFilter(e.target.value)} style={{ width:'100%', background:'#13161d', border:'1px solid #252a36', borderRadius:8, padding:'9px 13px', color:'#fff', fontSize:13, marginBottom:14, fontFamily:"'DM Sans',sans-serif" }}/>
+          <input placeholder="Search questions…" value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',background:'#13161d',border:'1px solid #252a36',borderRadius:8,padding:'9px 13px',color:'#fff',fontSize:13,marginBottom:14,fontFamily:"'DM Sans',sans-serif"}}/>
           <Mono color="#8892a4" size={9}>SHOWING {filteredQ.length} OF {totalQ} QUESTIONS</Mono>
-          <div style={{ display:'flex', flexDirection:'column', gap:9, marginTop:12 }}>
-            {filteredQ.map(q => {
-              const ri = (d.questions||[]).indexOf(q);
-              const isOpen = openQ===ri;
-              const seen = cp.openedQs.includes(ri);
-              return (
-                <div key={ri} style={{ background:'#1a1e27', border:`1px solid ${seen?'#7fda9630':'#252a36'}`, borderRadius:10, overflow:'hidden' }}>
-                  <div onClick={() => revealQ(ri)} style={{ padding:'13px 17px', display:'flex', alignItems:'flex-start', gap:12, cursor:'pointer' }}>
-                    <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, background:seen?'#7fda96':'#4f9cf9', color:'#000', borderRadius:4, padding:'2px 6px', flexShrink:0, marginTop:3 }}>Q{ri+1}</span>
-                    <span style={{ fontSize:13.5, color:'#fff', fontWeight:500, lineHeight:1.6, flex:1 }}>{q.question}</span>
-                    <span style={{ color:'#8892a4', fontSize:18, flexShrink:0, lineHeight:1 }}>{isOpen?'−':'+'}</span>
+          <div style={{display:'flex',flexDirection:'column',gap:9,marginTop:12}}>
+            {filteredQ.map(q=>{
+              const ri=(d.questions||[]).indexOf(q);const isOpen=openQ===ri;const seen=cp.openedQs.includes(ri);
+              return(
+                <div key={ri} style={{background:'#1a1e27',border:`1px solid ${seen?'#7fda9630':'#252a36'}`,borderRadius:10,overflow:'hidden'}}>
+                  <div onClick={()=>revealQ(ri)} style={{padding:'13px 17px',display:'flex',alignItems:'flex-start',gap:12,cursor:'pointer'}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:seen?'#7fda96':'#4f9cf9',color:'#000',borderRadius:4,padding:'2px 6px',flexShrink:0,marginTop:3}}>Q{ri+1}</span>
+                    <span style={{fontSize:13.5,color:'#fff',fontWeight:500,lineHeight:1.6,flex:1}}>{q.question}</span>
+                    <span style={{color:'#8892a4',fontSize:18,flexShrink:0,lineHeight:1}}>{isOpen?'−':'+'}</span>
                   </div>
-                  {isOpen && <div className="fade" style={{ borderTop:'1px solid #252a36', padding:'14px 17px', background:'rgba(79,156,249,0.04)' }}>
+                  {isOpen&&<div className="fade" style={{borderTop:'1px solid #252a36',padding:'14px 17px',background:'rgba(79,156,249,0.04)'}}>
                     <Mono color="#7fda96" size={9}>Answer</Mono>
-                    <p style={{ fontSize:13, color:'#e2e6f0', lineHeight:1.8, margin:'8px 0 0', whiteSpace:'pre-line' }}>{q.answer}</p>
+                    <p style={{fontSize:13,color:'#e2e6f0',lineHeight:1.8,margin:'8px 0 0',whiteSpace:'pre-line'}}>{q.answer}</p>
                   </div>}
                 </div>
               );
@@ -701,7 +631,7 @@ function ManageAdminsTab() {
   const [users,setUsers]=useState([]);const [admins,setAdmins]=useState([]);const [search,setSearch]=useState('');const [busy,setBusy]=useState('');const [msg,setMsg]=useState('');
   useEffect(()=>{Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setUsers(u);setAdmins(a);});},[]);
   const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),2500);};
-  const toggleAdmin=async u=>{setBusy(u.username);const isAdm=admins.includes(u.username.toLowerCase());const next=isAdm?admins.filter(a=>a!==u.username.toLowerCase()):[...admins,u.username.toLowerCase()];setAdmins(next);await dbSetAdmins(next);flash(`${u.display_name||u.username} ${isAdm?'demoted to Student':'promoted to Admin'}.`);setBusy('');};
+  const toggleAdmin=async u=>{setBusy(u.username);const isAdm=admins.includes(u.username.toLowerCase());const next=isAdm?admins.filter(a=>a!==u.username.toLowerCase()):[...admins,u.username.toLowerCase()];setAdmins(next);await dbSetAdmins(next);flash(`${u.display_name||u.username} ${isAdm?'demoted':'promoted to Admin'}.`);setBusy('');};
   const filtered=users.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())||u.display_name?.toLowerCase().includes(search.toLowerCase()));
   return(
     <div>
@@ -723,8 +653,8 @@ function ManageAdminsTab() {
    ADMIN PANEL
 ═══════════════════════════════════════════════ */
 function AdminPanel({ user, courses, onClose, onCoursesChange }) {
-  const isSU2 = user.role===ROLE.SUPERUSER;
-  const pTabs = [{id:'courses',label:'Courses'},{id:'users',label:'Users'},...(isSU2?[{id:'admins',label:'⚡ Manage Admins'}]:[])];
+  const isSU2=user.role===ROLE.SUPERUSER;
+  const pTabs=[{id:'courses',label:'Courses'},{id:'users',label:'Users'},...(isSU2?[{id:'admins',label:'⚡ Manage Admins'}]:[])];
   const [tab,setTab]=useState('courses');const [allUsers,setAllUsers]=useState([]);const [admins,setAdmins]=useState([]);const [filterY,setFilterY]=useState(0);const [showUpload,setShowUpload]=useState(false);
   useEffect(()=>{Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});},[]);
   const doDelete=async id=>{if(!confirm('Delete this course permanently?'))return;await dbDeleteCourse(id);const idx=await dbLoadCourseIndex();onCoursesChange(idx);};
