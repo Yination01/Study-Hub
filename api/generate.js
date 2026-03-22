@@ -1,11 +1,20 @@
 /**
  * StudyHub — Gemini PDF Processing API
- * © 2025 Yination, Nacos '027. All rights reserved.
+ * © 2025 Yination & Excalibur. All rights reserved.
  *
  * POST /api/generate
  * Body: { base64Data: string, filename: string }
- * Returns: study guide JSON
  */
+
+// Increase Vercel's default 4.5MB body limit to 20MB
+// A 14MB PDF becomes ~19MB when base64 encoded — this covers most lecture notes
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '20mb',
+    },
+  },
+};
 
 const SYSTEM_PROMPT = `You are an expert academic study guide generator.
 Return ONLY a valid JSON object — no markdown fences, no preamble, no trailing text.
@@ -29,13 +38,12 @@ Rules:
 - algorithms: only if the doc has algorithms/methods to compare; empty [] otherwise
 - chapters: 4-8 section blocks, each with EXACTLY 3 non-obvious takeaways
 - questions: EXACTLY 25 challenging varied exam-style questions with full worked answers.
-  Mix types: definition, calculation/trace, comparison, application, "explain why", scenario-based.
+  Mix types: definition, calculation/trace, comparison, application, explain why, scenario-based.
   Keep ALL worked examples from the source document.
 - Preserve chronological order of the source material.
 - Return ONLY the JSON object, nothing else.`;
 
 export default async function handler(req, res) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -61,10 +69,7 @@ export default async function handler(req, res) {
               { text: `${SYSTEM_PROMPT}\n\nFilename hint: ${filename || 'unknown'}` }
             ]
           }],
-          generationConfig: {
-            temperature: 0.4,
-            maxOutputTokens: 8192,
-          }
+          generationConfig: { temperature: 0.4, maxOutputTokens: 8192 }
         })
       }
     );
@@ -77,11 +82,8 @@ export default async function handler(req, res) {
     const geminiData = await geminiRes.json();
     const raw = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const clean = raw.replace(/```json|```/g, '').trim();
-
     if (!clean) return res.status(502).json({ error: 'Empty response from Gemini' });
-
-    const parsed = JSON.parse(clean);
-    return res.status(200).json(parsed);
+    return res.status(200).json(JSON.parse(clean));
 
   } catch (err) {
     console.error('Generate error:', err);
