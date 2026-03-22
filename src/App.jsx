@@ -11,7 +11,7 @@ import { createClient } from '@supabase/supabase-js';
 
 /* ═══════════════ CONFIG ═══════════════ */
 const SUPERUSER_USERNAME = 'yination';
-const SUPERUSER_PASSWORD = 'ucwme50p';
+const SUPERUSER_PASSWORD = 'nacos@owner027';
 const APP_VERSION        = '3.3.0';
 const COPYRIGHT_YEAR     = '2025';
 
@@ -258,7 +258,17 @@ const Mono=({children,color='#4f9cf9',size=10})=>(<span style={{fontFamily:"'IBM
 const SectionLabel=({children})=>(<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:3,textTransform:'uppercase',color:'#f9a84f',marginBottom:20,display:'flex',alignItems:'center',gap:10}}>{children}<div style={{flex:1,height:1,background:'var(--border)'}}/></div>);
 const Field=({label,type='text',value,onChange,placeholder,error,disabled})=>(<div style={{marginBottom:14}}>{label&&<div style={{fontSize:11,color:'var(--muted)',marginBottom:5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{label}</div>}<input type={type} value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} style={{width:'100%',background:disabled?'rgba(0,0,0,.2)':'var(--input-bg)',border:`1px solid ${error?'#f05050':'var(--border)'}`,borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>{error&&<div style={{color:'#f05050',fontSize:11,marginTop:4}}>{error}</div>}</div>);
 const Avatar=({name,size=32})=>{const ini=name?name.slice(0,2).toUpperCase():'??';const hue=name?name.split('').reduce((a,c)=>a+c.charCodeAt(0),0)%360:200;return<div style={{width:size,height:size,borderRadius:'50%',background:`hsl(${hue},55%,25%)`,border:`2px solid hsl(${hue},55%,45%)`,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'IBM Plex Mono',monospace",fontSize:size*.33,color:`hsl(${hue},80%,80%)`,flexShrink:0}}>{ini}</div>;};
-const RoleBadge=({role})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:ROLE_BG[role],color:ROLE_COLOR[role],border:`1px solid ${ROLE_COLOR[role]}40`,borderRadius:5,padding:'3px 8px',letterSpacing:1}}>{ROLE_LABEL[role]}</span>);
+const RoleBadge=({role})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:ROLE_BG[role],color:ROLE_COLOR[role],border:`1px solid ${ROLE_COLOR[role]}40`,borderRadius:5,padding:'3px 8px',letterSpacing:1,display:'inline-flex',alignItems:'center',gap:4}}>{ROLE_LABEL[role]}</span>);
+
+/* Larger pill used in headers/profile areas */
+const RolePill=({role})=>{
+  const icons={superuser:'⚡',admin:'🛡',user:'🎓'};
+  return(
+    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,background:ROLE_BG[role],color:ROLE_COLOR[role],border:`1px solid ${ROLE_COLOR[role]}50`,borderRadius:20,padding:'4px 12px',letterSpacing:1,display:'inline-flex',alignItems:'center',gap:5,fontWeight:600}}>
+      {icons[role]} {role.toUpperCase()}
+    </span>
+  );
+};
 const ProgressBar=({pct,color='#4f9cf9'})=>(<div style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><Mono color="var(--muted)" size={9}>PROGRESS</Mono><Mono color={color} size={9}>{pct}%</Mono></div><div style={{height:3,background:'var(--border)',borderRadius:2}}><div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2,transition:'width .5s ease'}}/></div></div>);
 
 /* ═══════════════ THEME TOGGLE ═══════════════ */
@@ -489,7 +499,7 @@ Return ONLY valid JSON with this exact structure:
 }
 Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none, chapters 4-8 with EXACTLY 3 takeaways each, questions EXACTLY 25 exam-style with full worked answers. Return ONLY the JSON.`;
 
-function UploadModal({onClose,onDone}){
+function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
   const[year,setYear]=useState(1);const[pasteText,setPasteText]=useState('');const[status,setStatus]=useState('idle');const[error,setError]=useState('');const[copied,setCopied]=useState(false);
   const copyPrompt=()=>{navigator.clipboard.writeText(JSON_PROMPT);setCopied(true);setTimeout(()=>setCopied(false),2000);};
   const go=async()=>{
@@ -498,17 +508,26 @@ function UploadModal({onClose,onDone}){
       const data=JSON.parse(pasteText.replace(/```json|```/g,'').trim());
       if(!data.chapterTitle)throw new Error('Missing chapterTitle');
       setStatus('processing');
-      const id=`c-${Date.now()}`;
-      const entry={id,year,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
-      await dbSaveCourse(entry,data);
-      const idx=await dbLoadCourseIndex();setStatus('done');setTimeout(()=>onDone(idx),700);
+      if(adminMode){
+        // Admin mode: build entry and pass to parent for approval submission
+        const id=`c-${Date.now()}`;
+        const entry={id,year,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+        await onDone(null,entry,data);
+        setStatus('done');
+      } else {
+        const id=`c-${Date.now()}`;
+        const entry={id,year,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+        await dbSaveCourse(entry,data);
+        const idx=await dbLoadCourseIndex();setStatus('done');setTimeout(()=>onDone(idx),700);
+      }
     }catch(e){setError('Invalid JSON: '+e.message);setStatus('idle');}
   };
   return(
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 32px',maxWidth:540,width:'100%',margin:'auto',boxShadow:'var(--shadow)'}}>
-        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'var(--text)',marginBottom:4}}>Add Course</div>
-        <p style={{color:'var(--muted)',fontSize:13,marginBottom:20}}>Generate a study guide using Claude, ChatGPT, or any AI — paste the JSON here.</p>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'var(--text)',marginBottom:4}}>{adminMode?'Request New Course':'Add Course'}</div>
+        <p style={{color:'var(--muted)',fontSize:13,marginBottom:adminMode?8:20}}>{adminMode?'Paste the JSON below — your request will be sent to the superuser for approval.':'Generate a study guide using Claude, ChatGPT, or any AI — paste the JSON here.'}</p>
+        {adminMode&&<div style={{background:'rgba(218,127,240,.06)',border:'1px solid rgba(218,127,240,.2)',borderRadius:8,padding:'8px 14px',fontSize:12,color:'#da7ff0',marginBottom:16}}>🛡 This request will be queued and only go live once the superuser approves it.</div>}
         <div style={{marginBottom:18}}>
           <Mono color="var(--muted)" size={10}>ASSIGN TO YEAR</Mono>
           <div style={{display:'flex',gap:8,marginTop:8}}>
@@ -526,12 +545,12 @@ function UploadModal({onClose,onDone}){
         </div>
         <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder={'{\n  "courseName": "COS 341",\n  "chapterTitle": "Memory System",\n  ...\n}'} rows={9} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:12,fontFamily:"'IBM Plex Mono',monospace",resize:'vertical',marginBottom:12}}/>
         {error&&<div style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,padding:'9px 14px',color:'#f05050',fontSize:12.5,marginBottom:10}}>{error}</div>}
-        {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>Saving course…</div>}
-        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>✓ Course added to Year {year}!</div>}
+        {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>{adminMode?'Submitting request…':'Saving course…'}</div>}
+        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':'✓ Course added to Year '+year+'!'}</div>}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
           <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>Cancel</button>
-          <button onClick={go} disabled={!pasteText.trim()||status==='processing'||status==='done'} style={{background:!pasteText.trim()||status==='processing'||status==='done'?'var(--border)':'#4f9cf9',border:'none',borderRadius:8,color:!pasteText.trim()||status==='processing'||status==='done'?'var(--muted)':'#000',cursor:'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}>
-            {status==='processing'?'Saving…':status==='done'?'Done!':'Save Course'}
+          <button onClick={go} disabled={!pasteText.trim()||status==='processing'||status==='done'} style={{background:!pasteText.trim()||status==='processing'||status==='done'?'var(--border)':adminMode?'#da7ff0':'#4f9cf9',border:'none',borderRadius:8,color:!pasteText.trim()||status==='processing'||status==='done'?'var(--muted)':'#000',cursor:'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}>
+            {status==='processing'?'Submitting…':status==='done'?'Done!':adminMode?'Submit for Approval':'Save Course'}
           </button>
         </div>
       </div>
@@ -618,25 +637,43 @@ function CommunityBoard({courseId,user}){
 function ResourcesTab({courseId,user}){
   const[resources,setResources]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',url:'',type:'link'});const[loading,setLoading]=useState(false);
+  const[msg,setMsg]=useState('');
   const isPriv=user.role!==ROLE.USER;
+  const isSU2=user.role===ROLE.SUPERUSER;
+  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
 
   const load=async()=>{const r=await dbLoadResources(courseId);setResources(r);};
   useEffect(()=>{load();},[courseId]);
 
   const add=async()=>{
     if(!form.title.trim()||!form.url.trim())return;setLoading(true);
-    await dbAddResource({id:`r-${Date.now()}`,course_id:courseId,title:form.title,url:form.url,type:form.type,added_by:user.username,added_at:new Date().toISOString()});
-    setForm({title:'',url:'',type:'link'});setShowForm(false);await load();setLoading(false);
+    const resource={id:`r-${Date.now()}`,course_id:courseId,title:form.title,url:form.url,type:form.type,added_by:user.username,added_at:new Date().toISOString()};
+    if(isSU2){
+      await dbAddResource(resource);await load();
+    } else {
+      await dbSubmitPending('add_resource',user.username,resource);
+      flash('✓ Resource submitted for superuser approval.');
+    }
+    setForm({title:'',url:'',type:'link'});setShowForm(false);setLoading(false);
   };
 
-  const del=async id=>{await dbDeleteResource(id);await load();};
+  const del=async id=>{
+    if(isSU2){
+      await dbDeleteResource(id);await load();
+    } else {
+      await dbSubmitPending('delete_resource',user.username,{id});
+      flash('✓ Deletion request submitted for superuser approval.');
+    }
+  };
 
   return(
     <div className="fade-up">
       <SectionLabel>Resources</SectionLabel>
+      {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12.5,marginBottom:14}}>{msg}</div>}
+      {isPriv&&!isSU2&&<div style={{background:'rgba(218,127,240,.06)',border:'1px solid rgba(218,127,240,.2)',borderRadius:8,padding:'8px 14px',fontSize:12,color:'#da7ff0',marginBottom:12}}>🛡 Resource add/remove requests go to the superuser for approval.</div>}
       {isPriv&&(
         <button onClick={()=>setShowForm(s=>!s)} style={{background:'rgba(127,218,150,.1)',border:'1px solid rgba(127,218,150,.25)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600,marginBottom:16}}>
-          {showForm?'✕ Cancel':'+ Add Resource'}
+          {showForm?'✕ Cancel':isSU2?'+ Add Resource':'+ Request Resource'}
         </button>
       )}
       {showForm&&isPriv&&(
@@ -649,19 +686,22 @@ function ResourcesTab({courseId,user}){
               {['link','video','pdf','doc'].map(t=><button key={t} onClick={()=>setForm(f=>({...f,type:t}))} style={{padding:'7px 14px',borderRadius:7,border:`1px solid ${form.type===t?'#7fda96':'var(--border)'}`,background:form.type===t?'rgba(127,218,150,.1)':'var(--input-bg)',color:form.type===t?'#7fda96':'var(--muted)',cursor:'pointer',fontSize:12}}>{RES_ICONS[t]} {t}</button>)}
             </div>
           </div>
-          <button onClick={add} disabled={loading} style={{background:'#7fda96',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>{loading?'Adding…':'Add Resource'}</button>
+          <button onClick={add} disabled={loading} style={{background:'#7fda96',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>{loading?'Submitting…':isSU2?'Add Resource':'Submit for Approval'}</button>
         </div>
       )}
       <div style={{display:'flex',flexDirection:'column',gap:9}}>
-        {resources.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No resources added yet{isPriv?' — click Add Resource above.':'.'}</div>}
+        {resources.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No resources added yet{isPriv?'.':' — check back soon.'}.</div>}
         {resources.map((r,i)=>(
           <div key={r.id} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'13px 16px',display:'flex',alignItems:'center',gap:12}}>
             <span style={{fontSize:20,flexShrink:0}}>{RES_ICONS[r.type]||'🔗'}</span>
             <div style={{flex:1,minWidth:0}}>
               <a href={r.url} target="_blank" rel="noopener noreferrer" style={{fontSize:14,fontWeight:600,color:'var(--text)',textDecoration:'none',wordBreak:'break-word'}}>{r.title}</a>
-              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:3,letterSpacing:1,textTransform:'uppercase'}}>{r.type}</div>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginTop:3}}>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:1,textTransform:'uppercase'}}>{r.type}</span>
+                {r.added_by&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>· @{r.added_by}</span>}
+              </div>
             </div>
-            {isPriv&&<button onClick={()=>del(r.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:12,flexShrink:0}}>✕</button>}
+            {isPriv&&<button onClick={()=>del(r.id)} title={isSU2?'Delete resource':'Request deletion'} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:12,flexShrink:0}}>{isSU2?'✕':'↑'}</button>}
           </div>
         ))}
       </div>
@@ -696,6 +736,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       <div className="topbar" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:10}}>
         <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 16px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>← All Courses</button>
         <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+          <RolePill role={user.role}/>
           <div style={{background:YEAR_BG[course.year],border:`1px solid ${accent}40`,borderRadius:6,padding:'4px 12px'}}><Mono color={accent} size={9}>Year {course.year}</Mono></div>
           {!isPriv&&<div style={{fontSize:12,color:'var(--muted)'}}>{cp.openedQs.length}/{totalQ} revealed</div>}
           <button onClick={()=>toggleBookmark(course.id)} title={isBookmarked?'Remove bookmark':'Bookmark'} style={{background:isBookmarked?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${isBookmarked?'#f9a84f':'var(--border)'}`,borderRadius:8,color:isBookmarked?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>
@@ -826,6 +867,131 @@ function AnalyticsTab({courses}){
   );
 }
 
+/* ═══════════════ APPROVALS TAB ═══════════════ */
+const ACTION_LABELS={
+  add_course:   {icon:'📚',label:'Add Course',    color:'#4f9cf9'},
+  delete_course:{icon:'🗑',label:'Delete Course', color:'#f05050'},
+  add_resource: {icon:'🔗',label:'Add Resource',  color:'#7fda96'},
+  delete_resource:{icon:'🗑',label:'Delete Resource',color:'#f9a84f'},
+};
+
+function ApprovalsTab({onCourseChange,courses}){
+  const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');
+
+  const load=async()=>{setLoading(true);const[p,h]=await Promise.all([dbLoadPending('pending'),dbLoadAllPending()]);setPending(p);setHistory(h.filter(a=>a.status!=='pending'));setLoading(false);};
+  useEffect(()=>{load();},[]);
+
+  const approve=async(action)=>{
+    setBusy(action.id);
+    try{
+      // Execute the actual action
+      if(action.action_type==='add_course'){
+        const{entry,courseData}=action.payload;
+        await dbSaveCourse(entry,courseData);
+        const idx=await dbLoadCourseIndex();onCourseChange(idx);
+      }
+      if(action.action_type==='delete_course'){
+        await dbDeleteCourse(action.payload.id);
+        const idx=await dbLoadCourseIndex();onCourseChange(idx);
+      }
+      if(action.action_type==='add_resource'){
+        await supabase.from('resources').insert(action.payload);
+      }
+      if(action.action_type==='delete_resource'){
+        await dbDeleteResource(action.payload.id);
+      }
+      await dbReviewPending(action.id,'approved',SUPERUSER_USERNAME);
+    }catch(e){console.error(e);}
+    setBusy('');await load();
+  };
+
+  const reject=async()=>{
+    if(!rejectModal)return;
+    setBusy(rejectModal.id);
+    await dbReviewPending(rejectModal.id,'rejected',SUPERUSER_USERNAME,rejectNote);
+    setRejectModal(null);setRejectNote('');setBusy('');await load();
+  };
+
+  const list=tab==='pending'?pending:history;
+
+  if(loading)return<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>Loading approvals…</div>;
+
+  return(
+    <div className="fade-up">
+      {/* Reject modal */}
+      {rejectModal&&(
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setRejectModal(null)}>
+          <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'26px 28px',maxWidth:420,width:'100%',boxShadow:'var(--shadow)'}}>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:19,color:'var(--text)',marginBottom:4}}>Reject Request</div>
+            <p style={{fontSize:13,color:'var(--muted)',marginBottom:16}}>Optionally add a note explaining why this was rejected. The admin will see this.</p>
+            <textarea value={rejectNote} onChange={e=>setRejectNote(e.target.value)} placeholder="Reason for rejection (optional)…" rows={3} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px',color:'var(--text)',fontSize:13,fontFamily:"'DM Sans',sans-serif",resize:'none',marginBottom:16}}/>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setRejectModal(null)} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13}}>Cancel</button>
+              <button onClick={reject} style={{background:'rgba(240,80,80,.15)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>Confirm Reject</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',marginBottom:20,display:'flex',gap:10,alignItems:'center'}}>
+        <span style={{fontSize:20}}>⚡</span>
+        <div>
+          <div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Superuser Approval Queue</div>
+          <div style={{color:'var(--muted)',fontSize:12}}>All admin actions require your approval before taking effect. You can approve or reject with a note.</div>
+        </div>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18}}>
+        {[{id:'pending',label:`Pending${pending.length>0?` (${pending.length})`:''}`,color:pending.length>0?'#f9a84f':undefined},{id:'history',label:'History'}].map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
+        ))}
+      </div>
+
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?'✅ No pending requests — all clear.':'No history yet.'}</div>}
+        {list.map((a,i)=>{
+          const meta=ACTION_LABELS[a.action_type]||{icon:'❓',label:a.action_type,color:'#8892a4'};
+          const isPending=a.status==='pending';
+          const isApproved=a.status==='approved';
+          return(
+            <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${isPending?`${meta.color}30`:isApproved?'rgba(127,218,150,.2)':'rgba(240,80,80,.2)'}`,borderRadius:12,padding:'16px 18px'}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+                <div style={{display:'flex',alignItems:'center',gap:12,flex:1,minWidth:200}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:`${meta.color}15`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>{meta.icon}</div>
+                  <div>
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3,flexWrap:'wrap'}}>
+                      <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{meta.label}</span>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${meta.color}15`,color:meta.color,borderRadius:4,padding:'2px 7px',letterSpacing:1}}>{a.action_type}</span>
+                      {!isPending&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:isApproved?'rgba(127,218,150,.15)':'rgba(240,80,80,.15)',color:isApproved?'#7fda96':'#f05050',borderRadius:4,padding:'2px 7px',letterSpacing:1}}>{a.status.toUpperCase()}</span>}
+                    </div>
+                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)',letterSpacing:1}}>
+                      Requested by <span style={{color:'var(--text)',fontWeight:600}}>@{a.requested_by}</span> · {new Date(a.requested_at).toLocaleString()}
+                    </div>
+                    {/* Payload summary */}
+                    {a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.entry.chapterTitle}</span> (Year {a.payload.entry.year})</div>}
+                    {a.payload?.chapterTitle&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.chapterTitle}</span></div>}
+                    {a.payload?.title&&!a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Resource: <span style={{color:'var(--text)'}}>{a.payload.title}</span></div>}
+                    {!isPending&&a.note&&<div style={{fontSize:11,color:'var(--muted)',marginTop:5,fontStyle:'italic'}}>Note: {a.note}</div>}
+                  </div>
+                </div>
+                {isPending&&(
+                  <div style={{display:'flex',gap:8,flexShrink:0}}>
+                    <button onClick={()=>approve(a)} disabled={busy===a.id} style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:700}}>
+                      {busy===a.id?'…':'✓ Approve'}
+                    </button>
+                    <button onClick={()=>setRejectModal(a)} disabled={busy===a.id} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:700}}>✕ Reject</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════ MANAGE ADMINS ═══════════════ */
 function ManageAdminsTab(){
   const[users,setUsers]=useState([]);const[admins,setAdmins]=useState([]);const[search,setSearch]=useState('');const[busy,setBusy]=useState('');const[msg,setMsg]=useState('');
@@ -861,23 +1027,57 @@ function ManageAdminsTab(){
 /* ═══════════════ ADMIN PANEL ═══════════════ */
 function AdminPanel({user,courses,onClose,onCoursesChange}){
   const isSU2=user.role===ROLE.SUPERUSER;
-  const pTabs=[{id:'courses',label:'Courses'},{id:'users',label:'Users'},{id:'analytics',label:'📊 Analytics'},...(isSU2?[{id:'admins',label:'⚡ Manage Admins'}]:[])];
-  const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');
-  useEffect(()=>{Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});},[]);
-  const doDelete=async id=>{if(!confirm('Delete this course permanently?'))return;await dbDeleteCourse(id);const idx=await dbLoadCourseIndex();onCoursesChange(idx);};
+  const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
+
+  useEffect(()=>{
+    Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});
+    if(isSU2)dbCountPending().then(setPendingCount);
+  },[]);
+
+  const flash=m=>{setActionMsg(m);setTimeout(()=>setActionMsg(''),3000);};
+
+  // Admins submit for approval; superuser acts directly
+  const doDelete=async id=>{
+    if(!confirm(isSU2?'Delete this course permanently?':'Submit deletion request for superuser approval?'))return;
+    if(isSU2){
+      await dbDeleteCourse(id);const idx=await dbLoadCourseIndex();onCoursesChange(idx);
+    } else {
+      const c=courses.find(x=>x.id===id);
+      await dbSubmitPending('delete_course',user.username,{id,chapterTitle:c?.chapterTitle,courseName:c?.courseName});
+      flash('✓ Deletion request submitted — awaiting superuser approval.');
+    }
+  };
+
+  const pTabs=[
+    {id:'courses',label:'Courses'},
+    {id:'users',label:'Users'},
+    {id:'analytics',label:'📊 Analytics'},
+    ...(isSU2?[{id:'approvals',label:'approvals',pendingCount},{id:'admins',label:'⚡ Manage Admins'}]:[])
+  ];
+
   const filtered=(filterY===0?courses:courses.filter(c=>c.year===filterY)).filter(c=>!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase()));
 
   return(
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',backdropFilter:'blur(8px)',zIndex:2000,overflow:'auto'}}>
       <div style={{maxWidth:900,margin:'0 auto',padding:'34px 20px 90px'}}>
         <div className="fade-up" style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:14}}>
-          <div><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}><Mono color={isSU2?'#f9a84f':'#da7ff0'} size={9}>{isSU2?'SUPERUSER PANEL':'ADMIN PANEL'}</Mono><RoleBadge role={user.role}/></div><h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)'}}>Manage StudyHub</h2></div>
+          <div>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+              <Mono color={isSU2?'#f9a84f':'#da7ff0'} size={9}>{isSU2?'SUPERUSER PANEL':'ADMIN PANEL'}</Mono>
+              <RolePill role={user.role}/>
+            </div>
+            <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)'}}>Manage StudyHub</h2>
+            {!isSU2&&<p style={{fontSize:12,color:'var(--muted)',marginTop:5}}>Your course & resource actions require superuser approval before taking effect.</p>}
+          </div>
           <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>← Back</button>
+        </div>
+
+        {actionMsg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 16px',color:'#7fda96',fontSize:13,marginBottom:18}}>{actionMsg}</div>}
         </div>
 
         {/* Stats */}
         <div className="stagger-1" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:24}}>
-          {[{label:'Total Courses',val:courses.length,color:'#4f9cf9'},{label:'Users',val:allUsers.length,color:'#7fda96'},{label:'Admins',val:admins.length,color:'#da7ff0'},...YEARS.map(y=>({label:`Year ${y}`,val:courses.filter(c=>c.year===y).length,color:YEAR_COLORS[y]}))].map((s,i)=>(
+          {[{label:'Total Courses',val:courses.length,color:'#4f9cf9'},{label:'Users',val:allUsers.length,color:'#7fda96'},{label:'Admins',val:admins.length,color:'#da7ff0'},...(isSU2&&pendingCount>0?[{label:'Pending Approval',val:pendingCount,color:'#f9a84f'}]:[]),...YEARS.map(y=>({label:`Year ${y}`,val:courses.filter(c=>c.year===y).length,color:YEAR_COLORS[y]}))].map((s,i)=>(
             <div key={i} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:22,color:s.color,fontWeight:600}}>{s.val}</div>
               <div style={{fontSize:11,color:'var(--muted)',marginTop:3}}>{s.label}</div>
@@ -886,11 +1086,17 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         </div>
 
         <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:22,flexWrap:'wrap'}}>
-          {pTabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?'rgba(249,168,79,.06)':'none',border:'none',borderBottom:tab===t.id?'2px solid #f9a84f':'2px solid transparent',color:tab===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'9px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>)}
+          {pTabs.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?'rgba(249,168,79,.06)':'none',border:'none',borderBottom:tab===t.id?'2px solid #f9a84f':'2px solid transparent',color:tab===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'9px 16px',fontSize:13,fontWeight:tab===t.id?600:400,display:'flex',alignItems:'center',gap:6}}>
+              {t.id==='approvals'?'⚡ Approvals':t.label}
+              {t.id==='approvals'&&t.pendingCount>0&&<span style={{background:'#f9a84f',color:'#000',borderRadius:10,padding:'1px 7px',fontSize:10,fontWeight:700}}>{t.pendingCount}</span>}
+            </button>
+          ))}
         </div>
 
         {tab==='courses'&&(
           <div className="fade-up">
+            {!isSU2&&<div style={{background:'rgba(218,127,240,.06)',border:'1px solid rgba(218,127,240,.2)',borderRadius:8,padding:'9px 14px',fontSize:12,color:'#da7ff0',marginBottom:14}}>🛡 As Admin, your Add and Delete actions will be queued for superuser approval.</div>}
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:10}}>
               <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
                 {[{label:'All',y:0},...YEARS.map(y=>({label:`Yr ${y}`,y}))].map(({label,y})=>(
@@ -898,7 +1104,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
                 ))}
                 <SearchBar value={search} onChange={setSearch} placeholder="Search courses…"/>
               </div>
-              <button onClick={()=>setShowUpload(true)} style={{background:'#4f9cf9',border:'none',borderRadius:8,color:'#000',cursor:'pointer',padding:'9px 18px',fontSize:13,fontWeight:700}}>+ Add Course</button>
+              <button onClick={()=>setShowUpload(true)} style={{background:'#4f9cf9',border:'none',borderRadius:8,color:'#000',cursor:'pointer',padding:'9px 18px',fontSize:13,fontWeight:700}}>+ {isSU2?'Add Course':'Request Course'}</button>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:9}}>
               {filtered.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12}}>No courses here yet.</div>}
@@ -907,7 +1113,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
                   <div style={{background:YEAR_BG[c.year],border:`1px solid ${YEAR_COLORS[c.year]}40`,borderRadius:5,padding:'3px 9px'}}><Mono color={YEAR_COLORS[c.year]} size={9}>Yr {c.year}</Mono></div>
                   <div style={{flex:1,minWidth:160}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>{c.courseName}</div><div style={{fontSize:14,color:'var(--text)',marginTop:2}}>{c.chapterTitle}</div></div>
                   <div style={{display:'flex',gap:6}}><Tag color="#4f9cf9">{c.conceptCount} concepts</Tag><Tag color="#7fda96">{c.qCount} questions</Tag></div>
-                  <button onClick={()=>doDelete(c.id)} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:6,color:'#f05050',cursor:'pointer',padding:'5px 12px',fontSize:11,flexShrink:0}}>✕ Delete</button>
+                  <button onClick={()=>doDelete(c.id)} title={isSU2?'Delete permanently':'Submit deletion request'} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:6,color:'#f05050',cursor:'pointer',padding:'5px 12px',fontSize:11,flexShrink:0}}>{isSU2?'✕ Delete':'↑ Request Delete'}</button>
                 </div>
               ))}
             </div>
@@ -922,7 +1128,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
                 <div key={i} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
                   <Avatar name={u.display_name||u.username}/>
                   <div style={{flex:1}}><div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>@{u.username} · Yr {u.year} · {new Date(u.created_at).toLocaleDateString()}</div></div>
-                  <RoleBadge role={isAdm?ROLE.ADMIN:ROLE.USER}/>
+                  <RolePill role={isAdm?ROLE.ADMIN:ROLE.USER}/>
                   <div style={{background:YEAR_BG[u.year],border:`1px solid ${YEAR_COLORS[u.year]}40`,borderRadius:5,padding:'3px 9px'}}><Mono color={YEAR_COLORS[u.year]} size={9}>Yr {u.year}</Mono></div>
                 </div>
               );})}
@@ -932,9 +1138,18 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         )}
 
         {tab==='analytics'&&<AnalyticsTab courses={courses}/>}
+        {tab==='approvals'&&isSU2&&<ApprovalsTab onCourseChange={onCoursesChange} courses={courses}/>}
         {tab==='admins'&&isSU2&&<ManageAdminsTab/>}
       </div>
-      {showUpload&&<UploadModal onClose={()=>setShowUpload(false)} onDone={idx=>{onCoursesChange(idx);setShowUpload(false);}}/>}
+      {showUpload&&(
+        isSU2
+          ? <UploadModal onClose={()=>setShowUpload(false)} onDone={idx=>{onCoursesChange(idx);setShowUpload(false);}}/>
+          : <UploadModal onClose={()=>setShowUpload(false)} onDone={async(idx,entry,courseData)=>{
+              // Admin: submit for approval instead of saving directly
+              await dbSubmitPending('add_course',user.username,{entry,courseData});
+              setShowUpload(false);flash('✓ Course submitted for superuser approval.');
+            }} adminMode={true} requestedBy={user.username}/>
+      )}
     </div>
   );
 }
@@ -964,9 +1179,10 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <Avatar name={user.displayName} size={40}/>
           <div>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'var(--text)'}}>{user.displayName}</div>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginTop:3,flexWrap:'wrap'}}>
-              <RoleBadge role={user.role}/>
-              {user.role===ROLE.USER&&<Mono color="var(--muted)" size={9}>Year {user.year} · @{user.username}</Mono>}
+            <div style={{display:'flex',alignItems:'center',gap:8,marginTop:4,flexWrap:'wrap'}}>
+              <RolePill role={user.role}/>
+              {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Year {user.year} · @{user.username}</Mono>}
+              {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
             </div>
           </div>
         </div>
