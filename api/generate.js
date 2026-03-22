@@ -1,19 +1,10 @@
 /**
  * StudyHub — Gemini PDF Processing API
  * © 2025 Yination & Excalibur. All rights reserved.
- *
- * POST /api/generate
- * Body: { base64Data: string, filename: string }
  */
 
-// Increase Vercel's default 4.5MB body limit to 100MB
-// A 14MB PDF becomes ~19MB when base64 encoded — this covers most lecture notes
 export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '100mb',
-    },
-  },
+  api: { bodyParser: { sizeLimit: '20mb' } },
 };
 
 const SYSTEM_PROMPT = `You are an expert academic study guide generator.
@@ -38,10 +29,7 @@ Rules:
 - algorithms: only if the doc has algorithms/methods to compare; empty [] otherwise
 - chapters: 4-8 section blocks, each with EXACTLY 3 non-obvious takeaways
 - questions: EXACTLY 25 challenging varied exam-style questions with full worked answers.
-  Mix types: definition, calculation/trace, comparison, application, explain why, scenario-based.
-  Keep ALL worked examples from the source document.
-- Preserve chronological order of the source material.
-- Return ONLY the JSON object, nothing else.`;
+- Preserve chronological order. Return ONLY the JSON object.`;
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -58,7 +46,7 @@ export default async function handler(req, res) {
 
   try {
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -66,7 +54,7 @@ export default async function handler(req, res) {
           contents: [{
             parts: [
               { inlineData: { mimeType: 'application/pdf', data: base64Data } },
-              { text: `${SYSTEM_PROMPT}\n\nFilename hint: ${filename || 'unknown'}` }
+              { text: `${SYSTEM_PROMPT}\n\nFilename: ${filename || 'unknown'}` }
             ]
           }],
           generationConfig: { temperature: 0.4, maxOutputTokens: 8192 }
