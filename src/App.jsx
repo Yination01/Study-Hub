@@ -23,7 +23,10 @@ const supabase = createClient(
 
 /* ═══════════════ CONSTANTS ═══════════════ */
 const ROLE  = { SUPERUSER:'superuser', ADMIN:'admin', USER:'user' };
-const YEARS = [1,2,3,4];
+const YEARS       = [1,2,3,4];
+const DEPARTMENTS = ['Computer Science','Computer with Statistics'];
+const DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
+const DEPT_COLOR  = {'Computer Science':'#4f9cf9','Computer with Statistics':'#7fda96'};
 const YEAR_COLORS = {1:'#4f9cf9',2:'#7fda96',3:'#f9a84f',4:'#da7ff0'};
 const YEAR_BG     = {1:'rgba(79,156,249,0.1)',2:'rgba(127,218,150,0.1)',3:'rgba(249,168,79,0.1)',4:'rgba(218,127,240,0.1)'};
 const ROLE_COLOR  = {superuser:'#f9a84f',admin:'#da7ff0',user:'#4f9cf9'};
@@ -164,15 +167,15 @@ async function dbSaveUser(u){await supabase.from('users').upsert(u,{onConflict:'
 async function dbLoadAdmins(){const{data}=await supabase.from('admins').select('username');return(data||[]).map(r=>r.username.toLowerCase());}
 async function dbSetAdmins(list){await supabase.from('admins').delete().neq('username','__none__');if(list.length>0)await supabase.from('admins').insert(list.map(u=>({username:u.toLowerCase()})));}
 async function dbLoadCourseIndex(){
-  const{data}=await supabase.from('courses').select('id,year,semester,course_name,chapter_title,concept_count,term_count,q_count,added_at').order('added_at',{ascending:false});
-  return(data||[]).map(r=>({id:r.id,year:r.year,semester:r.semester||1,courseName:r.course_name,chapterTitle:r.chapter_title,conceptCount:r.concept_count,termCount:r.term_count,qCount:r.q_count,addedAt:r.added_at}));
+  const{data}=await supabase.from('courses').select('id,year,semester,department,course_name,chapter_title,concept_count,term_count,q_count,added_at').order('added_at',{ascending:false});
+  return(data||[]).map(r=>({id:r.id,year:r.year,semester:r.semester||1,department:r.department||'Computer Science',courseName:r.course_name,chapterTitle:r.chapter_title,conceptCount:r.concept_count,termCount:r.term_count,qCount:r.q_count,addedAt:r.added_at}));
 }
 async function dbLoadCourseData(id){
   const{data}=await supabase.from('courses').select('data').eq('id',id).single();
   return data?.data||null;
 }
 async function dbSaveCourse(entry,courseData){
-  await supabase.from('courses').upsert({id:entry.id,year:entry.year,semester:entry.semester||1,course_name:entry.courseName,chapter_title:entry.chapterTitle,concept_count:entry.conceptCount,term_count:entry.termCount,q_count:entry.qCount,added_at:entry.addedAt,data:courseData},{onConflict:'id'});
+  await supabase.from('courses').upsert({id:entry.id,year:entry.year,semester:entry.semester||1,department:entry.department||'Computer Science',course_name:entry.courseName,chapter_title:entry.chapterTitle,concept_count:entry.conceptCount,term_count:entry.termCount,q_count:entry.qCount,added_at:entry.addedAt,data:courseData},{onConflict:'id'});
 }
 async function dbDeleteCourse(id){await supabase.from('courses').delete().eq('id',id);}
 async function dbLoadProgress(username){const{data}=await supabase.from('progress').select('*').eq('username',username);const out={};(data||[]).forEach(r=>{out[r.course_id]={viewed:r.viewed,openedQs:r.opened_qs||[]};});return out;}
@@ -558,7 +561,7 @@ Return ONLY valid JSON with this exact structure:
 Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none, chapters 4-8 with EXACTLY 3 takeaways each, questions EXACTLY 25 exam-style with full worked answers. Return ONLY the JSON.`;
 
 function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
-  const[year,setYear]=useState(1);const[semester,setSemester]=useState(1);const[pasteText,setPasteText]=useState('');const[status,setStatus]=useState('idle');const[error,setError]=useState('');const[copied,setCopied]=useState(false);
+  const[year,setYear]=useState(1);const[semester,setSemester]=useState(1);const[department,setDepartment]=useState('Computer Science');const[pasteText,setPasteText]=useState('');const[status,setStatus]=useState('idle');const[error,setError]=useState('');const[copied,setCopied]=useState(false);
   const copyPrompt=()=>{navigator.clipboard.writeText(JSON_PROMPT);setCopied(true);setTimeout(()=>setCopied(false),2000);};
   const go=async()=>{
     setError('');
@@ -568,12 +571,12 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
       setStatus('processing');
       if(adminMode){
         const id=`c-${Date.now()}`;
-        const entry={id,year,semester,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+        const entry={id,year,semester,department,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
         await onDone(null,entry,data);
         setStatus('done');
       } else {
         const id=`c-${Date.now()}`;
-        const entry={id,year,semester,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+        const entry={id,year,semester,department,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
         await dbSaveCourse(entry,data);
         const idx=await dbLoadCourseIndex();setStatus('done');setTimeout(()=>onDone(idx),700);
       }
@@ -597,6 +600,21 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
             {[1,2].map(s=><button key={s} onClick={()=>setSemester(s)} style={{flex:1,padding:'9px 0',borderRadius:8,cursor:'pointer',border:`1px solid ${semester===s?YEAR_COLORS[year]+'70':'var(--border)'}`,background:semester===s?YEAR_BG[year]:'var(--input-bg)',color:semester===s?YEAR_COLORS[year]:'var(--muted)',fontWeight:semester===s?700:400,fontSize:13}}>Semester {s}</button>)}
           </div>
         </div>
+        <div style={{marginBottom:18}}>
+          <Mono color="var(--muted)" size={10}>DEPARTMENT</Mono>
+          <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:8}}>
+            {DEPARTMENTS.map(d=>{
+              const active=department===d;
+              const col=DEPT_COLOR[d];
+              return(
+                <button key={d} onClick={()=>setDepartment(d)} style={{padding:'10px 14px',borderRadius:8,cursor:'pointer',border:`1px solid ${active?col+'70':'var(--border)'}`,background:active?`${col}12`:'var(--input-bg)',color:active?col:'var(--muted)',fontWeight:active?600:400,fontSize:13,textAlign:'left',display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:active?`${col}20`:'var(--border)',color:active?col:'var(--muted)',borderRadius:4,padding:'2px 7px'}}>{DEPT_SHORT[d]}</span>
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:10,padding:'14px 16px',marginBottom:16}}>
           <div style={{fontSize:12,fontWeight:600,color:'#4f9cf9',marginBottom:10}}>How to generate a study guide</div>
           <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.8}}><span style={{color:'var(--text)'}}>Step 1</span> — Open Claude.ai, ChatGPT, or any AI<br/><span style={{color:'var(--text)'}}>Step 2</span> — Upload your PDF<br/><span style={{color:'var(--text)'}}>Step 3</span> — Copy and paste this prompt:</div>
@@ -609,7 +627,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
         <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder={'{\n  "courseName": "COS 341",\n  "chapterTitle": "Memory System",\n  ...\n}'} rows={9} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:12,fontFamily:"'IBM Plex Mono',monospace",resize:'vertical',marginBottom:12}}/>
         {error&&<div style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,padding:'9px 14px',color:'#f05050',fontSize:12.5,marginBottom:10}}>{error}</div>}
         {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>{adminMode?'Submitting request…':'Saving course…'}</div>}
-        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':'✓ Course added to Year '+year+', Semester '+semester+'!'}</div>}
+        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':`✓ Course added — Year ${year}, Semester ${semester}, ${DEPT_SHORT[department]}!`}</div>}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
           <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>Cancel</button>
           <button onClick={go} disabled={!pasteText.trim()||status==='processing'||status==='done'} style={{background:!pasteText.trim()||status==='processing'||status==='done'?'var(--border)':adminMode?'#da7ff0':'#4f9cf9',border:'none',borderRadius:8,color:!pasteText.trim()||status==='processing'||status==='done'?'var(--muted)':'#000',cursor:'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}>
@@ -781,7 +799,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const isBookmarked=bookmarks.includes(course.id);
 
   // Cache for offline use
-  useEffect(()=>{try{localStorage.setItem(CACHE_KEY(course.id),JSON.stringify({data:d,year:course.year,semester:course.semester||1,cachedAt:Date.now()}));}catch{};},[]);
+  useEffect(()=>{try{localStorage.setItem(CACHE_KEY(course.id),JSON.stringify({data:d,year:course.year,semester:course.semester||1,department:course.department||'Computer Science',cachedAt:Date.now()}));}catch{};},[]);
   useEffect(()=>{if(!cp.viewed){const n={...progress,[course.id]:{...cp,viewed:true}};onProgressUpdate(n);}},[]);
 
   const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!cp.openedQs.includes(idx)){const n={...progress,[course.id]:{...cp,openedQs:[...cp.openedQs,idx]}};onProgressUpdate(n);}};
@@ -801,6 +819,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
         <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
           <RolePill role={user.role}/>
           <div style={{background:YEAR_BG[course.year],border:`1px solid ${accent}40`,borderRadius:6,padding:'4px 12px'}}><Mono color={accent} size={9}>Year {course.year} · Semester {course.semester||1}</Mono></div>
+          {course.data?.department&&<div style={{background:`${DEPT_COLOR[course.data.department]||'#4f9cf9'}12`,border:`1px solid ${DEPT_COLOR[course.data.department]||'#4f9cf9'}30`,borderRadius:6,padding:'4px 12px'}}><Mono color={DEPT_COLOR[course.data.department]||'#4f9cf9'} size={9}>{DEPT_SHORT[course.data.department]||'CS'}</Mono></div>}
           {!isPriv&&<div style={{fontSize:12,color:'var(--muted)'}}>{cp.openedQs.length}/{totalQ} revealed</div>}
           <button onClick={()=>toggleBookmark(course.id)} title={isBookmarked?'Remove bookmark':'Bookmark'} style={{background:isBookmarked?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${isBookmarked?'#f9a84f':'var(--border)'}`,borderRadius:8,color:isBookmarked?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>
             {isBookmarked?'🔖':'🔖'}
@@ -913,7 +932,7 @@ function AnalyticsTab({courses}){
         {courseStats.map((c,i)=>(
           <div key={c.id} style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',padding:'12px 14px',gap:8,borderTop:'1px solid var(--border)',alignItems:'center'}}>
             <div>
-              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:2}}>Yr {c.year} · Sem {c.semester||1} · {c.courseName}</div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:2}}>Yr {c.year} · Sem {c.semester||1} · {DEPT_SHORT[c.department]||'CS'} · {c.courseName}</div>
               <div style={{fontSize:13,color:'var(--text)'}}>{c.chapterTitle}</div>
             </div>
             <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:13,color:'#4f9cf9',fontWeight:600}}>{c.views}</div>
@@ -1032,7 +1051,7 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
                       Requested by <span style={{color:'var(--text)',fontWeight:600}}>@{a.requested_by}</span> · {new Date(a.requested_at).toLocaleString()}
                     </div>
                     {/* Payload summary */}
-                    {a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.entry.chapterTitle}</span> (Year {a.payload.entry.year})</div>}
+                    {a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.entry.chapterTitle}</span> — Yr {a.payload.entry.year} · Sem {a.payload.entry.semester||1} · {DEPT_SHORT[a.payload.entry.department]||'CS'}</div>}
                     {a.payload?.chapterTitle&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.chapterTitle}</span></div>}
                     {a.payload?.title&&!a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Resource: <span style={{color:'var(--text)'}}>{a.payload.title}</span></div>}
                     {!isPending&&a.note&&<div style={{fontSize:11,color:'var(--muted)',marginTop:5,fontStyle:'italic'}}>Note: {a.note}</div>}
@@ -1090,7 +1109,7 @@ function ManageAdminsTab(){
 /* ═══════════════ ADMIN PANEL ═══════════════ */
 function AdminPanel({user,courses,onClose,onCoursesChange}){
   const isSU2=user.role===ROLE.SUPERUSER;
-  const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
+  const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
 
   useEffect(()=>{
     Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});
@@ -1118,7 +1137,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
     ...(isSU2?[{id:'approvals',label:'approvals',pendingCount},{id:'admins',label:'⚡ Manage Admins'}]:[])
   ];
 
-  const filtered=(filterY===0?courses:courses.filter(c=>c.year===filterY)).filter(c=>filterSem===0||c.semester===filterSem).filter(c=>!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase()));
+  const filtered=(filterY===0?courses:courses.filter(c=>c.year===filterY)).filter(c=>filterSem===0||c.semester===filterSem).filter(c=>filterDept==='all'||c.department===filterDept).filter(c=>!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase()));
 
   return(
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',backdropFilter:'blur(8px)',zIndex:2000,overflow:'auto'}}>
@@ -1167,9 +1186,13 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
               </div>
               <button onClick={()=>setShowUpload(true)} style={{background:'#4f9cf9',border:'none',borderRadius:8,color:'#000',cursor:'pointer',padding:'9px 18px',fontSize:13,fontWeight:700}}>+ {isSU2?'Add Course':'Request Course'}</button>
             </div>
-            <div style={{display:'flex',gap:8,marginBottom:14,alignItems:'center'}}>
+            <div style={{display:'flex',gap:8,marginBottom:14,alignItems:'center',flexWrap:'wrap'}}>
               {[{label:'All Semesters',s:0},...[1,2].map(s=>({label:`Semester ${s}`,s}))].map(({label,s})=>(
                 <button key={s} onClick={()=>setFilterSem(s)} style={{background:filterSem===s?'rgba(79,156,249,.1)':'none',border:`1px solid ${filterSem===s?'rgba(79,156,249,.4)':'var(--border)'}`,borderRadius:20,color:filterSem===s?'#4f9cf9':'var(--muted)',cursor:'pointer',padding:'5px 14px',fontSize:12,fontWeight:filterSem===s?600:400}}>{label}</button>
+              ))}
+              <div style={{width:1,height:20,background:'var(--border)',margin:'0 4px'}}/>
+              {[{label:'All Depts',d:'all',color:'#8892a4'},...DEPARTMENTS.map(d=>({label:DEPT_SHORT[d],d,color:DEPT_COLOR[d]}))].map(({label,d,color})=>(
+                <button key={d} onClick={()=>setFilterDept(d)} style={{background:filterDept===d?`${color}15`:'none',border:`1px solid ${filterDept===d?color+'60':'var(--border)'}`,borderRadius:20,color:filterDept===d?color:'var(--muted)',cursor:'pointer',padding:'5px 14px',fontSize:12,fontWeight:filterDept===d?600:400}}>{label}</button>
               ))}
               <SearchBar value={search} onChange={setSearch} placeholder="Search courses…"/>
             </div>
@@ -1180,6 +1203,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
                   <div style={{display:'flex',flexDirection:'column',gap:4}}>
                     <div style={{background:YEAR_BG[c.year],border:`1px solid ${YEAR_COLORS[c.year]}40`,borderRadius:5,padding:'3px 9px'}}><Mono color={YEAR_COLORS[c.year]} size={9}>Yr {c.year}</Mono></div>
                     <div style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:5,padding:'3px 9px'}}><Mono color="#4f9cf9" size={9}>Sem {c.semester||1}</Mono></div>
+                    <div style={{background:`${DEPT_COLOR[c.department]||'#4f9cf9'}12`,border:`1px solid ${DEPT_COLOR[c.department]||'#4f9cf9'}30`,borderRadius:5,padding:'3px 9px'}}><Mono color={DEPT_COLOR[c.department]||'#4f9cf9'} size={9}>{DEPT_SHORT[c.department]||'CS'}</Mono></div>
                   </div>
                   <div style={{flex:1,minWidth:160}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>{c.courseName}</div><div style={{fontSize:14,color:'var(--text)',marginTop:2}}>{c.chapterTitle}</div></div>
                   <div style={{display:'flex',gap:6}}><Tag color="#4f9cf9">{c.conceptCount} concepts</Tag><Tag color="#7fda96">{c.qCount} questions</Tag></div>
@@ -1228,26 +1252,28 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme}){
   const[activeYear,setActiveYear]=useState(user.year||1);
   const[activeSemester,setActiveSemester]=useState(1);
+  const[activeDept,setActiveDept]=useState('all');
   const[search,setSearch]=useState('');const[showBookmarks,setShowBookmarks]=useState(false);
   const isPriv=user.role!==ROLE.USER;
 
-  // Courses matching current year + semester + search
   const visible=courses.filter(c=>{
     const matchYear=c.year===activeYear;
     const matchSem=c.semester===activeSemester;
+    const matchDept=activeDept==='all'||c.department===activeDept;
     const matchSearch=!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase());
-    return matchYear&&matchSem&&matchSearch;
+    return matchYear&&matchSem&&matchDept&&matchSearch;
   });
 
   // Count for each semester within current year
   const semCount=s=>courses.filter(c=>c.year===activeYear&&c.semester===s).length;
+  // Count per dept within current year+sem
+  const deptCount=d=>courses.filter(c=>c.year===activeYear&&c.semester===activeSemester&&(d==='all'||c.department===d)).length;
 
   const bookmarkedCourses=courses.filter(c=>bookmarks.includes(c.id));
   const pct=id=>{const cp=progress[id];const m=courses.find(c=>c.id===id);if(!cp||!m||m.qCount===0)return 0;return Math.round((cp.openedQs?.length||0)/m.qCount*100);};
   const yearStat=y=>{const yc=courses.filter(c=>c.year===y);if(!yc.length)return null;return `${yc.filter(c=>progress[c.id]?.viewed).length}/${yc.length} started`;};
 
-  // When switching year, reset semester to 1
-  const selectYear=y=>{setActiveYear(y);setActiveSemester(1);setSearch('');};
+  const selectYear=y=>{setActiveYear(y);setActiveSemester(1);setActiveDept('all');setSearch('');};
 
   return(
     <div style={{maxWidth:990,margin:'0 auto',padding:'34px 20px 88px'}}>
@@ -1281,7 +1307,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:10}}>
             {bookmarkedCourses.map(c=>(
               <div key={c.id} onClick={()=>onSelectCourse(c.id)} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px',cursor:'pointer',borderLeft:`3px solid ${YEAR_COLORS[c.year]}`}}>
-                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:3}}>Yr {c.year} · Sem {c.semester} · {c.courseName}</div>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:3}}>Yr {c.year} · Sem {c.semester} · {DEPT_SHORT[c.department]||'CS'} · {c.courseName}</div>
                 <div style={{fontSize:13,color:'var(--text)',fontWeight:500}}>{c.chapterTitle}</div>
               </div>
             ))}
@@ -1322,10 +1348,27 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
 
       {/* Search */}
       <div className="stagger-3" style={{marginBottom:16}}>
-        <SearchBar value={search} onChange={setSearch} placeholder={`Search Year ${activeYear} Sem ${activeSemester} courses…`}/>
+        <SearchBar value={search} onChange={setSearch} placeholder={`Search Year ${activeYear} Sem ${activeSemester}${activeDept!=='all'?' · '+DEPT_SHORT[activeDept]:''} courses…`}/>
       </div>
 
-      <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''} · YEAR {activeYear} · SEMESTER {activeSemester}{search?` · "${search}"`:''}</Mono>
+      {/* Department filter */}
+      <div className="stagger-4" style={{marginBottom:20}}>
+        <Mono color="var(--muted)" size={9}>DEPARTMENT</Mono>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:8}}>
+          {[{label:'All Departments',key:'all',color:'#8892a4'},...DEPARTMENTS.map(d=>({label:d,key:d,color:DEPT_COLOR[d]}))].map(({label,key,color})=>{
+            const active=activeDept===key;
+            return(
+              <button key={key} onClick={()=>setActiveDept(key)} style={{background:active?`${color}15`:'var(--surface)',border:`1px solid ${active?color+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'8px 16px',transition:'var(--transition)',display:'flex',alignItems:'center',gap:7}}>
+                {key!=='all'&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:active?`${color}25`:'var(--border)',color:active?color:'var(--muted)',borderRadius:4,padding:'2px 6px'}}>{DEPT_SHORT[key]}</span>}
+                <span style={{fontSize:13,color:active?color:'var(--text)',fontWeight:active?600:400}}>{label}</span>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:active?`${color}20`:'var(--border)',color:active?color:'var(--muted)',borderRadius:10,padding:'2px 7px'}}>{deptCount(key)}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''} · YEAR {activeYear} · SEM {activeSemester}{activeDept!=='all'?` · ${DEPT_SHORT[activeDept]}`:''}{search?` · "${search}"`:''}</Mono>
 
       {visible.length===0?(
         <div style={{textAlign:'center',padding:'55px 20px',border:'1px dashed var(--border)',borderRadius:16,marginTop:16}}>
@@ -1346,7 +1389,10 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
                   {viewed&&<div style={{width:7,height:7,borderRadius:'50%',background:'#7fda96'}} title="Visited"/>}
                   {bm&&<span style={{fontSize:12}}>🔖</span>}
                 </div>
-                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:accent,letterSpacing:2,textTransform:'uppercase',marginBottom:4}}>{c.courseName} · SEM {c.semester}</div>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:accent,letterSpacing:2,textTransform:'uppercase',marginBottom:4,display:'flex',alignItems:'center',gap:6}}>
+                  {c.courseName} · SEM {c.semester}
+                  <span style={{background:`${DEPT_COLOR[c.department]||'#4f9cf9'}18`,color:DEPT_COLOR[c.department]||'#4f9cf9',borderRadius:4,padding:'1px 6px',fontSize:8,letterSpacing:1}}>{DEPT_SHORT[c.department]||'CS'}</span>
+                </div>
                 <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:'var(--text)',marginBottom:11,lineHeight:1.3,paddingRight:30}}>{c.chapterTitle}</div>
                 <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
                   <Tag color={accent}>{c.conceptCount} concepts</Tag>
@@ -1383,7 +1429,7 @@ export default function App(){
       for(let i=0;i<localStorage.length;i++){
         const k=localStorage.key(i);
         if(k?.startsWith('sh-course-cache-')){
-          try{const d=JSON.parse(localStorage.getItem(k));if(d?.data)cached.push({id:k.replace('sh-course-cache-',''),year:d.year,semester:d.semester||1,courseName:d.data.courseName,chapterTitle:d.data.chapterTitle,conceptCount:d.data.keyConcepts?.length||0,termCount:d.data.definitions?.length||0,qCount:d.data.questions?.length||0,addedAt:'Cached'});}catch{}
+          try{const d=JSON.parse(localStorage.getItem(k));if(d?.data)cached.push({id:k.replace('sh-course-cache-',''),year:d.year,semester:d.semester||1,department:d.department||'Computer Science',courseName:d.data.courseName,chapterTitle:d.data.chapterTitle,conceptCount:d.data.keyConcepts?.length||0,termCount:d.data.definitions?.length||0,qCount:d.data.questions?.length||0,addedAt:'Cached'});}catch{}
         }
       }
       if(cached.length>0)setCourses(cached);
@@ -1396,15 +1442,15 @@ export default function App(){
 
   const handleSelect=async id=>{
     setLoading(true);
-    let data=null,year=null,semester=1;
+    let data=null,year=null,semester=1,department='Computer Science';
     try{
       data=await dbLoadCourseData(id);
       const meta=courses.find(c=>c.id===id);
-      year=meta?.year;semester=meta?.semester||1;
+      year=meta?.year;semester=meta?.semester||1;department=meta?.department||'Computer Science';
     }catch{
-      try{const c=JSON.parse(localStorage.getItem(CACHE_KEY(id)));data=c?.data;year=c?.year;semester=c?.semester||1;}catch{}
+      try{const c=JSON.parse(localStorage.getItem(CACHE_KEY(id)));data=c?.data;year=c?.year;semester=c?.semester||1;department=c?.department||'Computer Science';}catch{}
     }
-    if(data){setActive({id,data,year,semester});setView('course');}
+    if(data){setActive({id,data,year,semester,department});setView('course');}
     setLoading(false);
   };
 
