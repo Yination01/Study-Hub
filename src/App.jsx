@@ -19,7 +19,7 @@ import { createClient } from '@supabase/supabase-js';
    SUPERUSER CONFIG
 ═══════════════════════════════════════════════ */
 const SUPERUSER_USERNAME = 'yination';
-const SUPERUSER_PASSWORD = 'nacos@owner027';
+const SUPERUSER_PASSWORD = 'ucwme50p';
 const APP_VERSION        = '2.2.0';
 const COPYRIGHT_YEAR     = '2025';
 
