@@ -10,10 +10,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 /* ═══════════════ CONFIG ═══════════════ */
-const SUPERUSER_USERNAME = 'Yination';
-const SUPERUSER_PASSWORD = 'ucwme50p';
-const APP_VERSION        = '3.3.0';
-const COPYRIGHT_YEAR     = '2025';
+// NOTE: No superuser credentials stored here.
+// Auth is validated server-side via /api/auth.
+// Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
+const APP_VERSION    = '3.4.0';
+const COPYRIGHT_YEAR = '2025';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -111,7 +112,19 @@ const css = `
 
 /* ═══════════════ HELPERS ═══════════════ */
 function hashStr(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return(h>>>0).toString(16);}
-const isSU = u=>u?.toLowerCase()===SUPERUSER_USERNAME.toLowerCase();
+
+// Superuser auth is server-side only — no username check in browser
+async function checkSuperuser(username, password){
+  try{
+    const res = await fetch('/api/auth', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    const data = await res.json();
+    return data.ok === true ? data : null;
+  }catch{ return null; }
+}
 
 /* ═══════════════ HOOKS ═══════════════ */
 function useTheme(){
@@ -164,7 +177,7 @@ async function dbSaveCourse(entry,courseData){
 async function dbDeleteCourse(id){await supabase.from('courses').delete().eq('id',id);}
 async function dbLoadProgress(username){const{data}=await supabase.from('progress').select('*').eq('username',username);const out={};(data||[]).forEach(r=>{out[r.course_id]={viewed:r.viewed,openedQs:r.opened_qs||[]};});return out;}
 async function dbSaveProgress(username,progress){const rows=Object.entries(progress).map(([cid,p])=>({username,course_id:cid,viewed:p.viewed,opened_qs:p.openedQs}));if(rows.length>0)await supabase.from('progress').upsert(rows,{onConflict:'username,course_id'});}
-async function resolveRole(username){if(isSU(username))return ROLE.SUPERUSER;const admins=await dbLoadAdmins();return admins.includes(username.toLowerCase())?ROLE.ADMIN:ROLE.USER;}
+async function resolveRole(username){const admins=await dbLoadAdmins();return admins.includes(username.toLowerCase())?ROLE.ADMIN:ROLE.USER;}
 
 // Resources
 async function dbLoadResources(courseId){try{const{data}=await supabase.from('resources').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
@@ -291,12 +304,44 @@ function OfflineBanner(){
 
 /* ═══════════════ PWA INSTALL ═══════════════ */
 function InstallPrompt(){
-  const[prompt,setPrompt]=useState(null);const[show,setShow]=useState(false);
-  useEffect(()=>{if(window.matchMedia('(display-mode: standalone)').matches)return;if(localStorage.getItem('pwa-dismissed'))return;const h=e=>{e.preventDefault();setPrompt(e);setShow(true);};window.addEventListener('beforeinstallprompt',h);return()=>window.removeEventListener('beforeinstallprompt',h);},[]);
-  const install=async()=>{if(!prompt)return;prompt.prompt();await prompt.userChoice;setShow(false);setPrompt(null);};
-  const dismiss=()=>{setShow(false);localStorage.setItem('pwa-dismissed','1');};
+  const[prompt,setPrompt]=useState(null);
+  const[show,setShow]=useState(false);
+
+  useEffect(()=>{
+    if(window.matchMedia('(display-mode: standalone)').matches) return;
+    if(window.navigator.standalone) return;
+    if(sessionStorage.getItem('pwa-dismissed')) return;
+    if(localStorage.getItem('pwa-dismissed')) return;
+    const h=e=>{e.preventDefault();setPrompt(e);setShow(true);};
+    window.addEventListener('beforeinstallprompt',h);
+    return()=>window.removeEventListener('beforeinstallprompt',h);
+  },[]);
+
+  const install=async()=>{
+    if(!prompt)return;
+    prompt.prompt();
+    await prompt.userChoice;
+    setShow(false);setPrompt(null);
+    localStorage.setItem('pwa-dismissed','1');
+  };
+  const dismiss=()=>{setShow(false);setPrompt(null);sessionStorage.setItem('pwa-dismissed','1');};
+  const neverShow=()=>{setShow(false);setPrompt(null);localStorage.setItem('pwa-dismissed','1');};
+
   if(!show)return null;
-  return(<div className="slide-down" style={{position:'fixed',top:56,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 18px',display:'flex',alignItems:'center',gap:12,zIndex:500,boxShadow:'var(--shadow)',maxWidth:360,width:'calc(100% - 32px)'}} className="slide-down no-print"><div style={{fontSize:24}}>📲</div><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:2}}>Install StudyHub</div><div style={{fontSize:11,color:'var(--muted)'}}>Add to home screen</div></div><div style={{display:'flex',gap:8,flexShrink:0}}><button onClick={dismiss} style={{background:'none',border:'1px solid var(--border)',borderRadius:7,color:'var(--muted)',cursor:'pointer',padding:'6px 10px',fontSize:11}}>Later</button><button onClick={install} style={{background:'#4f9cf9',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'6px 12px',fontSize:11,fontWeight:700}}>Install</button></div></div>);
+  return(
+    <div className="slide-down no-print" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 18px',display:'flex',alignItems:'center',gap:12,zIndex:600,boxShadow:'var(--shadow)',maxWidth:380,width:'calc(100% - 32px)'}}>
+      <div style={{fontSize:22}}>📲</div>
+      <div style={{flex:1}}>
+        <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:2}}>Install StudyHub</div>
+        <div style={{fontSize:11,color:'var(--muted)'}}>Add to home screen for quick access</div>
+      </div>
+      <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center'}}>
+        <button onClick={neverShow} title="Don't show again" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'2px 4px',lineHeight:1}}>✕</button>
+        <button onClick={dismiss} style={{background:'none',border:'1px solid var(--border)',borderRadius:7,color:'var(--muted)',cursor:'pointer',padding:'6px 10px',fontSize:11}}>Later</button>
+        <button onClick={install} style={{background:'#4f9cf9',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'6px 12px',fontSize:11,fontWeight:700}}>Install</button>
+      </div>
+    </div>
+  );
 }
 
 /* ═══════════════ GUEST BANNER ═══════════════ */
@@ -387,7 +432,17 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
   const signIn=async()=>{
     const e={};if(!f.username.trim())e.username='Required';if(!f.password)e.password='Required';
     if(Object.keys(e).length){setErrs(e);return;}setLoading(true);
-    if(isSU(f.username)&&f.password===SUPERUSER_PASSWORD){onLogin({username:SUPERUSER_USERNAME,displayName:'Owner',role:ROLE.SUPERUSER});return;}
+
+    // Check superuser server-side first — credentials never compared in browser
+    try{
+      const suResult = await checkSuperuser(f.username, f.password);
+      if(suResult){
+        onLogin({username:f.username.toLowerCase(),displayName:'Owner',role:ROLE.SUPERUSER});
+        return;
+      }
+    }catch{}
+
+    // Regular user login
     try{
       const users=await dbLoadUsers();const user=users.find(u=>u.username.toLowerCase()===f.username.toLowerCase());
       if(!user||user.pw_hash!==hashStr(f.password)){setErrs({password:'Incorrect username or password.'});setLoading(false);return;}
@@ -404,7 +459,10 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
     if(!f.password)e.password='Required';else if(f.password.length<6)e.password='Min 6 characters';
     if(f.confirm!==f.password)e.confirm='Passwords do not match';
     if(Object.keys(e).length){setErrs(e);return;}
-    if(isSU(f.username)){setErrs({username:'Username is reserved.'});return;}
+    // Check with server if username is the superuser
+    try{const r=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:f.username,password:'__probe__'})});const d=await r.json();if(d.ok){setErrs({username:'Username is reserved.'});setLoading(false);return;}}catch{}
+    // Also block if username matches any admin-reserved pattern
+    if(f.username.toLowerCase()==='guest'){setErrs({username:'Username is reserved.'});setLoading(false);return;}
     setLoading(true);
     try{
       const users=await dbLoadUsers();
@@ -875,7 +933,7 @@ const ACTION_LABELS={
   delete_resource:{icon:'🗑',label:'Delete Resource',color:'#f9a84f'},
 };
 
-function ApprovalsTab({onCourseChange,courses}){
+function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
   const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');
 
   const load=async()=>{setLoading(true);const[p,h]=await Promise.all([dbLoadPending('pending'),dbLoadAllPending()]);setPending(p);setHistory(h.filter(a=>a.status!=='pending'));setLoading(false);};
@@ -900,7 +958,7 @@ function ApprovalsTab({onCourseChange,courses}){
       if(action.action_type==='delete_resource'){
         await dbDeleteResource(action.payload.id);
       }
-      await dbReviewPending(action.id,'approved',SUPERUSER_USERNAME);
+      await dbReviewPending(action.id,'approved',reviewerUsername);
     }catch(e){console.error(e);}
     setBusy('');await load();
   };
@@ -908,7 +966,7 @@ function ApprovalsTab({onCourseChange,courses}){
   const reject=async()=>{
     if(!rejectModal)return;
     setBusy(rejectModal.id);
-    await dbReviewPending(rejectModal.id,'rejected',SUPERUSER_USERNAME,rejectNote);
+    await dbReviewPending(rejectModal.id,'rejected',reviewerUsername,rejectNote);
     setRejectModal(null);setRejectNote('');setBusy('');await load();
   };
 
@@ -1138,7 +1196,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         )}
 
         {tab==='analytics'&&<AnalyticsTab courses={courses}/>}
-        {tab==='approvals'&&isSU2&&<ApprovalsTab onCourseChange={onCoursesChange} courses={courses}/>}
+        {tab==='approvals'&&isSU2&&<ApprovalsTab onCourseChange={onCoursesChange} courses={courses} reviewerUsername={user.username}/>}
         {tab==='admins'&&isSU2&&<ManageAdminsTab/>}
       </div>
       {showUpload&&(
