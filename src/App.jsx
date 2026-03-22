@@ -13,7 +13,7 @@ import { createClient } from '@supabase/supabase-js';
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '3.4.0';
+const APP_VERSION    = '3.5.0';
 const COPYRIGHT_YEAR = '2025';
 
 const supabase = createClient(
@@ -287,6 +287,28 @@ const RolePill=({role})=>{
 };
 const ProgressBar=({pct,color='#4f9cf9'})=>(<div style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><Mono color="var(--muted)" size={9}>PROGRESS</Mono><Mono color={color} size={9}>{pct}%</Mono></div><div style={{height:3,background:'var(--border)',borderRadius:2}}><div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2,transition:'width .5s ease'}}/></div></div>);
 
+/* ═══════════════ LOGO ═══════════════ */
+function Logo({onClick,size='md'}){
+  const sizes={sm:{outer:28,font:15,dot:5},md:{outer:36,font:19,dot:6},lg:{outer:48,font:26,dot:8}};
+  const s=sizes[size]||sizes.md;
+  return(
+    <button onClick={onClick} title="Go to Dashboard" style={{background:'none',border:'none',cursor:onClick?'pointer':'default',padding:0,display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
+      {/* Icon mark */}
+      <div style={{width:s.outer,height:s.outer,borderRadius:10,background:'linear-gradient(135deg,#1a2a4a,#0d1929)',border:'1.5px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',flexShrink:0,boxShadow:'0 2px 12px rgba(79,156,249,.15)'}}>
+        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:s.font,color:'#4f9cf9',letterSpacing:-1,lineHeight:1}}>S</span>
+        <div style={{position:'absolute',top:4,right:4,width:s.dot,height:s.dot,borderRadius:'50%',background:'#7fda96',boxShadow:'0 0 6px #7fda96'}}/>
+      </div>
+      {/* Wordmark */}
+      <div style={{lineHeight:1}}>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:s.font,color:'var(--text)',letterSpacing:-0.5,lineHeight:1}}>
+          Study<span style={{color:'#4f9cf9'}}>Hub</span>
+        </div>
+        {size!=='sm'&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:2,marginTop:3}}>v{APP_VERSION}</div>}
+      </div>
+    </button>
+  );
+}
+
 /* ═══════════════ THEME TOGGLE ═══════════════ */
 function ThemeToggle({dark,toggle}){
   return(
@@ -546,7 +568,103 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
 }
 
 /* ═══════════════ UPLOAD MODAL ═══════════════ */
-const JSON_PROMPT=`Generate a StudyHub JSON study guide for this PDF.
+/* File format definitions */
+const FILE_TYPES = [
+  {ext:['pdf'],          label:'PDF',          icon:'📄', accept:'.pdf',           color:'#f05050'},
+  {ext:['docx','doc'],   label:'Word Doc',     icon:'📝', accept:'.doc,.docx',     color:'#4f9cf9'},
+  {ext:['pptx','ppt'],   label:'PowerPoint',   icon:'📊', accept:'.ppt,.pptx',     color:'#f9a84f'},
+  {ext:['txt','md'],     label:'Text / MD',    icon:'📃', accept:'.txt,.md',       color:'#7fda96'},
+  {ext:['png','jpg','jpeg','webp'], label:'Image', icon:'🖼', accept:'.png,.jpg,.jpeg,.webp', color:'#da7ff0'},
+  {ext:['csv'],          label:'CSV',          icon:'📋', accept:'.csv',           color:'#4ff9e4'},
+  {ext:['json'],         label:'JSON',         icon:'🔧', accept:'.json',          color:'#a8f94f'},
+];
+
+const ALL_ACCEPT = FILE_TYPES.map(t=>t.accept).join(',');
+
+function getFileType(filename){
+  const ext = filename.split('.').pop().toLowerCase();
+  return FILE_TYPES.find(t=>t.ext.includes(ext));
+}
+
+/* Client-side text extraction */
+async function extractText(file){
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  // Plain text formats
+  if(['txt','md','csv'].includes(ext)){
+    return new Promise((res,rej)=>{
+      const r=new FileReader();
+      r.onload=e=>res(e.target.result);
+      r.onerror=()=>rej(new Error('Could not read file'));
+      r.readAsText(file);
+    });
+  }
+
+  // JSON
+  if(ext==='json'){
+    const text = await new Promise((res,rej)=>{
+      const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=()=>rej(new Error('Read failed'));r.readAsText(file);
+    });
+    // Try parsing as existing StudyHub JSON first
+    try{
+      const parsed=JSON.parse(text);
+      if(parsed.chapterTitle) return '__STUDYHUB_JSON__:'+text;
+    }catch{}
+    return text;
+  }
+
+  // PDF — extract using PDF.js
+  if(ext==='pdf'){
+    const arrayBuffer = await file.arrayBuffer();
+    if(typeof window.pdfjsLib === 'undefined'){
+      // Load PDF.js dynamically
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload=res;s.onerror=rej;document.head.appendChild(s);
+      });
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc=
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    const pdf = await window.pdfjsLib.getDocument({data:arrayBuffer}).promise;
+    let text='';
+    for(let i=1;i<=Math.min(pdf.numPages,80);i++){
+      const page=await pdf.getPage(i);
+      const content=await page.getTextContent();
+      text+=content.items.map(s=>s.str).join(' ')+'\n';
+    }
+    if(text.trim().length < 100) return '__IMAGE_NEEDED__'; // Scanned PDF — fall through to vision
+    return text;
+  }
+
+  // DOCX — extract using mammoth
+  if(['doc','docx'].includes(ext)){
+    const arrayBuffer = await file.arrayBuffer();
+    if(typeof window.mammoth === 'undefined'){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+        s.onload=res;s.onerror=rej;document.head.appendChild(s);
+      });
+    }
+    const result = await window.mammoth.extractRawText({arrayBuffer});
+    return result.value;
+  }
+
+  // Images and everything else — base64 for vision
+  return '__USE_VISION__';
+}
+
+async function toBase64(file){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=e=>res(e.target.result.split(',')[1]);
+    r.onerror=()=>rej(new Error('Read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+const JSON_PROMPT=`Generate a StudyHub JSON study guide for this document.
 Return ONLY valid JSON with this exact structure:
 {
   "courseName": "e.g. COS 341",
@@ -561,83 +679,212 @@ Return ONLY valid JSON with this exact structure:
 Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none, chapters 4-8 with EXACTLY 3 takeaways each, questions EXACTLY 25 exam-style with full worked answers. Return ONLY the JSON.`;
 
 function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
-  const[year,setYear]=useState(1);const[semester,setSemester]=useState(1);const[department,setDepartment]=useState('Computer Science');const[pasteText,setPasteText]=useState('');const[status,setStatus]=useState('idle');const[error,setError]=useState('');const[copied,setCopied]=useState(false);
+  const[uploadMode,setUploadMode]=useState('file'); // 'file' | 'paste'
+  const[year,setYear]=useState(1);
+  const[semester,setSemester]=useState(1);
+  const[department,setDepartment]=useState('Computer Science');
+  const[pasteText,setPasteText]=useState('');
+  const[file,setFile]=useState(null);
+  const[status,setStatus]=useState('idle');
+  const[progress,setProgress]=useState('');
+  const[error,setError]=useState('');
+  const[copied,setCopied]=useState(false);
+  const fileRef=useRef();
+
   const copyPrompt=()=>{navigator.clipboard.writeText(JSON_PROMPT);setCopied(true);setTimeout(()=>setCopied(false),2000);};
-  const go=async()=>{
+
+  const saveEntry=async(data)=>{
+    if(!data.chapterTitle) throw new Error('Missing chapterTitle in response');
+    const id=`c-${Date.now()}`;
+    const entry={id,year,semester,department,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+    if(adminMode){
+      await onDone(null,entry,data);
+    } else {
+      await dbSaveCourse(entry,data);
+      const idx=await dbLoadCourseIndex();
+      setTimeout(()=>onDone(idx),600);
+    }
+    setStatus('done');
+  };
+
+  const processFile=async()=>{
+    if(!file) return;
+    setStatus('processing');setError('');
+    try{
+      setProgress(`Reading ${file.name}…`);
+      const text = await extractText(file);
+
+      // Already valid StudyHub JSON
+      if(text.startsWith('__STUDYHUB_JSON__:')){
+        const data=JSON.parse(text.replace('__STUDYHUB_JSON__:',''));
+        setProgress('Saving course…');
+        await saveEntry(data); return;
+      }
+
+      // Needs vision model
+      const useVision = text==='__USE_VISION__' || text==='__IMAGE_NEEDED__';
+      setProgress(useVision?'Sending to AI vision model…':'Sending to AI…');
+
+      let body;
+      if(useVision){
+        const b64=await toBase64(file);
+        body={imageBase64:b64,mimeType:file.type||'image/png'};
+      } else {
+        body={text};
+      }
+
+      const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`Server error ${res.status}`);}
+      const data=await res.json();
+      setProgress('Saving course…');
+      await saveEntry(data);
+    }catch(e){setError('Failed: '+e.message);setStatus('idle');setProgress('');}
+  };
+
+  const processPaste=async()=>{
     setError('');
     try{
       const data=JSON.parse(pasteText.replace(/```json|```/g,'').trim());
-      if(!data.chapterTitle)throw new Error('Missing chapterTitle');
-      setStatus('processing');
-      if(adminMode){
-        const id=`c-${Date.now()}`;
-        const entry={id,year,semester,department,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
-        await onDone(null,entry,data);
-        setStatus('done');
-      } else {
-        const id=`c-${Date.now()}`;
-        const entry={id,year,semester,department,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
-        await dbSaveCourse(entry,data);
-        const idx=await dbLoadCourseIndex();setStatus('done');setTimeout(()=>onDone(idx),700);
-      }
-    }catch(e){setError('Invalid JSON: '+e.message);setStatus('idle');}
+      if(!data.chapterTitle) throw new Error('Missing chapterTitle');
+      setStatus('processing');setProgress('Saving course…');
+      await saveEntry(data);
+    }catch(e){setError('Invalid JSON: '+e.message);}
   };
+
+  const fileType = file ? getFileType(file.name) : null;
+  const canGo = status!=='processing'&&status!=='done'&&(uploadMode==='file'?!!file:!!pasteText.trim());
+
   return(
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 32px',maxWidth:540,width:'100%',margin:'auto',boxShadow:'var(--shadow)'}}>
-        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'var(--text)',marginBottom:4}}>{adminMode?'Request New Course':'Add Course'}</div>
-        <p style={{color:'var(--muted)',fontSize:13,marginBottom:adminMode?8:20}}>{adminMode?'Paste the JSON below — your request will be sent to the superuser for approval.':'Generate a study guide using Claude, ChatGPT, or any AI — paste the JSON here.'}</p>
-        {adminMode&&<div style={{background:'rgba(218,127,240,.06)',border:'1px solid rgba(218,127,240,.2)',borderRadius:8,padding:'8px 14px',fontSize:12,color:'#da7ff0',marginBottom:16}}>🛡 This request will be queued and only go live once the superuser approves it.</div>}
-        <div style={{marginBottom:18}}>
-          <Mono color="var(--muted)" size={10}>ASSIGN TO YEAR</Mono>
-          <div style={{display:'flex',gap:8,marginTop:8}}>
-            {YEARS.map(y=><button key={y} onClick={()=>setYear(y)} style={{flex:1,padding:'9px 0',borderRadius:8,cursor:'pointer',border:`1px solid ${year===y?YEAR_COLORS[y]+'70':'var(--border)'}`,background:year===y?YEAR_BG[y]:'var(--input-bg)',color:year===y?YEAR_COLORS[y]:'var(--muted)',fontWeight:year===y?700:400,fontSize:13}}>Year {y}</button>)}
+      <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 32px',maxWidth:560,width:'100%',margin:'auto',boxShadow:'var(--shadow)',maxHeight:'90vh',overflowY:'auto'}}>
+
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
+          <Logo onClick={null} size="sm"/>
+          <div>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>{adminMode?'Request New Course':'Add Course'}</div>
+            {adminMode&&<div style={{fontSize:11,color:'#da7ff0',marginTop:2}}>🛡 Requires superuser approval</div>}
           </div>
         </div>
-        <div style={{marginBottom:18}}>
-          <Mono color="var(--muted)" size={10}>SEMESTER</Mono>
-          <div style={{display:'flex',gap:8,marginTop:8}}>
-            {[1,2].map(s=><button key={s} onClick={()=>setSemester(s)} style={{flex:1,padding:'9px 0',borderRadius:8,cursor:'pointer',border:`1px solid ${semester===s?YEAR_COLORS[year]+'70':'var(--border)'}`,background:semester===s?YEAR_BG[year]:'var(--input-bg)',color:semester===s?YEAR_COLORS[year]:'var(--muted)',fontWeight:semester===s?700:400,fontSize:13}}>Semester {s}</button>)}
+
+        {/* Mode toggle */}
+        <div style={{display:'flex',background:'var(--input-bg)',borderRadius:10,padding:4,marginBottom:20}}>
+          {[{id:'file',label:'📁 Upload File'},{id:'paste',label:'📋 Paste JSON'}].map(m=>(
+            <button key={m.id} onClick={()=>{setUploadMode(m.id);setError('');setStatus('idle');setProgress('');}} style={{flex:1,padding:'8px 0',borderRadius:7,border:'none',background:uploadMode===m.id?'var(--surface)':'none',color:uploadMode===m.id?'var(--text)':'var(--muted)',cursor:'pointer',fontSize:13,fontWeight:uploadMode===m.id?600:400}}>{m.label}</button>
+          ))}
+        </div>
+
+        {/* Year / Semester / Dept pickers */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:18}}>
+          <div>
+            <Mono color="var(--muted)" size={10}>YEAR</Mono>
+            <div style={{display:'flex',gap:6,marginTop:6}}>
+              {YEARS.map(y=><button key={y} onClick={()=>setYear(y)} style={{flex:1,padding:'7px 0',borderRadius:7,cursor:'pointer',border:`1px solid ${year===y?YEAR_COLORS[y]+'70':'var(--border)'}`,background:year===y?YEAR_BG[y]:'var(--input-bg)',color:year===y?YEAR_COLORS[y]:'var(--muted)',fontWeight:year===y?700:400,fontSize:12}}>{y}</button>)}
+            </div>
+          </div>
+          <div>
+            <Mono color="var(--muted)" size={10}>SEMESTER</Mono>
+            <div style={{display:'flex',gap:6,marginTop:6}}>
+              {[1,2].map(s=><button key={s} onClick={()=>setSemester(s)} style={{flex:1,padding:'7px 0',borderRadius:7,cursor:'pointer',border:`1px solid ${semester===s?YEAR_COLORS[year]+'70':'var(--border)'}`,background:semester===s?YEAR_BG[year]:'var(--input-bg)',color:semester===s?YEAR_COLORS[year]:'var(--muted)',fontWeight:semester===s?700:400,fontSize:12}}>Sem {s}</button>)}
+            </div>
           </div>
         </div>
         <div style={{marginBottom:18}}>
           <Mono color="var(--muted)" size={10}>DEPARTMENT</Mono>
-          <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:8}}>
-            {DEPARTMENTS.map(d=>{
-              const active=department===d;
-              const col=DEPT_COLOR[d];
-              return(
-                <button key={d} onClick={()=>setDepartment(d)} style={{padding:'10px 14px',borderRadius:8,cursor:'pointer',border:`1px solid ${active?col+'70':'var(--border)'}`,background:active?`${col}12`:'var(--input-bg)',color:active?col:'var(--muted)',fontWeight:active?600:400,fontSize:13,textAlign:'left',display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:active?`${col}20`:'var(--border)',color:active?col:'var(--muted)',borderRadius:4,padding:'2px 7px'}}>{DEPT_SHORT[d]}</span>
-                  {d}
-                </button>
-              );
-            })}
+          <div style={{display:'flex',gap:8,marginTop:6}}>
+            {DEPARTMENTS.map(d=>{const active=department===d;const col=DEPT_COLOR[d];return(
+              <button key={d} onClick={()=>setDepartment(d)} style={{flex:1,padding:'8px 10px',borderRadius:8,cursor:'pointer',border:`1px solid ${active?col+'70':'var(--border)'}`,background:active?`${col}12`:'var(--input-bg)',color:active?col:'var(--muted)',fontWeight:active?600:400,fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:active?`${col}20`:'var(--border)',color:active?col:'var(--muted)',borderRadius:3,padding:'1px 5px'}}>{DEPT_SHORT[d]}</span>
+                <span style={{fontSize:11}}>{d}</span>
+              </button>
+            );})}
           </div>
         </div>
-        <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:10,padding:'14px 16px',marginBottom:16}}>
-          <div style={{fontSize:12,fontWeight:600,color:'#4f9cf9',marginBottom:10}}>How to generate a study guide</div>
-          <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.8}}><span style={{color:'var(--text)'}}>Step 1</span> — Open Claude.ai, ChatGPT, or any AI<br/><span style={{color:'var(--text)'}}>Step 2</span> — Upload your PDF<br/><span style={{color:'var(--text)'}}>Step 3</span> — Copy and paste this prompt:</div>
-          <div style={{marginTop:10,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10}}>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)',lineHeight:1.6,flex:1}}>Generate a StudyHub JSON study guide for this PDF…</div>
-            <button onClick={copyPrompt} style={{background:copied?'rgba(127,218,150,.1)':'rgba(79,156,249,.1)',border:`1px solid ${copied?'rgba(127,218,150,.4)':'rgba(79,156,249,.3)'}`,borderRadius:6,color:copied?'#7fda96':'#4f9cf9',cursor:'pointer',padding:'5px 12px',fontSize:11,flexShrink:0}}>{copied?'✓ Copied':'Copy Prompt'}</button>
+
+        {/* FILE MODE */}
+        {uploadMode==='file'&&(
+          <div className="fade-in">
+            {/* Format grid */}
+            <div style={{marginBottom:14}}>
+              <Mono color="var(--muted)" size={10}>SUPPORTED FORMATS</Mono>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}}>
+                {FILE_TYPES.map(t=>(
+                  <div key={t.label} style={{background:`${t.color}10`,border:`1px solid ${t.color}30`,borderRadius:6,padding:'4px 10px',display:'flex',alignItems:'center',gap:5}}>
+                    <span style={{fontSize:12}}>{t.icon}</span>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:t.color,letterSpacing:1}}>{t.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Drop zone */}
+            <div
+              onClick={()=>fileRef.current?.click()}
+              onDragOver={e=>e.preventDefault()}
+              onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){setFile(f);setError('');}}}
+              style={{border:`2px dashed ${file?YEAR_COLORS[year]+'80':'var(--border)'}`,borderRadius:10,padding:'24px 20px',textAlign:'center',cursor:'pointer',background:file?YEAR_BG[year]:'var(--input-bg)',transition:'var(--transition)',marginBottom:10}}
+            >
+              {file?(
+                <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:10}}>
+                  <span style={{fontSize:28}}>{fileType?.icon||'📄'}</span>
+                  <div style={{textAlign:'left'}}>
+                    <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{file.name}</div>
+                    <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{(file.size/1024).toFixed(1)} KB · {fileType?.label||'File'}</div>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();setFile(null);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,marginLeft:8}}>✕</button>
+                </div>
+              ):(
+                <>
+                  <div style={{fontSize:32,marginBottom:8}}>📂</div>
+                  <div style={{fontSize:13,color:'var(--text)',fontWeight:500}}>Click to browse or drag & drop</div>
+                  <div style={{fontSize:11,color:'var(--muted)',marginTop:4}}>PDF · Word · PowerPoint · Images · Text · CSV · JSON</div>
+                </>
+              )}
+              <input ref={fileRef} type="file" accept={ALL_ACCEPT} onChange={e=>{const f=e.target.files[0];if(f){setFile(f);setError('');}}} style={{display:'none'}}/>
+            </div>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:4,textAlign:'center'}}>
+              Files are processed by AI to extract course content automatically.
+            </div>
           </div>
-          <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.8,marginTop:10}}><span style={{color:'var(--text)'}}>Step 4</span> — Copy the JSON output<br/><span style={{color:'var(--text)'}}>Step 5</span> — Paste it below</div>
-        </div>
-        <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder={'{\n  "courseName": "COS 341",\n  "chapterTitle": "Memory System",\n  ...\n}'} rows={9} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:12,fontFamily:"'IBM Plex Mono',monospace",resize:'vertical',marginBottom:12}}/>
+        )}
+
+        {/* PASTE MODE */}
+        {uploadMode==='paste'&&(
+          <div className="fade-in">
+            <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:10,padding:'12px 14px',marginBottom:12}}>
+              <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.7}}>
+                Open <strong style={{color:'var(--text)'}}>Claude.ai</strong> or <strong style={{color:'var(--text)'}}>ChatGPT</strong>, upload your file, paste this prompt:
+              </div>
+              <div style={{marginTop:8,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',gap:8,alignItems:'center'}}>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)'}}>Generate a StudyHub JSON study guide…</span>
+                <button onClick={copyPrompt} style={{background:copied?'rgba(127,218,150,.1)':'rgba(79,156,249,.1)',border:`1px solid ${copied?'rgba(127,218,150,.4)':'rgba(79,156,249,.3)'}`,borderRadius:5,color:copied?'#7fda96':'#4f9cf9',cursor:'pointer',padding:'4px 10px',fontSize:11,flexShrink:0}}>{copied?'✓ Copied':'Copy'}</button>
+              </div>
+            </div>
+            <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder={'{\n  "courseName": "COS 341",\n  "chapterTitle": "Memory System",\n  ...\n}'} rows={9} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:12,fontFamily:"'IBM Plex Mono',monospace",resize:'vertical',marginBottom:10}}/>
+          </div>
+        )}
+
+        {/* Status */}
         {error&&<div style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,padding:'9px 14px',color:'#f05050',fontSize:12.5,marginBottom:10}}>{error}</div>}
-        {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>{adminMode?'Submitting request…':'Saving course…'}</div>}
+        {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>{progress||'Processing…'}</div>}
         {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':`✓ Course added — Year ${year}, Semester ${semester}, ${DEPT_SHORT[department]}!`}</div>}
-        <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+
+        {/* Actions */}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:4}}>
           <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>Cancel</button>
-          <button onClick={go} disabled={!pasteText.trim()||status==='processing'||status==='done'} style={{background:!pasteText.trim()||status==='processing'||status==='done'?'var(--border)':adminMode?'#da7ff0':'#4f9cf9',border:'none',borderRadius:8,color:!pasteText.trim()||status==='processing'||status==='done'?'var(--muted)':'#000',cursor:'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}>
-            {status==='processing'?'Submitting…':status==='done'?'Done!':adminMode?'Submit for Approval':'Save Course'}
+          <button
+            onClick={uploadMode==='file'?processFile:processPaste}
+            disabled={!canGo}
+            style={{background:!canGo?'var(--border)':adminMode?'#da7ff0':'#4f9cf9',border:'none',borderRadius:8,color:!canGo?'var(--muted)':'#000',cursor:!canGo?'not-allowed':'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}
+          >
+            {status==='processing'?'Processing…':status==='done'?'Done!':adminMode?'Submit for Approval':uploadMode==='file'?'Generate & Save':'Save Course'}
           </button>
         </div>
       </div>
     </div>
   );
 }
+
 
 /* ═══════════════ COMMUNITY BOARD ═══════════════ */
 function CommunityBoard({courseId,user}){
@@ -815,7 +1062,10 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
     <div style={{maxWidth:960,margin:'0 auto',padding:'28px 20px 88px'}}>
       {/* Top bar */}
       <div className="topbar" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:10}}>
-        <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 16px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>← All Courses</button>
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <Logo onClick={onBack} size="sm"/>
+          <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>← All Courses</button>
+        </div>
         <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
           <RolePill role={user.role}/>
           <div style={{background:YEAR_BG[course.year],border:`1px solid ${accent}40`,borderRadius:6,padding:'4px 12px'}}><Mono color={accent} size={9}>Year {course.year} · Semester {course.semester||1}</Mono></div>
@@ -1144,9 +1394,13 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
       <div style={{maxWidth:900,margin:'0 auto',padding:'34px 20px 90px'}}>
         <div className="fade-up" style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:14}}>
           <div>
-            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
-              <Mono color={isSU2?'#f9a84f':'#da7ff0'} size={9}>{isSU2?'SUPERUSER PANEL':'ADMIN PANEL'}</Mono>
-              <RolePill role={user.role}/>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:8}}>
+              <Logo onClick={onClose} size="sm"/>
+              <div style={{width:1,height:20,background:'var(--border)'}}/>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <Mono color={isSU2?'#f9a84f':'#da7ff0'} size={9}>{isSU2?'SUPERUSER PANEL':'ADMIN PANEL'}</Mono>
+                <RolePill role={user.role}/>
+              </div>
             </div>
             <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)'}}>Manage StudyHub</h2>
             {!isSU2&&<p style={{fontSize:12,color:'var(--muted)',marginTop:5}}>Your course & resource actions require superuser approval before taking effect.</p>}
@@ -1279,14 +1533,18 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
     <div style={{maxWidth:990,margin:'0 auto',padding:'34px 20px 88px'}}>
       {/* Top bar */}
       <div className="topbar fade-up" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:28,flexWrap:'wrap',gap:14}}>
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          <Avatar name={user.displayName} size={40}/>
-          <div>
-            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'var(--text)'}}>{user.displayName}</div>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginTop:4,flexWrap:'wrap'}}>
-              <RolePill role={user.role}/>
-              {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Year {user.year} · @{user.username}</Mono>}
-              {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
+        <div style={{display:'flex',alignItems:'center',gap:16}}>
+          <Logo onClick={null} size="md"/>
+          <div style={{width:1,height:32,background:'var(--border)'}}/>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <Avatar name={user.displayName} size={34}/>
+            <div>
+              <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3,flexWrap:'wrap'}}>
+                <RolePill role={user.role}/>
+                {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Yr {user.year} · @{user.username}</Mono>}
+                {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
+              </div>
             </div>
           </div>
         </div>
