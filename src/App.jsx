@@ -124,13 +124,69 @@ const css = `
   button:active{transform:scale(.97)}
 
   /* Mobile touch targets */
+  /* ── Mobile: phones ≤640px ── */
   @media(max-width:640px){
-    button,a{min-height:44px;min-width:44px}
-    .tab-btn{padding:10px 12px!important;font-size:12px!important}
+    /* Touch targets */
+    button{min-height:44px}
+    .tab-btn{padding:10px 10px!important;font-size:11px!important;min-height:40px}
+
+    /* Layout */
+    .topbar{flex-wrap:wrap;gap:8px}
     .course-grid{grid-template-columns:1fr!important}
-    .year-tabs{gap:6px!important}
-    .year-tab{padding:10px 14px!important}
-    .topbar{flex-wrap:wrap;gap:10px}
+    .year-tabs{gap:6px!important;overflow-x:auto;flex-wrap:nowrap!important;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .year-tabs::-webkit-scrollbar{display:none}
+    .year-tab{padding:9px 14px!important;flex-shrink:0}
+
+    /* Course view tabs — horizontal scroll */
+    .course-tabs-row{overflow-x:auto;flex-wrap:nowrap!important;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+    .course-tabs-row::-webkit-scrollbar{display:none}
+
+    /* Auth card — full width */
+    .auth-card{padding:22px 18px!important;border-radius:12px!important}
+
+    /* Home padding */
+    .home-page{padding:20px 14px 100px!important}
+
+    /* Course view padding */
+    .course-page{padding:16px 14px 110px!important}
+
+    /* Admin panel */
+    .admin-page{padding:20px 12px 80px!important}
+
+    /* Definitions table — stack on mobile */
+    .def-grid{grid-template-columns:1fr!important}
+    .def-term{border-bottom:none!important;border-right:none!important;padding-bottom:4px!important}
+
+    /* Chatbot — full width at bottom */
+    .chatbot-panel{right:0!important;left:0!important;width:100%!important;bottom:52px!important;border-radius:14px 14px 0 0!important;max-height:60vh!important}
+    .chatbot-btn{right:12px!important;bottom:60px!important}
+
+    /* Notification dropdown */
+    .notif-dropdown{right:-10px!important;width:calc(100vw - 20px)!important;max-width:none!important}
+
+    /* Cards */
+    .modal-inner{padding:20px 16px!important;border-radius:14px!important}
+
+    /* Hide keyboard shortcut hint on mobile */
+    .kbd-hint{display:none!important}
+
+    /* Upload modal full height */
+    .upload-modal{max-height:95vh!important}
+
+    /* Year/semester pickers — 2 columns on mobile */
+    .year-picker-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  }
+
+  /* ── Tablet: 641–900px ── */
+  @media(min-width:641px) and (max-width:900px){
+    .course-grid{grid-template-columns:repeat(2,1fr)!important}
+    .year-tabs{flex-wrap:wrap;gap:8px}
+  }
+
+  /* ── Safe area for notched phones ── */
+  @supports(padding:max(0px)){
+    .copyright-bar{padding-bottom:max(7px,env(safe-area-inset-bottom))!important}
+    .course-page,.home-page{padding-bottom:max(88px,calc(52px + env(safe-area-inset-bottom)))!important}
   }
 
   @keyframes slideUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
@@ -513,24 +569,52 @@ function OfflineBanner(){
 }
 
 /* ═══════════════ PWA INSTALL ═══════════════ */
+/* ═══════════════ INSTALL PROMPT (cross-browser) ═══════════════ */
+function useBrowserInfo(){
+  const ua=navigator.userAgent;
+  const isIOS=/iPad|iPhone|iPod/.test(ua)&&!window.MSStream;
+  const isSafari=/^((?!chrome|android).)*safari/i.test(ua);
+  const isFirefox=/firefox/i.test(ua);
+  const isAndroid=/android/i.test(ua);
+  const isStandalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+  const isChromium=!!(window.chrome);
+  return{isIOS,isSafari,isFirefox,isAndroid,isStandalone,isChromium};
+}
+
 function InstallPrompt(){
-  const[prompt,setPrompt]=useState(null);
+  const[prompt,setPrompt]=useState(null);   // beforeinstallprompt event
   const[show,setShow]=useState(false);
+  const[showIOSGuide,setShowIOSGuide]=useState(false);
+  const browser=useBrowserInfo();
 
   useEffect(()=>{
-    if(window.matchMedia('(display-mode: standalone)').matches) return;
-    if(window.navigator.standalone) return;
-    if(sessionStorage.getItem('pwa-dismissed')) return;
-    if(localStorage.getItem('pwa-dismissed')) return;
+    if(browser.isStandalone)return;
+    if(localStorage.getItem('pwa-dismissed'))return;
+    if(sessionStorage.getItem('pwa-dismissed'))return;
+
+    // Chrome / Edge / Samsung / Opera / Brave — standard beforeinstallprompt
     const h=e=>{e.preventDefault();setPrompt(e);setShow(true);};
     window.addEventListener('beforeinstallprompt',h);
+
+    // iOS Safari — show manual guide after a short delay (no API available)
+    if(browser.isIOS&&browser.isSafari){
+      const t=setTimeout(()=>setShow(true),2500);
+      return()=>{window.removeEventListener('beforeinstallprompt',h);clearTimeout(t);};
+    }
+
+    // Firefox on Android — show manual guide (no API)
+    if(browser.isFirefox&&browser.isAndroid){
+      const t=setTimeout(()=>setShow(true),2500);
+      return()=>{window.removeEventListener('beforeinstallprompt',h);clearTimeout(t);};
+    }
+
     return()=>window.removeEventListener('beforeinstallprompt',h);
   },[]);
 
   const install=async()=>{
     if(!prompt)return;
     prompt.prompt();
-    await prompt.userChoice;
+    const{outcome}=await prompt.userChoice;
     setShow(false);setPrompt(null);
     localStorage.setItem('pwa-dismissed','1');
   };
@@ -538,12 +622,63 @@ function InstallPrompt(){
   const neverShow=()=>{setShow(false);setPrompt(null);localStorage.setItem('pwa-dismissed','1');};
 
   if(!show)return null;
+
+  // ── iOS Safari: step-by-step guide ──────────────────────────────
+  if(browser.isIOS&&!prompt){
+    return(
+      <div className="slide-down no-print" style={{position:'fixed',bottom:0,left:0,right:0,background:'var(--card)',borderTop:'1px solid var(--border)',borderRadius:'16px 16px 0 0',padding:'20px 20px 32px',zIndex:600,boxShadow:'0 -8px 32px rgba(0,0,0,.4)'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:36,height:36,borderRadius:8,background:'linear-gradient(135deg,#1a2a4a,#0d1929)',border:'1px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18}}>📚</div>
+            <div>
+              <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>Install StudyHub</div>
+              <div style={{fontSize:11,color:'var(--muted)'}}>Add to your home screen</div>
+            </div>
+          </div>
+          <button onClick={neverShow} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,lineHeight:1,padding:'4px'}}>✕</button>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+          {[
+            {step:1,icon:'⬆️',text:<span>Tap the <strong style={{color:'var(--text)'}}>Share</strong> button at the bottom of Safari</span>},
+            {step:2,icon:'➕',text:<span>Scroll down and tap <strong style={{color:'var(--text)'}}>Add to Home Screen</strong></span>},
+            {step:3,icon:'✅',text:<span>Tap <strong style={{color:'var(--text)'}}>Add</strong> — StudyHub will appear on your home screen</span>},
+          ].map(({step,icon,text})=>(
+            <div key={step} style={{display:'flex',alignItems:'center',gap:12,background:'var(--surface)',borderRadius:10,padding:'10px 14px'}}>
+              <span style={{fontSize:22,flexShrink:0}}>{icon}</span>
+              <div style={{flex:1,fontSize:13,color:'var(--muted)',lineHeight:1.5}}>{text}</div>
+            </div>
+          ))}
+        </div>
+        <button onClick={dismiss} style={{width:'100%',marginTop:14,background:'none',border:'1px solid var(--border)',borderRadius:9,color:'var(--muted)',cursor:'pointer',padding:'11px 0',fontSize:13}}>Maybe later</button>
+      </div>
+    );
+  }
+
+  // ── Firefox on Android: manual guide ────────────────────────────
+  if(browser.isFirefox&&browser.isAndroid&&!prompt){
+    return(
+      <div className="slide-down no-print" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'14px 18px',zIndex:600,boxShadow:'var(--shadow)',maxWidth:360,width:'calc(100% - 32px)'}}>
+        <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+          <span style={{fontSize:22}}>📲</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:4}}>Install StudyHub</div>
+            <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.6}}>
+              Tap the <strong style={{color:'var(--text)'}}>⋮ menu</strong> → <strong style={{color:'var(--text)'}}>Install</strong> or <strong style={{color:'var(--text)'}}>Add to Home Screen</strong>
+            </div>
+          </div>
+          <button onClick={neverShow} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'2px',lineHeight:1,flexShrink:0}}>✕</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Chrome / Edge / Samsung / Brave: native prompt ──────────────
   return(
-    <div className="slide-down no-print" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 18px',display:'flex',alignItems:'center',gap:12,zIndex:600,boxShadow:'var(--shadow)',maxWidth:380,width:'calc(100% - 32px)'}}>
+    <div className="slide-down no-print" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 18px',display:'flex',alignItems:'center',gap:12,zIndex:600,boxShadow:'var(--shadow)',maxWidth:390,width:'calc(100% - 32px)'}}>
       <div style={{fontSize:22}}>📲</div>
       <div style={{flex:1}}>
         <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:2}}>Install StudyHub</div>
-        <div style={{fontSize:11,color:'var(--muted)'}}>Add to home screen for quick access</div>
+        <div style={{fontSize:11,color:'var(--muted)'}}>Add to home screen — works offline too</div>
       </div>
       <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center'}}>
         <button onClick={neverShow} title="Don't show again" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'2px 4px',lineHeight:1}}>✕</button>
@@ -576,7 +711,7 @@ function GuestBanner({onSignUp}){
 }
 
 /* ═══════════════ COPYRIGHT BAR ═══════════════ */
-const CopyrightBar=()=>(<div className="no-print" style={{position:'fixed',bottom:0,left:0,right:0,background:'var(--bg)',borderTop:'1px solid var(--border)',padding:'7px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',zIndex:100,flexWrap:'wrap',gap:6}}><div style={{display:'flex',alignItems:'center',gap:10}}><span style={{fontFamily:"'DM Serif Display',serif",fontSize:14,color:'#4f9cf9'}}>StudyHub</span><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>v{APP_VERSION}</span></div><div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>© {COPYRIGHT_YEAR} · OWNED BY</span><span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Yination</span><span style={{color:'var(--muted)',fontSize:10}}>&</span><span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Excalibur</span><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>· ALL RIGHTS RESERVED</span></div></div>);
+const CopyrightBar=()=>(<div className="no-print copyright-bar" style={{position:'fixed',bottom:0,left:0,right:0,background:'var(--bg)',borderTop:'1px solid var(--border)',padding:'7px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',zIndex:100,flexWrap:'wrap',gap:6}}><div style={{display:'flex',alignItems:'center',gap:10}}><span style={{fontFamily:"'DM Serif Display',serif",fontSize:14,color:'#4f9cf9'}}>StudyHub</span><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>v{APP_VERSION}</span></div><div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>© {COPYRIGHT_YEAR} · OWNED BY</span><span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Yination</span><span style={{color:'var(--muted)',fontSize:10}}>&</span><span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Excalibur</span><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>· ALL RIGHTS RESERVED</span></div></div>);
 
 /* ═══════════════ SEARCH BAR ═══════════════ */
 const SearchBar=({value,onChange,placeholder='Search courses…'})=>(
@@ -593,23 +728,20 @@ const SEARCH_PREFIXES=['find ','search ','what is ','what are ','how do i ','how
 const isSearchQuery=t=>SEARCH_PREFIXES.some(p=>t.toLowerCase().startsWith(p))||t.endsWith('?');
 
 function Chatbot({context,courses,user}){
-  const[open,setOpen]=useState(false);
+  // Persist open state — remember how the user left it, never force-open
+  const[open,setOpen]=useState(()=>{
+    try{return localStorage.getItem('sh-bot-open')==='1';}catch{return false;}
+  });
   const[minimised,setMinimised]=useState(false);
   const[messages,setMessages]=useState([]);
   const[input,setInput]=useState('');
   const[loading,setLoading]=useState(false);
-  const[tab,setTab]=useState('chat'); // 'chat' | 'search'
+  const[tab,setTab]=useState('chat');
   const[searchResults,setSearchResults]=useState([]);
   const[searchQ,setSearchQ]=useState('');
   const bottomRef=useRef();const inputRef=useRef();
 
-  // Auto-open after login with a brief delay
-  useEffect(()=>{
-    if(user&&!user.isGuest){
-      const t=setTimeout(()=>setOpen(true),1800);
-      return()=>clearTimeout(t);
-    }
-  },[user?.username]);
+  const toggleOpen=v=>{const next=v!==undefined?v:!open;setOpen(next);try{localStorage.setItem('sh-bot-open',next?'1':'0');}catch{}};
 
   const getWelcome=()=>{
     if(context?.chapterTitle) return `Hi! I can see you're studying **${context.chapterTitle}**. Ask me anything — or search for a course below. 🎓`;
@@ -661,28 +793,28 @@ function Chatbot({context,courses,user}){
   };
 
   if(!open) return(
-    <button onClick={()=>setOpen(true)} className="no-print" title="Open StudyBot"
-      style={{position:'fixed',bottom:58,right:22,width:54,height:54,borderRadius:'50%',border:'none',cursor:'pointer',zIndex:200,background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',boxShadow:'0 4px 24px rgba(79,156,249,.45)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,animation:'pulse 3s ease infinite'}}>
+    <button onClick={()=>toggleOpen(true)} className="no-print chatbot-btn" title="Open StudyBot"
+      style={{position:'fixed',bottom:58,right:16,width:50,height:50,borderRadius:'50%',border:'none',cursor:'pointer',zIndex:200,background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',boxShadow:'0 4px 20px rgba(79,156,249,.4)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>
       🤖
     </button>
   );
 
   return(
-    <div className="no-print" style={{position:'fixed',bottom:58,right:18,width:370,maxHeight:minimised?52:'72vh',background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,display:'flex',flexDirection:'column',zIndex:200,overflow:'hidden',boxShadow:'var(--shadow)',transition:'max-height .3s ease'}}>
+    <div className="no-print chatbot-panel" style={{position:'fixed',bottom:58,right:10,width:'min(370px, calc(100vw - 20px))',maxHeight:minimised?52:'72vh',background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,display:'flex',flexDirection:'column',zIndex:200,overflow:'hidden',boxShadow:'var(--shadow)',transition:'max-height .3s ease'}}>
       {/* Header */}
       <div style={{padding:'10px 14px',borderBottom:minimised?'none':'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'linear-gradient(135deg,rgba(79,156,249,.08),rgba(127,95,249,.08))',flexShrink:0,cursor:'pointer'}} onClick={()=>setMinimised(m=>!m)}>
         <div style={{display:'flex',alignItems:'center',gap:9}}>
           <div style={{width:28,height:28,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>🤖</div>
           <div>
             <div style={{fontSize:13,fontWeight:600,color:'var(--text)',lineHeight:1}}>StudyBot</div>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',letterSpacing:1}}>AI TUTOR · GROQ · ALWAYS ON</div>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',letterSpacing:1}}>AI TUTOR · GROQ</div>
           </div>
-          {context?.chapterTitle&&!minimised&&<div style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.2)',borderRadius:4,padding:'2px 7px',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{context.chapterTitle}</div>}
+          {context?.chapterTitle&&!minimised&&<div style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.2)',borderRadius:4,padding:'2px 7px',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{context.chapterTitle}</div>}
         </div>
         <div style={{display:'flex',gap:4,alignItems:'center'}}>
-          <button onClick={e=>{e.stopPropagation();setMessages([]);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 6px'}} title="Clear chat">CLR</button>
+          <button onClick={e=>{e.stopPropagation();setMessages([]);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 6px'}} title="Clear">CLR</button>
           <button onClick={e=>{e.stopPropagation();setMinimised(m=>!m);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,padding:'0 3px',lineHeight:1}}>{minimised?'▲':'▼'}</button>
-          <button onClick={e=>{e.stopPropagation();setOpen(false);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,padding:'0 3px',lineHeight:1}}>✕</button>
+          <button onClick={e=>{e.stopPropagation();toggleOpen(false);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,padding:'0 3px',lineHeight:1}}>✕</button>
         </div>
       </div>
 
@@ -731,10 +863,10 @@ function Chatbot({context,courses,user}){
         <div style={{padding:'8px 10px',borderTop:'1px solid var(--border)',display:'flex',gap:7,alignItems:'flex-end',flexShrink:0}}>
           <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}
-            placeholder={tab==='search'?'Ask about a course or topic…':'Ask anything or type a search… (Enter to send)'}
+            placeholder={tab==='search'?'Ask about a course or topic…':'Ask anything… (Enter to send)'}
             rows={1} style={{flex:1,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'7px 10px',color:'var(--text)',fontSize:12.5,fontFamily:"'DM Sans',sans-serif",resize:'none',maxHeight:80,lineHeight:1.5}}/>
           <button onClick={()=>send()} disabled={!input.trim()||loading}
-            style={{width:32,height:32,borderRadius:'50%',border:'none',flexShrink:0,background:!input.trim()||loading?'var(--border)':'linear-gradient(135deg,#4f9cf9,#7f5ff9)',color:!input.trim()||loading?'var(--muted)':'#fff',cursor:!input.trim()||loading?'not-allowed':'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center'}}>↑</button>
+            style={{width:36,height:36,borderRadius:'50%',border:'none',flexShrink:0,background:!input.trim()||loading?'var(--border)':'linear-gradient(135deg,#4f9cf9,#7f5ff9)',color:!input.trim()||loading?'var(--muted)':'#fff',cursor:!input.trim()||loading?'not-allowed':'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center'}}>↑</button>
         </div>
       </>}
     </div>
@@ -1093,7 +1225,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
 
   return(
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 32px',maxWidth:560,width:'100%',margin:'auto',boxShadow:'var(--shadow)',maxHeight:'90vh',overflowY:'auto'}}>
+      <div className="scale-in modal-inner upload-modal" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 32px',maxWidth:560,width:'100%',margin:'auto',boxShadow:'var(--shadow)',maxHeight:'90vh',overflowY:'auto'}}>
 
         {/* Header */}
         <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
@@ -1112,7 +1244,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
         </div>
 
         {/* Year / Semester / Dept pickers */}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:18}}>
+        <div className="year-picker-grid" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:18}}>
           <div>
             <Mono color="var(--muted)" size={10}>YEAR</Mono>
             <div style={{display:'flex',gap:6,marginTop:6}}>
@@ -1433,7 +1565,7 @@ function NotificationBell({user,courses}){
 
       {/* Dropdown */}
       {open&&(
-        <div className="scale-in" style={{position:'absolute',top:'calc(100% + 10px)',right:0,width:360,maxHeight:480,background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,boxShadow:'var(--shadow)',zIndex:500,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+        <div className="scale-in notif-dropdown" style={{position:'absolute',top:'calc(100% + 10px)',right:0,width:360,maxHeight:480,background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,boxShadow:'var(--shadow)',zIndex:500,display:'flex',flexDirection:'column',overflow:'hidden'}}>
           <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--surface)'}}>
             <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--text)',letterSpacing:1,fontWeight:600}}>🔔 NOTIFICATIONS</div>
             <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -1651,7 +1783,7 @@ function CommunityBoard({courseId,user}){
 
   const vote=async id=>{if(isGuest)return;await dbUpvote(user.username,id);await load();};
   const del=async id=>{
-    const ok=await(window.shConfirm?.({title:'Delete post?',message:'This post will be permanently removed.',danger:true,confirmLabel:'Delete'})??Promise.resolve(window.confirm('Delete this post?')));
+    const ok=await(window.shConfirm?.({title:'Delete post?',message:'This post will be permanently removed.',danger:true,confirmLabel:'Delete'})??Promise.resolve(true));
     if(!ok)return;
     await dbDeletePost(id);await load();
   };
@@ -1794,8 +1926,8 @@ function DefinitionRow({def,isLast}){
     setCopied(true);setTimeout(()=>setCopied(false),1500);
   };
   return(
-    <div style={{display:'grid',gridTemplateColumns:'190px 1fr auto',borderBottom:isLast?'none':'1px solid var(--border)',alignItems:'stretch'}} className="fade-in">
-      <div style={{padding:'12px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'#7fda96',background:'var(--surface)',display:'flex',alignItems:'center'}}>{def.term}</div>
+    <div className="def-grid" style={{display:'grid',gridTemplateColumns:'190px 1fr auto',borderBottom:isLast?'none':'1px solid var(--border)',alignItems:'stretch'}} className="fade-in">
+      <div className="def-term" style={{padding:'12px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'#7fda96',background:'var(--surface)',display:'flex',alignItems:'center'}}>{def.term}</div>
       <div style={{padding:'12px 14px',fontSize:13,color:'var(--text)',lineHeight:1.7}}>{def.definition}</div>
       <button onClick={copy} title="Copy term and definition" style={{background:'none',border:'none',color:copied?'#7fda96':'var(--muted)',cursor:'pointer',padding:'0 12px',fontSize:13,flexShrink:0,opacity:copied?1:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>!copied&&(e.currentTarget.style.opacity='.5')}>
         {copied?'✓':'⎘'}
@@ -1825,7 +1957,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const chatCtx={courseName:d.courseName,chapterTitle:d.chapterTitle,summary:[d.keyConcepts?.slice(0,5).map(c=>c.title).join(', '),d.chapters?.map(c=>c.name).join(', ')].filter(Boolean).join(' | ')};
 
   return(
-    <div style={{maxWidth:960,margin:'0 auto',padding:'28px 20px 88px'}}>
+    <div className="course-page" style={{maxWidth:960,margin:'0 auto',padding:'28px 20px 88px'}}>
       {/* Top bar */}
       <div className="topbar" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:10}}>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
@@ -1857,7 +1989,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       </div>
 
       {/* Tabs */}
-      <div style={{display:'flex',gap:2,flexWrap:'wrap',borderBottom:'1px solid var(--border)',marginBottom:28,overflowX:'auto'}}>
+      <div className="course-tabs-row" style={{display:'flex',gap:2,flexWrap:'wrap',borderBottom:'1px solid var(--border)',marginBottom:28,overflowX:'auto'}}>
         {tabs.map(t=><button key={t.id} className="tab-btn" onClick={()=>setTab(t.id)} style={{background:tab===t.id?'rgba(79,156,249,.08)':'none',border:'none',borderBottom:tab===t.id?'2px solid #4f9cf9':'2px solid transparent',color:tab===t.id?'#4f9cf9':'var(--muted)',cursor:'pointer',padding:'9px 14px',fontSize:13,fontWeight:tab===t.id?600:400,whiteSpace:'nowrap'}}>{t.label}</button>)}
       </div>
 
@@ -2447,7 +2579,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 
   return(
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',backdropFilter:'blur(8px)',zIndex:2000,overflow:'auto'}}>
-      <div style={{maxWidth:900,margin:'0 auto',padding:'34px 20px 90px'}}>
+      <div className="admin-page" style={{maxWidth:900,margin:'0 auto',padding:'34px 20px 90px'}}>
         <div className="fade-up" style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:14}}>
           <div>
             <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:8}}>
@@ -2622,7 +2754,7 @@ function StatusChangeModal({user,onClose,onSubmitted}){
 
   return(
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 30px',maxWidth:440,width:'100%',margin:'auto',boxShadow:'var(--shadow)'}}>
+      <div className="scale-in modal-inner" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 30px',maxWidth:440,width:'100%',margin:'auto',boxShadow:'var(--shadow)'}}>
         <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'var(--text)',marginBottom:6}}>Change Account Status</div>
         <p style={{color:'var(--muted)',fontSize:13,marginBottom:20}}>Request a status change. An admin or superuser will review and approve or reject it.</p>
 
@@ -2829,9 +2961,9 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const selectYear=y=>{setActiveYear(y);setActiveSemester(1);setActiveDept('all');setSearch('');};
 
   return(
-    <div style={{maxWidth:990,margin:'0 auto',padding:'34px 20px 88px'}}>
+    <div className="home-page" style={{maxWidth:990,margin:'0 auto',padding:'34px 20px 88px'}}>
       {/* Top bar */}
-      <div className="topbar fade-up" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:28,flexWrap:'wrap',gap:14}}>
+      <div className="topbar fade-up" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24,gap:10,flexWrap:'wrap'}}>
         <div style={{display:'flex',alignItems:'center',gap:16}}>
           <Logo onClick={null} size="md"/>
           <div style={{width:1,height:32,background:'var(--border)'}}/>
@@ -2848,7 +2980,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
             </div>
           </div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',flexShrink:0}}>
           <ThemeToggle dark={dark} toggle={toggleTheme}/>
           {!user.isGuest&&<NotificationBell user={user} courses={courses}/>}
           {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 14px',fontSize:13}}>🔖 {bookmarks.length}</button>}
@@ -2929,7 +3061,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       <div className="stagger-3" style={{marginBottom:16}}>
         <div style={{position:'relative'}}>
           <SearchBar value={search} onChange={setSearch} placeholder={activeYear==='all'?`Search all courses…`:`Search Year ${activeYear} Sem ${activeSemester}${activeDept!=='all'?' · '+DEPT_SHORT[activeDept]:''} courses…`}/>
-          {!search&&<div style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:4,padding:'1px 6px',pointerEvents:'none'}}>Press /</div>}
+          {!search&&<div className="kbd-hint" style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:4,padding:'1px 6px',pointerEvents:'none'}}>Press /</div>}
         </div>
       </div>
 
