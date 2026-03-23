@@ -1,63 +1,99 @@
 /**
- * StudyHub Service Worker
+ * StudyHub Service Worker v4.0.0
  * © 2025 Yination & Excalibur. All rights reserved.
  */
 
-const CACHE_NAME = 'studyhub-v2.1.0';
-
+const CACHE_NAME = 'studyhub-v4.0.0';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
+  '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png',
 ];
 
-// Install — cache static shell
+// Install — pre-cache shell
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(STATIC_ASSETS))
+      .then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
 
-// Activate — clear old caches
+// Activate — clear old caches, take control immediately
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+    caches.keys()
+      .then(keys => Promise.all(
+        keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
+      ))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Fetch — network first, fallback to cache for navigation
+// Fetch — network first with cache fallback
 self.addEventListener('fetch', event => {
   const { request } = event;
 
-  // Skip API calls and non-GET
+  // Only handle GET
   if (request.method !== 'GET') return;
-  if (request.url.includes('/api/')) return;
-  if (request.url.includes('supabase.co')) return;
-  if (request.url.includes('googleapis.com')) return;
-  if (request.url.includes('fonts.g')) return;
 
-  // For navigation requests — serve cached shell or network
+  // Skip cross-origin API calls
+  const url = new URL(request.url);
+  if (url.hostname.includes('supabase.co')) return;
+  if (url.hostname.includes('groq.com')) return;
+  if (url.pathname.startsWith('/api/')) return;
+
+  // Navigation requests — network first, fallback to cached shell
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('/index.html'))
+      fetch(request)
+        .catch(() => caches.match('/index.html'))
     );
     return;
   }
 
-  // For static assets — cache first
+  // Static assets — cache first, then network
+  if (
+    url.pathname.endsWith('.png') ||
+    url.pathname.endsWith('.jpg') ||
+    url.pathname.endsWith('.svg') ||
+    url.pathname.endsWith('.ico') ||
+    url.pathname === '/manifest.json'
+  ) {
+    event.respondWith(
+      caches.match(request).then(cached => {
+        if (cached) return cached;
+        return fetch(request).then(response => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(c => c.put(request, clone));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // Everything else — network first, fallback to cache
   event.respondWith(
-    caches.match(request).then(cached => {
-      if (cached) return cached;
-      return fetch(request).then(response => {
-        if (response.ok) {
+    fetch(request)
+      .then(response => {
+        if (response.ok && url.origin === self.location.origin) {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
+          caches.open(CACHE_NAME).then(c => c.put(request, clone));
         }
         return response;
-      }).catch(() => cached);
-    })
+      })
+      .catch(() => caches.match(request))
   );
+});
+
+// Allow main thread to trigger immediate SW activation
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
