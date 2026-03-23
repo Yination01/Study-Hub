@@ -572,19 +572,39 @@ function OfflineBanner(){
 
 /* ═══════════════ PWA INSTALL ═══════════════ */
 /* ═══════════════ INSTALL PROMPT (cross-browser) ═══════════════ */
-const PWA_KEY      = 'sh-pwa-v2';   // bump suffix to reset all stored state
-const SNOOZE_DAYS  = 3;             // "Later" re-shows after this many days
+const PWA_KEY      = 'sh-pwa-v2';
+const SNOOZE_DAYS  = 3;
+
+/* Shared beforeinstallprompt event — captured once, used everywhere */
+let _pwaPromptEvent = null;
+let _pwaListeners   = [];
+if(typeof window !== 'undefined'){
+  window.addEventListener('beforeinstallprompt', e=>{
+    e.preventDefault();
+    _pwaPromptEvent = e;
+    _pwaListeners.forEach(fn=>fn(e));
+  });
+}
+function usePWAPrompt(){
+  const[p,setP]=useState(_pwaPromptEvent);
+  useEffect(()=>{
+    const fn=e=>setP(e);
+    _pwaListeners.push(fn);
+    return()=>{ _pwaListeners=_pwaListeners.filter(f=>f!==fn); };
+  },[]);
+  return p;
+}
 
 function useBrowserInfo(){
   const ua = navigator.userAgent;
-  // iOS: iPhone, iPad (including iPadOS 13+ which drops iPad from UA)
   const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
-  // Safari: present but NOT Chrome/Firefox/Edge/Samsung
   const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS|OPiOS|SamsungBrowser/.test(ua);
   const isFirefox = /Firefox|FxiOS/.test(ua);
   const isAndroid = /Android/.test(ua);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-  return { isIOS, isSafari, isFirefox, isAndroid, isStandalone };
+  // Brave exposes navigator.brave — the only reliable detection method
+  const isBrave = !!(navigator.brave);
+  return { isIOS, isSafari, isFirefox, isAndroid, isStandalone, isBrave };
 }
 
 function pwaState(){
@@ -602,76 +622,59 @@ function shouldShowPrompt(){
 }
 
 function InstallPrompt(){
-  const [prompt,  setPrompt]  = useState(null);
-  const [show,    setShow]    = useState(false);
-  const [status,  setStatus]  = useState(null); // null | 'installing' | 'installed' | 'failed'
+  const nativePrompt = usePWAPrompt();
+  const [show,   setShow]   = useState(false);
+  const [status, setStatus] = useState(null);
   const browser = useBrowserInfo();
+
+  // Show banner when native prompt becomes available
+  useEffect(()=>{
+    if(nativePrompt && !browser.isStandalone && shouldShowPrompt()) setShow(true);
+  },[nativePrompt]);
 
   useEffect(()=>{
     if(browser.isStandalone) return;
-    if(!shouldShowPrompt()) return;
 
-    const h = e => { e.preventDefault(); setPrompt(e); setShow(true); };
-    window.addEventListener('beforeinstallprompt', h);
-
-    // Listen for successful install (fires in Chrome/Edge/Samsung)
-    const installed = () => {
+    const onInstalled = ()=>{
       setStatus('installed');
       savePwaState({ neverShow: true });
-      setTimeout(()=>setStatus(null), 4000);
+      setTimeout(()=>setStatus(null), 5000);
     };
-    window.addEventListener('appinstalled', installed);
+    window.addEventListener('appinstalled', onInstalled);
 
-    const needsManual = (browser.isIOS) || (browser.isFirefox && browser.isAndroid);
-    if(needsManual){
+    // iOS / Firefox — show manual guide after delay
+    if((browser.isIOS || (browser.isFirefox && browser.isAndroid)) && shouldShowPrompt()){
       const t = setTimeout(()=>setShow(true), 3000);
-      return ()=>{
-        window.removeEventListener('beforeinstallprompt', h);
-        window.removeEventListener('appinstalled', installed);
-        clearTimeout(t);
-      };
+      return()=>{ window.removeEventListener('appinstalled',onInstalled); clearTimeout(t); };
     }
-
-    return ()=>{
-      window.removeEventListener('beforeinstallprompt', h);
-      window.removeEventListener('appinstalled', installed);
-    };
+    return()=>window.removeEventListener('appinstalled',onInstalled);
   },[]);
 
   const doInstall = async()=>{
-    if(!prompt) return;
-    setShow(false);
-    setStatus('installing');
+    if(!nativePrompt) return;
+    setShow(false); setStatus('installing');
     try{
-      prompt.prompt();
-      const { outcome } = await prompt.userChoice;
-      if(outcome === 'accepted'){
-        // 'appinstalled' event will fire shortly and set status='installed'
-        // but set a fallback in case it's slow
-        setTimeout(()=>setStatus(s=>s==='installing'?'installed':s), 1500);
-        setTimeout(()=>setStatus(null), 5500);
+      nativePrompt.prompt();
+      const { outcome } = await nativePrompt.userChoice;
+      if(outcome==='accepted'){
+        setTimeout(()=>setStatus(s=>s==='installing'?'installed':s), 2000);
+        setTimeout(()=>setStatus(null), 6000);
+        savePwaState({ neverShow: true });
       } else {
-        // User cancelled the native dialog
         setStatus(null);
-        // Re-show our banner with snooze so they can try again later
         savePwaState({ snoozeUntil: Date.now() + SNOOZE_DAYS * 86400_000 });
       }
-    } catch{
+    }catch(e){
+      console.warn('Install error:',e);
       setStatus('failed');
       setTimeout(()=>setStatus(null), 4000);
+      savePwaState({ snoozeUntil: Date.now() + 60*60*1000 });
     }
-    setPrompt(null);
-    savePwaState({ neverShow: true });
+    _pwaPromptEvent = null;
   };
 
-  const snooze = ()=>{
-    savePwaState({ snoozeUntil: Date.now() + SNOOZE_DAYS * 86400_000 });
-    setShow(false); setPrompt(null);
-  };
-  const never = ()=>{
-    savePwaState({ neverShow: true });
-    setShow(false); setPrompt(null);
-  };
+  const snooze = ()=>{ savePwaState({ snoozeUntil: Date.now()+SNOOZE_DAYS*86400_000 }); setShow(false); };
+  const never  = ()=>{ savePwaState({ neverShow:true }); setShow(false); };
 
   // ── Status toasts (installing / installed / failed) ──────────────
   const StatusToast = status ? (
@@ -711,7 +714,7 @@ function InstallPrompt(){
   if(!show) return StatusToast || null;
 
   /* ── iOS bottom-sheet guide ── */
-  if(browser.isIOS && !prompt){
+  if(browser.isIOS && !nativePrompt){
     return(<>
       {StatusToast}
       <div className="no-print" style={{position:'fixed',bottom:0,left:0,right:0,
@@ -756,7 +759,7 @@ function InstallPrompt(){
   }
 
   /* ── Firefox Android compact tip ── */
-  if(browser.isFirefox && browser.isAndroid && !prompt){
+  if(browser.isFirefox && browser.isAndroid && !nativePrompt){
     return(<>
       {StatusToast}
       <div className="no-print" style={{position:'fixed',bottom:60,left:12,right:12,
@@ -781,7 +784,7 @@ function InstallPrompt(){
   }
 
   /* ── Chrome / Edge / Samsung / Brave native prompt ── */
-  if(!prompt) return StatusToast || null;
+  if(!nativePrompt) return StatusToast || null;
   return(<>
     {StatusToast}
     <div className="no-print" style={{position:'fixed',top:14,left:'50%',transform:'translateX(-50%)',
@@ -808,6 +811,150 @@ function InstallPrompt(){
       </div>
     </div>
   </>);
+}
+
+/* ═══════════════ WELCOME MODAL (first sign-up) ═══════════════ */
+function PWADiagnosticPanel({onClose}){
+  const[results,setResults]=useState(null);
+  const browser=useBrowserInfo();
+  const prompt=usePWAPrompt();
+
+  useEffect(()=>{
+    async function run(){
+      const checks=[];
+
+      // HTTPS
+      checks.push({
+        label:'HTTPS',
+        ok:location.protocol==='https:'||location.hostname==='localhost',
+        detail:location.protocol==='https:'?'Served over HTTPS ✓':'Not HTTPS — install requires secure context',
+      });
+
+      // Standalone mode
+      const isStandalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+      checks.push({
+        label:'Already installed?',
+        ok:!isStandalone,
+        info:true,
+        detail:isStandalone?'Running in standalone mode — already installed!':'Not in standalone mode (browser tab)',
+      });
+
+      // Manifest accessible
+      try{
+        const r=await fetch('/manifest.json');
+        const ct=r.headers.get('content-type')||'';
+        const j=await r.json();
+        const hasName=!!(j.name||j.short_name);
+        const hasIcon=j.icons?.length>0;
+        const hasStart=!!j.start_url;
+        const hasDisplay=j.display==='standalone'||j.display==='fullscreen'||j.display==='minimal-ui';
+        checks.push({
+          label:'Manifest',
+          ok:r.ok&&hasName&&hasIcon&&hasStart&&hasDisplay,
+          detail:`Status ${r.status} · Content-Type: ${ct.split(';')[0]}
+name: ${j.name||'MISSING'} · icons: ${j.icons?.length||0} · display: ${j.display||'MISSING'}`,
+        });
+        // Check icons accessible
+        for(const icon of (j.icons||[]).slice(0,2)){
+          try{
+            const ir=await fetch(icon.src);
+            checks.push({
+              label:`Icon ${icon.sizes}`,
+              ok:ir.ok&&ir.headers.get('content-type')?.includes('image'),
+              detail:`${icon.src} → ${ir.status} ${ir.headers.get('content-type')||'no content-type'}`,
+            });
+          }catch{
+            checks.push({label:`Icon ${icon.sizes}`,ok:false,detail:`Failed to fetch ${icon.src}`});
+          }
+        }
+      }catch(e){
+        checks.push({label:'Manifest',ok:false,detail:`Fetch failed: ${e.message}`});
+      }
+
+      // Service Worker
+      if('serviceWorker' in navigator){
+        try{
+          const regs=await navigator.serviceWorker.getRegistrations();
+          const reg=regs[0];
+          checks.push({
+            label:'Service Worker',
+            ok:!!reg,
+            detail:reg?`Registered · scope: ${reg.scope} · state: ${reg.active?.state||reg.installing?.state||'waiting'}`:'No service worker registered',
+          });
+        }catch(e){
+          checks.push({label:'Service Worker',ok:false,detail:e.message});
+        }
+      } else {
+        checks.push({label:'Service Worker',ok:false,detail:'navigator.serviceWorker not supported'});
+      }
+
+      // beforeinstallprompt
+      checks.push({
+        label:'Install prompt available',
+        ok:!!_pwaPromptEvent,
+        info:!_pwaPromptEvent&&browser.isIOS,
+        detail:_pwaPromptEvent
+          ?'beforeinstallprompt event captured ✓'
+          :browser.isIOS
+            ?'iOS Safari — use Share → Add to Home Screen (no API available)'
+            :'beforeinstallprompt not yet fired — browser may not consider PWA installable',
+      });
+
+      // Browser
+      checks.push({
+        label:'Browser',
+        ok:true,
+        info:true,
+        detail:`UA: ${navigator.userAgent.slice(0,80)}…
+iOS: ${browser.isIOS} · Safari: ${browser.isSafari} · Firefox: ${browser.isFirefox} · Android: ${browser.isAndroid}`,
+      });
+
+      setResults(checks);
+    }
+    run();
+  },[]);
+
+  const allOk=results?.filter(r=>!r.info).every(r=>r.ok);
+
+  return(
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="scale-in modal-inner" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'24px 26px',maxWidth:520,width:'calc(100% - 24px)',margin:'auto',maxHeight:'85vh',overflowY:'auto',boxShadow:'var(--shadow)'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:18}}>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>PWA Install Diagnostics</div>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20}}>✕</button>
+        </div>
+
+        {!results&&<div style={{color:'var(--muted)',textAlign:'center',padding:30}}>Running checks…</div>}
+
+        {results&&<>
+          <div style={{background:allOk?'rgba(127,218,150,.08)':'rgba(249,168,79,.08)',border:`1px solid ${allOk?'rgba(127,218,150,.3)':'rgba(249,168,79,.3)'}`,borderRadius:9,padding:'10px 14px',marginBottom:16,fontSize:12,color:allOk?'#7fda96':'#f9a84f',fontWeight:600}}>
+            {allOk?'✅ All checks passed — install should work':'⚠️ Issues found — see details below'}
+          </div>
+
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {results.map((r,i)=>(
+              <div key={i} style={{background:'var(--surface)',border:`1px solid ${r.ok?'rgba(127,218,150,.2)':r.info?'rgba(79,156,249,.2)':'rgba(240,80,80,.3)'}`,borderRadius:9,padding:'10px 13px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:r.detail?4:0}}>
+                  <span style={{fontSize:14,flexShrink:0}}>{r.ok?'✅':r.info?'ℹ️':'❌'}</span>
+                  <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{r.label}</span>
+                </div>
+                {r.detail&&<pre style={{margin:0,fontSize:10,color:'var(--muted)',lineHeight:1.6,whiteSpace:'pre-wrap',wordBreak:'break-all',fontFamily:"'IBM Plex Mono',monospace"}}>{r.detail}</pre>}
+              </div>
+            ))}
+          </div>
+
+          <div style={{marginTop:16,fontSize:11,color:'var(--muted)',lineHeight:1.7,background:'var(--surface)',borderRadius:8,padding:'10px 13px'}}>
+            <strong style={{color:'var(--text)'}}>Share this with Yination/Excalibur</strong> — screenshot this panel so they can see exactly what's failing.
+          </div>
+
+          {/* Reset PWA state button */}
+          <button onClick={()=>{localStorage.removeItem('sh-pwa-v2');alert('PWA state cleared — refresh and try installing again.');}} style={{marginTop:12,width:'100%',background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.3)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'9px 0',fontSize:12,fontWeight:600}}>
+            🔄 Reset install state (try if stuck)
+          </button>
+        </>}
+      </div>
+    </div>
+  );
 }
 
 /* ═══════════════ WELCOME MODAL (first sign-up) ═══════════════ */
@@ -914,7 +1061,26 @@ function GuestBanner({onSignUp}){
 }
 
 /* ═══════════════ COPYRIGHT BAR ═══════════════ */
-const CopyrightBar=()=>(<div className="no-print copyright-bar" style={{position:'fixed',bottom:0,left:0,right:0,background:'var(--bg)',borderTop:'1px solid var(--border)',padding:'7px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',zIndex:100,flexWrap:'wrap',gap:6}}><div style={{display:'flex',alignItems:'center',gap:10}}><span style={{fontFamily:"'DM Serif Display',serif",fontSize:14,color:'#4f9cf9'}}>StudyHub</span><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>v{APP_VERSION}</span></div><div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>© {COPYRIGHT_YEAR} · OWNED BY</span><span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Yination</span><span style={{color:'var(--muted)',fontSize:10}}>&</span><span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Excalibur</span><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>· ALL RIGHTS RESERVED</span></div></div>);
+const CopyrightBar=()=>{
+  const[showDiag,setShowDiag]=useState(false);
+  return(<>
+    {showDiag&&<PWADiagnosticPanel onClose={()=>setShowDiag(false)}/>}
+    <div className="no-print copyright-bar" style={{position:'fixed',bottom:0,left:0,right:0,background:'var(--bg)',borderTop:'1px solid var(--border)',padding:'7px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',zIndex:100,flexWrap:'wrap',gap:6}}>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:14,color:'#4f9cf9'}}>StudyHub</span>
+        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>v{APP_VERSION}</span>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>© {COPYRIGHT_YEAR} · OWNED BY</span>
+        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Yination</span>
+        <span style={{color:'var(--muted)',fontSize:10}}>&</span>
+        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Excalibur</span>
+        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>· ALL RIGHTS RESERVED</span>
+        <button onClick={()=>setShowDiag(true)} title="PWA diagnostics" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:9,fontFamily:"'IBM Plex Mono',monospace",opacity:.4,padding:'0 4px',lineHeight:1}}>PWA?</button>
+      </div>
+    </div>
+  </>);
+};
 
 /* ═══════════════ SEARCH BAR ═══════════════ */
 const SearchBar=({value,onChange,placeholder='Search courses…'})=>(
@@ -3143,6 +3309,8 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[activeDept,setActiveDept]=useState('all');
   const[search,setSearch]=useState('');const[showBookmarks,setShowBookmarks]=useState(false);
   const[showStatusModal,setShowStatusModal]=useState(false);
+  const[showPWADebug,setShowPWADebug]=useState(false);
+  const nativePrompt=usePWAPrompt();
   const[statusMsg,setStatusMsg]=useState('');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
 
@@ -3187,6 +3355,20 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <ThemeToggle dark={dark} toggle={toggleTheme}/>
           {!user.isGuest&&<NotificationBell user={user} courses={courses}/>}
           {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 14px',fontSize:13}}>🔖 {bookmarks.length}</button>}
+
+          {/* Install button — always visible when not installed, uses shared nativePrompt */}
+          {!window.matchMedia('(display-mode: standalone)').matches&&!window.navigator.standalone&&nativePrompt&&(
+            <button onClick={async()=>{
+              if(!nativePrompt)return;
+              nativePrompt.prompt();
+              const{outcome}=await nativePrompt.userChoice;
+              if(outcome==='accepted') savePwaState({neverShow:true});
+              _pwaPromptEvent=null;
+            }} style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:8,color:'#4f9cf9',cursor:'pointer',padding:'8px 12px',fontSize:12,fontWeight:600,display:'flex',alignItems:'center',gap:5}}>
+              📲 Install App
+            </button>
+          )}
+
           {/* Status change — only for regular users/external, not guests/admins */}
           {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(
             <button onClick={()=>setShowStatusModal(true)} title="Request account status change" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
@@ -3199,6 +3381,9 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           </button>
         </div>
       </div>
+
+      {/* PWA Diagnostic panel */}
+      {showPWADebug&&<PWADiagnosticPanel onClose={()=>setShowPWADebug(false)}/>}
 
       {/* Status change modal */}
       {showStatusModal&&<StatusChangeModal user={user} onClose={()=>setShowStatusModal(false)} onSubmitted={()=>{setStatusMsg('✓ Request submitted — an admin will review it shortly.');setTimeout(()=>setStatusMsg(''),4000);}}/>}
