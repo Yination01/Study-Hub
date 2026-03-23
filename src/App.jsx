@@ -2667,10 +2667,10 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <ThemeToggle dark={dark} toggle={toggleTheme}/>
           {!user.isGuest&&<NotificationBell user={user} courses={courses}/>}
           {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 14px',fontSize:13}}>🔖 {bookmarks.length}</button>}
-          {/* Status change button — only for regular users/external, not guests/admins */}
+          {/* Status change — only for regular users/external, not guests/admins */}
           {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(
-            <button onClick={()=>setShowStatusModal(true)} title="Request status change" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
-              🔄 <span style={{display:'none'}}>Change Status</span>
+            <button onClick={()=>setShowStatusModal(true)} title="Request account status change" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
+              🔄 Change Status
             </button>
           )}
           {isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Panel':'⚙ Panel'}</button>}
@@ -2917,29 +2917,58 @@ export default function App(){
         }
       }).subscribe();
 
+    // Status change requests — detect when own request is approved/rejected
+    const statusCh=supabase.channel('rt-status-requests')
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'status_change_requests'},async(payload)=>{
+        if(!user||user.isGuest)return;
+        const row=payload.new;
+        if(row.username!==user.username)return;
+        if(row.status==='approved'){
+          const newRole=await resolveRole(user.username);
+          const updated={...user,role:newRole,accountType:newRole===ROLE.EXTERNAL?'external':'student'};
+          setUser(updated);saveSession(updated);
+          pushNotification('✅ Status change approved',`Your account is now "${row.to_type}". Changes are live.`);
+        } else if(row.status==='rejected'){
+          pushNotification('❌ Status change rejected',row.note||'Your request was declined. You can submit a new one.');
+        }
+      }).subscribe();
+
     return()=>{
       supabase.removeChannel(coursesCh);
       supabase.removeChannel(annCh);
       supabase.removeChannel(assignCh);
       supabase.removeChannel(caCh);
       supabase.removeChannel(pendingCh);
+      supabase.removeChannel(statusCh);
     };
   },[user?.role]);
 
   // ── Periodic silent background refresh (every 90s) ────────────────────
   useEffect(()=>{
     if(!online)return;
-    const tick=setInterval(()=>{
+    const tick=setInterval(async()=>{
       setSyncing(true);
-      Promise.all([
-        dbLoadCourseIndex().then(setCourses),
-        loadDepartments(),
-        loadUserTypes(),
-        ...(user&&!user.isGuest?[dbLoadProgress(user.username).then(setProgress)]:[]),
-      ]).catch(()=>{}).finally(()=>setSyncing(false));
+      try{
+        await Promise.all([
+          dbLoadCourseIndex().then(setCourses),
+          loadDepartments(),
+          loadUserTypes(),
+          ...(user&&!user.isGuest?[dbLoadProgress(user.username).then(setProgress)]:[]),
+        ]);
+        // Re-check role in case a status change was approved
+        if(user&&!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)){
+          const newRole=await resolveRole(user.username);
+          if(newRole!==user.role){
+            const updated={...user,role:newRole,accountType:newRole===ROLE.EXTERNAL?'external':'student'};
+            setUser(updated);
+            saveSession(updated);
+            pushNotification('✅ Account status updated','Your account type has been changed on StudyHub.');
+          }
+        }
+      }catch{}finally{setSyncing(false);}
     },90_000);
     return()=>clearInterval(tick);
-  },[online,user?.username]);
+  },[online,user?.username,user?.role]);
 
   // ── Auth handlers ─────────────────────────────────────────────────────
   const handleLogin=async u=>{
