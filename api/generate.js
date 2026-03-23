@@ -1,36 +1,95 @@
 /**
- * StudyHub — Course Generation API (Groq)
+ * StudyHub — AI Generation API (Groq)
  * © 2025 Yination & Excalibur. All rights reserved.
- *
- * POST /api/generate
- * Body: { text: string }            ← extracted text from any file
- *    OR { imageBase64, mimeType }   ← image sent to vision model
  */
 
-const SYSTEM_PROMPT = `You are an expert academic study guide generator.
-Return ONLY a valid JSON object — no markdown fences, no preamble, no trailing text.
-
-Structure:
+const CLASSIFY_PROMPT = `You are an academic document classifier.
+Read the document and return ONLY a valid JSON object.
 {
-  "courseName": "short course code e.g. COS 341",
+  "type": "course" | "assignment" | "ca" | "resource",
+  "courseName": "course code if visible e.g. COS 341, or empty string",
+  "title": "short descriptive title for this document",
+  "confidence": "high" | "medium" | "low"
+}
+Types:
+- course: lecture notes, textbook chapters, study material
+- assignment: homework, coursework, project brief, question sheet
+- ca: continuous assessment, test, quiz, exam paper, lab report
+- resource: supplementary reading, reference, article`;
+
+const COURSE_PROMPT = `You are an expert academic study guide generator.
+Return ONLY a valid JSON object — no markdown, no preamble.
+{
+  "courseName": "course code e.g. COS 341",
   "chapterTitle": "chapter or topic title",
   "keyConcepts": [{"title":"","description":"one sentence","color":"blue|orange|green|purple"}],
   "definitions": [{"term":"","definition":""}],
-  "mechanisms": [{"title":"","body":"step-by-step explanation; use \\n\\n for paragraph breaks"}],
+  "mechanisms": [{"title":"","body":"step-by-step; use \\n\\n for paragraph breaks"}],
   "algorithms": [{"name":"","description":"","note":""}],
   "chapters": [{"num":"Chapter X","name":"","takeaways":["","",""]}],
   "questions": [{"question":"","answer":""}]
 }
+Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none,
+chapters 4-8 each with EXACTLY 3 takeaways, questions EXACTLY 25 exam-style with full answers.`;
 
-Rules:
-- keyConcepts: 12-18 items, rotate colors
-- definitions: ALL important terms, 20-35 items
-- mechanisms: 4-7 important processes explained step-by-step
-- algorithms: only if document contains algorithms/methods; empty [] otherwise
-- chapters: 4-8 section blocks, each with EXACTLY 3 non-obvious takeaways
-- questions: EXACTLY 25 challenging varied exam-style questions with full worked answers
-- Preserve chronological order of the source material
-- Return ONLY the JSON object, nothing else`;
+const ASSIGNMENT_PROMPT = `You are an expert academic assistant.
+Read this assignment document carefully. For EVERY question, provide a complete worked answer.
+Crosscheck each answer for logical consistency, calculation errors, and completeness.
+Return ONLY a valid JSON object:
+{
+  "type": "assignment",
+  "courseName": "course code if visible",
+  "title": "assignment title",
+  "description": "2-4 sentence summary of what is required",
+  "dueDate": "due date string or null",
+  "marks": total_marks_integer_or_null,
+  "questions": [
+    {
+      "number": "Q1",
+      "question": "exact question text",
+      "marks": marks_or_null,
+      "answer": "COMPLETE worked answer — show ALL steps, verify logic, crosscheck result"
+    }
+  ],
+  "notes": "special instructions or null"
+}
+IMPORTANT: answers must be thorough enough to earn full marks. Show working for every step.`;
+
+const CA_PROMPT = `You are an expert academic assistant.
+Analyse this CA/test/exam. For every question provide a complete worked answer with full steps.
+Return ONLY a valid JSON object:
+{
+  "type": "ca",
+  "courseName": "course code if visible",
+  "title": "CA/test title",
+  "caType": "CA|Test|Quiz|Lab|Exam|Other",
+  "description": "what this covers",
+  "date": "date or null",
+  "marks": total_or_null,
+  "questions": [
+    {
+      "number": "Q1",
+      "question": "exact question text",
+      "marks": marks_or_null,
+      "answer": "full worked answer — verify each step"
+    }
+  ]
+}`;
+
+async function callGroq(apiKey, messages, model, temperature) {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages, temperature: temperature ?? 0.2, max_tokens: 8192 }),
+  });
+  if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+function parseJSON(raw) {
+  return JSON.parse(raw.replace(/```json|```/g, '').trim());
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -42,77 +101,57 @@ export default async function handler(req, res) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'Groq API key not configured' });
 
-  const { text, imageBase64, mimeType } = req.body || {};
+  const { text, imageBase64, mimeType, mode } = req.body || {};
+  if (!text && !imageBase64) return res.status(400).json({ error: 'Provide text or imageBase64' });
 
-  if (!text && !imageBase64) {
-    return res.status(400).json({ error: 'Provide either text or imageBase64' });
+  const useVision = !!imageBase64;
+  const visionModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
+  const textModel = 'llama-3.3-70b-versatile';
+
+  function msgs(systemPrompt) {
+    if (useVision) return [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+        { type: 'text', text: `${systemPrompt}\n\nAnalyse the image above.` }
+      ]
+    }];
+    return [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: (text || '').slice(0, 28000) }
+    ];
   }
 
   try {
-    let messages;
+    let contentType = mode;
+    let classifyData = null;
 
-    if (imageBase64) {
-      // Vision model for images
-      messages = [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image_url',
-              image_url: { url: `data:${mimeType};base64,${imageBase64}` }
-            },
-            {
-              type: 'text',
-              text: `${SYSTEM_PROMPT}\n\nExtract all academic content from this image and generate the study guide JSON.`
-            }
-          ]
-        }
-      ];
+    if (!contentType || contentType === 'classify') {
+      const raw = await callGroq(apiKey, msgs(CLASSIFY_PROMPT), useVision ? visionModel : textModel, 0.1);
+      classifyData = parseJSON(raw);
+      contentType = classifyData.type || 'course';
+    }
+
+    let result;
+    const model = useVision ? visionModel : textModel;
+
+    if (contentType === 'assignment') {
+      result = parseJSON(await callGroq(apiKey, msgs(ASSIGNMENT_PROMPT), model, 0.2));
+      result._type = 'assignment';
+    } else if (contentType === 'ca') {
+      result = parseJSON(await callGroq(apiKey, msgs(CA_PROMPT), model, 0.2));
+      result._type = 'ca';
+    } else if (contentType === 'resource') {
+      result = { _type: 'resource', courseName: classifyData?.courseName || '', title: classifyData?.title || 'Resource' };
     } else {
-      // Text-based content
-      messages = [
-        {
-          role: 'system',
-          content: SYSTEM_PROMPT
-        },
-        {
-          role: 'user',
-          content: `Generate a StudyHub JSON study guide from the following document content:\n\n${text.slice(0, 28000)}` // Groq context limit
-        }
-      ];
+      result = parseJSON(await callGroq(apiKey, msgs(COURSE_PROMPT), model, 0.3));
+      result._type = 'course';
     }
 
-    const model = imageBase64
-      ? 'meta-llama/llama-4-scout-17b-16e-instruct' // vision-capable
-      : 'llama-3.3-70b-versatile';
+    if (classifyData?.courseName && !result.courseName) result.courseName = classifyData.courseName;
+    if (classifyData) result._classify = classifyData;
 
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: 0.3,
-        max_tokens: 8192
-      })
-    });
-
-    if (!groqRes.ok) {
-      const err = await groqRes.text();
-      return res.status(502).json({ error: 'Groq API error', detail: err });
-    }
-
-    const data = await groqRes.json();
-    const raw = data.choices?.[0]?.message?.content || '';
-    const clean = raw.replace(/```json|```/g, '').trim();
-    if (!clean) return res.status(502).json({ error: 'Empty response from Groq' });
-
-    const parsed = JSON.parse(clean);
-    return res.status(200).json(parsed);
-
+    return res.status(200).json(result);
   } catch (err) {
     console.error('Generate error:', err);
     return res.status(500).json({ error: err.message });
