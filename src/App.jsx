@@ -1224,6 +1224,20 @@ function Chatbot({context,courses,user}){
   const bottomRef=useRef();const inputRef=useRef();
 
   const toggleOpen=v=>{const next=v!==undefined?v:!open;setOpen(next);try{localStorage.setItem('sh-bot-open',next?'1':'0');}catch{}};
+  const[assignmentCtx,setAssignmentCtx]=useState(null); // set when AI Help clicked
+
+  // Listen for assignment help requests from AssignmentsTab
+  useEffect(()=>{
+    const h=e=>{
+      const ctx=e.detail;
+      setAssignmentCtx(ctx);
+      setMessages([{role:'assistant',content:`I'm ready to help with the assignment: **${ctx.assignmentTitle}**.\n\nI'll read through it carefully, answer each question step-by-step, and verify my answers.\n\nDescribe the questions you need help with, or paste the assignment text here.`}]);
+      setTab('chat');
+      toggleOpen(true);
+    };
+    window.addEventListener('sh-open-bot-assignment',h);
+    return()=>window.removeEventListener('sh-open-bot-assignment',h);
+  },[]);
 
   const getWelcome=()=>{
     if(context?.chapterTitle) return `Hi! I can see you're studying **${context.chapterTitle}**. Ask me anything — or search for a course below. 🎓`;
@@ -1265,7 +1279,9 @@ function Chatbot({context,courses,user}){
     const next=[...messages,{role:'user',content:msg}];
     setMessages(next);setLoading(true);
     try{
-      const ctx={...context,courseName:context?.courseName,chapterTitle:context?.chapterTitle,allCourses:courses?.map(c=>c.chapterTitle+' ('+c.courseName+')').join(', ')};
+      const ctx = assignmentCtx
+        ? {...assignmentCtx}
+        : {...context,courseName:context?.courseName,chapterTitle:context?.chapterTitle,allCourses:courses?.map(c=>c.chapterTitle+' ('+c.courseName+')').join(', ')};
       const reply=await sendChatMessage(next.filter(m=>m.role!=='system'),ctx);
       setMessages(m=>[...m,{role:'assistant',content:reply}]);
     }catch{
@@ -1289,12 +1305,14 @@ function Chatbot({context,courses,user}){
           <div style={{width:28,height:28,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>🤖</div>
           <div>
             <div style={{fontSize:13,fontWeight:600,color:'var(--text)',lineHeight:1}}>StudyBot</div>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',letterSpacing:1}}>AI TUTOR · GROQ</div>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:assignmentCtx?'#f9a84f':'#4f9cf9',letterSpacing:1}}>
+              {assignmentCtx?'📋 ASSIGNMENT MODE · GROQ':'AI TUTOR · GROQ'}
+            </div>
           </div>
           {context?.chapterTitle&&!minimised&&<div style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.2)',borderRadius:4,padding:'2px 7px',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{context.chapterTitle}</div>}
         </div>
         <div style={{display:'flex',gap:4,alignItems:'center'}}>
-          <button onClick={e=>{e.stopPropagation();setMessages([]);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 6px'}} title="Clear">CLR</button>
+          <button onClick={e=>{e.stopPropagation();setMessages([]);setAssignmentCtx(null);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 6px'}} title="Clear">CLR</button>
           <button onClick={e=>{e.stopPropagation();setMinimised(m=>!m);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,padding:'0 3px',lineHeight:1}}>{minimised?'▲':'▼'}</button>
           <button onClick={e=>{e.stopPropagation();toggleOpen(false);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,padding:'0 3px',lineHeight:1}}>✕</button>
         </div>
@@ -1320,7 +1338,16 @@ function Chatbot({context,courses,user}){
             {loading&&<div style={{display:'flex',alignItems:'center',gap:7,marginBottom:9}}><div style={{width:22,height:22,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11}}>🤖</div><div style={{background:'var(--surface)',borderRadius:'13px 13px 13px 3px',padding:'9px 14px',display:'flex',gap:5,alignItems:'center'}}>{[0,1,2].map(i=><div key={i} style={{width:5,height:5,borderRadius:'50%',background:'#4f9cf9',animation:`blink 1.2s ease ${i*.2}s infinite`}}/>)}</div></div>}
             <div ref={bottomRef}/>
           </div>
-          {messages.length<=1&&<div style={{padding:'4px 10px 6px',display:'flex',gap:5,flexWrap:'wrap'}}>{QUICK_PROMPTS.map((p,i)=><button key={i} onClick={()=>send(p)} style={{background:'rgba(79,156,249,.07)',border:'1px solid rgba(79,156,249,.18)',borderRadius:20,color:'#4f9cf9',cursor:'pointer',padding:'3px 9px',fontSize:10}}>{p}</button>)}</div>}
+          {messages.length<=1&&<div style={{padding:'4px 10px 6px',display:'flex',gap:5,flexWrap:'wrap'}}>
+            {(assignmentCtx?[
+              'Solve all questions step by step',
+              'What does this question require?',
+              'Check my answer for errors',
+              'Explain the marking criteria',
+            ]:QUICK_PROMPTS).map((p,i)=>(
+              <button key={i} onClick={()=>send(p)} style={{background:assignmentCtx?'rgba(249,168,79,.07)':'rgba(79,156,249,.07)',border:`1px solid ${assignmentCtx?'rgba(249,168,79,.2)':'rgba(79,156,249,.18)'}`,borderRadius:20,color:assignmentCtx?'#f9a84f':'#4f9cf9',cursor:'pointer',padding:'3px 9px',fontSize:10}}>{p}</button>
+            ))}
+          </div>}
         </>}
 
         {/* Search panel */}
@@ -1502,13 +1529,10 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
 /* ═══════════════ UPLOAD MODAL ═══════════════ */
 /* File format definitions */
 const FILE_TYPES = [
-  {ext:['pdf'],          label:'PDF',          icon:'📄', accept:'.pdf',           color:'#f05050'},
-  {ext:['docx','doc'],   label:'Word Doc',     icon:'📝', accept:'.doc,.docx',     color:'#4f9cf9'},
-  {ext:['pptx','ppt'],   label:'PowerPoint',   icon:'📊', accept:'.ppt,.pptx',     color:'#f9a84f'},
-  {ext:['txt','md'],     label:'Text / MD',    icon:'📃', accept:'.txt,.md',       color:'#7fda96'},
+  {ext:['docx','doc'],   label:'Word Doc',  icon:'📝', accept:'.doc,.docx',     color:'#4f9cf9'},
+  {ext:['txt','md'],     label:'Text / MD', icon:'📃', accept:'.txt,.md',       color:'#7fda96'},
   {ext:['png','jpg','jpeg','webp'], label:'Image', icon:'🖼', accept:'.png,.jpg,.jpeg,.webp', color:'#da7ff0'},
-  {ext:['csv'],          label:'CSV',          icon:'📋', accept:'.csv',           color:'#4ff9e4'},
-  {ext:['json'],         label:'JSON',         icon:'🔧', accept:'.json',          color:'#a8f94f'},
+  {ext:['csv'],          label:'CSV',       icon:'📋', accept:'.csv',           color:'#4ff9e4'},
 ];
 
 const ALL_ACCEPT = FILE_TYPES.map(t=>t.accept).join(',');
@@ -1612,33 +1636,21 @@ Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if no
 
 /* Format descriptions shown in the info card when a chip is selected */
 const FORMAT_INFO = {
-  'PDF': {
-    desc: 'Portable Document Format. The most common format for lecture slides and textbooks exported from PowerPoint or Word.',
-    how:  'Export any document as PDF, then upload it here. Text is extracted automatically. Scanned PDFs use AI vision.',
-  },
   'Word Doc': {
-    desc: 'Microsoft Word documents (.docx). Great for lecture notes, assignments, and handouts created in Word or Google Docs.',
-    how:  'From Google Docs: File → Download → .docx. From Word: Save As → .docx.',
-  },
-  'PowerPoint': {
-    desc: 'Microsoft PowerPoint presentations (.pptx). Upload lecture slide decks directly.',
-    how:  'From Google Slides: File → Download → .pptx. From PowerPoint: Save As → .pptx.',
+    desc: 'Microsoft Word documents (.docx). Great for notes, assignments, and handouts from Word or Google Docs.',
+    how:  'From Google Docs: File → Download → .docx. From Word: File → Save As → .docx.',
   },
   'Text / MD': {
-    desc: 'Plain text (.txt) or Markdown (.md) files. Good for notes, outlines, or raw content copied from anywhere.',
-    how:  'Paste your notes into Notepad/TextEdit and save as .txt, or use any Markdown editor and save as .md.',
+    desc: 'Plain text (.txt) or Markdown (.md). Good for notes, outlines, or content copied from anywhere.',
+    how:  'Paste your notes into Notepad/TextEdit and save as .txt, or export from any Markdown editor.',
   },
   'Image': {
     desc: 'PNG, JPG, JPEG, or WebP images. Upload a photo of a whiteboard, handwritten notes, or a scanned page.',
-    how:  'Take a clear photo with your phone camera, or screenshot any document. AI reads the text from the image.',
+    how:  'Take a clear photo with your phone, or screenshot any document. AI reads the text automatically.',
   },
   'CSV': {
     desc: 'Comma-separated values. Good for tables of definitions, data sets, or structured study material.',
-    how:  'Export any spreadsheet as CSV from Excel or Google Sheets: File → Download → .csv.',
-  },
-  'JSON': {
-    desc: 'If you already have a StudyHub JSON study guide (generated in a previous session), upload it directly — no AI processing needed.',
-    how:  'Copy the JSON output from Claude.ai or ChatGPT and save it as a .json file, then upload here.',
+    how:  'From Excel or Google Sheets: File → Download → .csv.',
   },
 };
 
@@ -1722,6 +1734,28 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
       const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`Server error ${res.status}`);}
       const data=await res.json();
+
+      // Smart classification routing
+      const contentType=data._type||'course';
+      if(contentType==='assignment'){
+        setProgress('Assignment detected — saving…');
+        setSmartSortMsg('📋 Detected as Assignment — saved to Assignments tab');
+        // Save as assignment entry using detected course if possible
+        await onDone?.(null,null,null,{type:'assignment',data});
+        setStatus('done');return;
+      }
+      if(contentType==='ca'){
+        setProgress('CA/Test detected — saving…');
+        setSmartSortMsg('📝 Detected as CA/Test — saved to CA tab');
+        await onDone?.(null,null,null,{type:'ca',data});
+        setStatus('done');return;
+      }
+      if(contentType==='resource'){
+        setProgress('Resource detected — saving…');
+        setSmartSortMsg('🔗 Detected as Resource — add it via the Resources tab');
+        setStatus('done');return;
+      }
+
       setProgress('Applying smart sort…');
       const detected=detectMetadata(data);
       if(detected.year||detected.department||detected.semester){
@@ -2449,11 +2483,35 @@ function AssignmentsTab({courseId,user}){
                   {a.marks&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(249,168,79,.15)',color:'#f9a84f',borderRadius:4,padding:'2px 7px'}}>{a.marks} marks</span>}
                   {a.due_date&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:overdue(a.due_date)?'rgba(240,80,80,.15)':'rgba(127,218,150,.15)',color:overdue(a.due_date)?'#f05050':'#7fda96',borderRadius:4,padding:'2px 7px'}}>Due {new Date(a.due_date).toLocaleDateString()}{overdue(a.due_date)?'  ⚠ Overdue':''}</span>}
                 </div>
-                {a.description&&<p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.6,margin:'0 0 5px'}}>{a.description}</p>}
+                {a.description&&<p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.6,margin:'0 0 8px'}}>{a.description}</p>}
                 {a.file_url&&<a href={a.file_url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:'#4f9cf9',textDecoration:'none'}}>📎 View file / link</a>}
                 <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:6}}>Posted by @{a.added_by} · {new Date(a.added_at).toLocaleDateString()}</div>
               </div>
-              {isPriv&&<button onClick={()=>del(a.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13,flexShrink:0}}>{isSU2?'✕':'↑'}</button>}
+              <div style={{display:'flex',flexDirection:'column',gap:6,flexShrink:0,alignItems:'flex-end'}}>
+                {/* AI Help button — opens chatbot in assignment mode */}
+                <button
+                  onClick={()=>{
+                    // Store assignment context for chatbot to pick up
+                    window.__assignmentContext={
+                      mode:'assignment',
+                      assignmentTitle:a.title,
+                      assignmentDescription:a.description||'',
+                      assignmentQuestions:a.description||'',
+                      courseName:'',
+                    };
+                    // Open chatbot
+                    try{localStorage.setItem('sh-bot-open','1');}catch{}
+                    // Fire a custom event so chatbot can react
+                    window.dispatchEvent(new CustomEvent('sh-open-bot-assignment',{detail:window.__assignmentContext}));
+                  }}
+                  style={{background:'linear-gradient(135deg,rgba(79,156,249,.15),rgba(127,95,249,.15))',
+                    border:'1px solid rgba(79,156,249,.3)',borderRadius:7,
+                    color:'#4f9cf9',cursor:'pointer',padding:'6px 12px',fontSize:11,fontWeight:600,
+                    display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}>
+                  🤖 AI Help
+                </button>
+                {isPriv&&<button onClick={()=>del(a.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13}}>{isSU2?'✕':'↑'}</button>}
+              </div>
             </div>
           </div>
         ))}
@@ -2847,7 +2905,7 @@ function AnalyticsTab({courses}){
   return(
     <div className="fade-up">
       {/* Summary cards */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:12,marginBottom:24}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:12,marginBottom:24}}>
         {[{label:'Total Views',val:totalViews,color:'#4f9cf9',icon:'👁'},{label:'Active Students',val:totalStudents,color:'#7fda96',icon:'👥'},{label:'Questions Opened',val:totalQsOpened,color:'#f9a84f',icon:'❓'},{label:'Total Courses',val:courses.length,color:'#da7ff0',icon:'📚'}].map((s,i)=>(
           <div key={i} className={`stagger-${i+1}`} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
             <div style={{fontSize:20,marginBottom:4}}>{s.icon}</div>
@@ -2857,27 +2915,40 @@ function AnalyticsTab({courses}){
         ))}
       </div>
 
-      {/* Per-course table */}
+      {/* Per-course — card list (no fixed-column grid that breaks on mobile) */}
       <SectionLabel>Course Performance</SectionLabel>
-      <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',background:'var(--surface)',padding:'10px 14px',gap:8}}>
-          {['Course','Views','Students','Avg %'].map(h=><Mono key={h} color="var(--muted)" size={9}>{h}</Mono>)}
-        </div>
+      {courseStats.length===0&&<div style={{padding:30,textAlign:'center',color:'var(--muted)',fontSize:13}}>No data yet.</div>}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
         {courseStats.map((c,i)=>(
-          <div key={c.id} style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',padding:'12px 14px',gap:8,borderTop:'1px solid var(--border)',alignItems:'center'}}>
-            <div>
-              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:2}}>Yr {c.year} · Sem {c.semester||1} · {DEPT_SHORT[c.department]||'CS'} · {c.courseName}</div>
-              <div style={{fontSize:13,color:'var(--text)'}}>{c.chapterTitle}</div>
+          <div key={c.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'13px 16px'}}>
+            {/* Course label */}
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year],marginBottom:3,letterSpacing:1}}>
+              Yr {c.year} · Sem {c.semester||1} · {DEPT_SHORT[c.department]||'CS'} · {c.courseName}
             </div>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:13,color:'#4f9cf9',fontWeight:600}}>{c.views}</div>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:13,color:'#7fda96',fontWeight:600}}>{c.uniqueStudents}</div>
-            <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <div style={{flex:1,height:4,background:'var(--border)',borderRadius:2}}><div style={{height:'100%',width:`${c.avgCompletion}%`,background:'#f9a84f',borderRadius:2}}/></div>
-              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#f9a84f',flexShrink:0}}>{c.avgCompletion}%</span>
+            <div style={{fontSize:13,color:'var(--text)',fontWeight:500,marginBottom:10}}>{c.chapterTitle}</div>
+            {/* Stats row */}
+            <div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:8}}>
+              <div style={{display:'flex',alignItems:'center',gap:5}}>
+                <span style={{fontSize:12}}>👁</span>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:'#4f9cf9',fontWeight:600}}>{c.views}</span>
+                <span style={{fontSize:10,color:'var(--muted)'}}>views</span>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:5}}>
+                <span style={{fontSize:12}}>👥</span>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:'#7fda96',fontWeight:600}}>{c.uniqueStudents}</span>
+                <span style={{fontSize:10,color:'var(--muted)'}}>students</span>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:5}}>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:'#f9a84f',fontWeight:600}}>{c.avgCompletion}%</span>
+                <span style={{fontSize:10,color:'var(--muted)'}}>avg completion</span>
+              </div>
+            </div>
+            {/* Progress bar — always fits */}
+            <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${Math.min(c.avgCompletion,100)}%`,background:'#f9a84f',borderRadius:3,transition:'width .6s ease'}}/>
             </div>
           </div>
         ))}
-        {courseStats.length===0&&<div style={{padding:30,textAlign:'center',color:'var(--muted)',fontSize:13}}>No data yet.</div>}
       </div>
     </div>
   );
