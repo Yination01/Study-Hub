@@ -13,7 +13,7 @@ import { createClient } from '@supabase/supabase-js';
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '3.6.0';
+const APP_VERSION    = '3.8.0';
 const COPYRIGHT_YEAR = '2025';
 
 const supabase = createClient(
@@ -200,6 +200,27 @@ function useOnline(){
   return online;
 }
 
+function useNotificationPermission(){
+  const[perm,setPerm]=useState(()=>{
+    if(!('Notification' in window)) return 'unsupported';
+    return Notification.permission;
+  });
+  const request=useCallback(async()=>{
+    if(!('Notification' in window)) return 'unsupported';
+    if(Notification.permission==='granted'){setPerm('granted');return 'granted';}
+    const result=await Notification.requestPermission();
+    setPerm(result);
+    localStorage.setItem('sh-notif-asked','1');
+    return result;
+  },[]);
+  return[perm,request];
+}
+
+function pushNotification(title,body,icon='/icon-192.png'){
+  if(Notification.permission!=='granted') return;
+  try{new Notification(title,{body,icon,badge:'/icon-192.png'});}catch{}
+}
+
 /* ═══════════════ DATABASE ═══════════════ */
 async function dbLoadUsers(){const{data}=await supabase.from('users').select('*');return data||[];}
 async function dbSaveUser(u){await supabase.from('users').upsert(u,{onConflict:'username'});}
@@ -234,7 +255,47 @@ async function dbLoadResources(courseId){try{const{data}=await supabase.from('re
 async function dbAddResource(r){try{await supabase.from('resources').insert(r);}catch(e){console.error(e);}}
 async function dbDeleteResource(id){try{await supabase.from('resources').delete().eq('id',id);}catch{}}
 
-// Assignments
+// Announcements
+async function dbLoadAnnouncements(courseId){
+  try{
+    let q=supabase.from('announcements').select('*').order('pinned',{ascending:false}).order('posted_at',{ascending:false});
+    if(courseId) q=q.or(`course_id.eq.${courseId},course_id.is.null`);
+    else q=q.is('course_id',null);
+    const{data}=await q;return data||[];
+  }catch{return[];}
+}
+async function dbLoadAllAnnouncements(){
+  try{const{data}=await supabase.from('announcements').select('*').order('posted_at',{ascending:false});return data||[];}catch{return[];}
+}
+async function dbSaveAnnouncement(a){try{await supabase.from('announcements').insert(a);}catch(e){console.error(e);}}
+async function dbDeleteAnnouncement(id){try{await supabase.from('announcements').delete().eq('id',id);}catch{}}
+async function dbPinAnnouncement(id,pinned){try{await supabase.from('announcements').update({pinned}).eq('id',id);}catch{}}
+
+// Notification log
+async function dbMarkSeen(username,itemId,itemType){
+  try{await supabase.from('notification_log').upsert({username,item_id:itemId,item_type:itemType,seen_at:new Date().toISOString()},{onConflict:'username,item_id'});}catch{}
+}
+async function dbLoadSeen(username){
+  try{const{data}=await supabase.from('notification_log').select('item_id').eq('username',username);return new Set((data||[]).map(r=>r.item_id));}catch{return new Set();}
+}
+
+// Fetch all recent notifiable items for a user
+async function dbLoadNotifications(username){
+  try{
+    const[assignments,cas,announcements]=await Promise.all([
+      supabase.from('assignments').select('id,title,course_id,added_at,due_date').order('added_at',{ascending:false}).limit(30),
+      supabase.from('course_cas').select('id,title,course_id,type,added_at,date').order('added_at',{ascending:false}).limit(30),
+      supabase.from('announcements').select('*').order('posted_at',{ascending:false}).limit(30),
+    ]);
+    const seen=await dbLoadSeen(username);
+    const items=[
+      ...(announcements.data||[]).map(a=>({id:a.id,type:'announcement',title:a.title,body:a.body,priority:a.priority,time:a.posted_at,courseId:a.course_id,pinned:a.pinned})),
+      ...(assignments.data||[]).map(a=>({id:a.id,type:'assignment',title:`Assignment: ${a.title}`,body:a.due_date?`Due ${new Date(a.due_date).toLocaleDateString()}`:'',priority:'info',time:a.added_at,courseId:a.course_id})),
+      ...(cas.data||[]).map(a=>({id:a.id,type:'ca',title:`${a.type}: ${a.title}`,body:a.date?`On ${new Date(a.date).toLocaleDateString()}`:'',priority:'info',time:a.added_at,courseId:a.course_id})),
+    ].sort((a,b)=>new Date(b.time)-new Date(a.time));
+    return{items,unseenCount:items.filter(i=>!seen.has(i.id)&&(i.pinned||true)).length,seen};
+  }catch{return{items:[],unseenCount:0,seen:new Set()};}
+}
 async function dbLoadAssignments(courseId){try{const{data}=await supabase.from('assignments').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
 async function dbSaveAssignment(a){try{await supabase.from('assignments').insert(a);}catch(e){console.error(e);}}
 async function dbDeleteAssignment(id){try{await supabase.from('assignments').delete().eq('id',id);}catch{}}
@@ -243,6 +304,29 @@ async function dbDeleteAssignment(id){try{await supabase.from('assignments').del
 async function dbLoadCAs(courseId){try{const{data}=await supabase.from('course_cas').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
 async function dbSaveCA(a){try{await supabase.from('course_cas').insert(a);}catch(e){console.error(e);}}
 async function dbDeleteCA(id){try{await supabase.from('course_cas').delete().eq('id',id);}catch{}}
+
+// Status change requests
+async function dbSubmitStatusRequest(r){
+  try{await supabase.from('status_change_requests').insert(r);}catch(e){console.error(e);}
+}
+async function dbLoadStatusRequests(status='pending'){
+  try{const{data}=await supabase.from('status_change_requests').select('*').eq('status',status).order('requested_at',{ascending:false});return data||[];}catch{return[];}
+}
+async function dbLoadAllStatusRequests(){
+  try{const{data}=await supabase.from('status_change_requests').select('*').order('requested_at',{ascending:false});return data||[];}catch{return[];}
+}
+async function dbReviewStatusRequest(id,status,reviewedBy,note=''){
+  try{await supabase.from('status_change_requests').update({status,reviewed_by:reviewedBy,reviewed_at:new Date().toISOString(),note}).eq('id',id);}catch(e){console.error(e);}
+}
+async function dbGetPendingStatusRequest(username){
+  try{const{data}=await supabase.from('status_change_requests').select('*').eq('username',username).eq('status','pending').single();return data||null;}catch{return null;}
+}
+async function dbApplyStatusChange(username,newType){
+  try{await supabase.from('users').update({account_type:newType}).eq('username',username);}catch(e){console.error(e);}
+}
+async function dbCountPendingStatusRequests(){
+  try{const{count}=await supabase.from('status_change_requests').select('*',{count:'exact',head:true}).eq('status','pending');return count||0;}catch{return 0;}
+}
 
 // Dynamic departments
 async function loadDepartments(){
@@ -492,48 +576,157 @@ const SearchBar=({value,onChange,placeholder='Search courses…'})=>(
   </div>
 );
 
-/* ═══════════════ CHATBOT ═══════════════ */
+/* ═══════════════ CHATBOT (persistent) ═══════════════ */
 const QUICK_PROMPTS=['Explain this topic simply','Give me 5 extra practice questions','What are the most important concepts?','Summarise this in bullet points','What might come up in an exam?'];
+const SEARCH_PREFIXES=['find ','search ','what is ','what are ','how do i ','how does ','explain ','show me ','list ','define ','describe '];
+const isSearchQuery=t=>SEARCH_PREFIXES.some(p=>t.toLowerCase().startsWith(p))||t.endsWith('?');
 
-function Chatbot({context}){
-  const[open,setOpen]=useState(false);const[messages,setMessages]=useState([]);const[input,setInput]=useState('');const[loading,setLoading]=useState(false);
+function Chatbot({context,courses,user}){
+  const[open,setOpen]=useState(false);
+  const[minimised,setMinimised]=useState(false);
+  const[messages,setMessages]=useState([]);
+  const[input,setInput]=useState('');
+  const[loading,setLoading]=useState(false);
+  const[tab,setTab]=useState('chat'); // 'chat' | 'search'
+  const[searchResults,setSearchResults]=useState([]);
+  const[searchQ,setSearchQ]=useState('');
   const bottomRef=useRef();const inputRef=useRef();
-  useEffect(()=>{if(open&&messages.length===0)setMessages([{role:'assistant',content:context?.chapterTitle?`Hi! I'm StudyBot. I can see you're studying "${context.chapterTitle}". Ask me anything — explanations, examples, or extra practice questions.`:`Hi! I'm StudyBot. Ask me anything about your course material.`}]);},[open]);
+
+  // Auto-open after login with a brief delay
+  useEffect(()=>{
+    if(user&&!user.isGuest){
+      const t=setTimeout(()=>setOpen(true),1800);
+      return()=>clearTimeout(t);
+    }
+  },[user?.username]);
+
+  const getWelcome=()=>{
+    if(context?.chapterTitle) return `Hi! I can see you're studying **${context.chapterTitle}**. Ask me anything — or search for a course below. 🎓`;
+    return `Hi${user?.displayName?' '+user.displayName:''}! I'm StudyBot. Ask me anything, search for courses, or explore topics across all your courses. 🎓`;
+  };
+
+  useEffect(()=>{
+    if(open&&messages.length===0) setMessages([{role:'assistant',content:getWelcome()}]);
+  },[open]);
+
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth'});},[messages,loading]);
-  useEffect(()=>{if(open)setTimeout(()=>inputRef.current?.focus(),120);},[open]);
+  useEffect(()=>{if(open&&!minimised)setTimeout(()=>inputRef.current?.focus(),120);},[open,minimised]);
   useEffect(()=>{setMessages([]);},[context?.chapterTitle]);
-  const send=async text=>{const msg=text||input.trim();if(!msg||loading)return;setInput('');const next=[...messages,{role:'user',content:msg}];setMessages(next);setLoading(true);try{const reply=await sendChatMessage(next.filter(m=>m.role!=='system'),context);setMessages(m=>[...m,{role:'assistant',content:reply}]);}catch{setMessages(m=>[...m,{role:'assistant',content:'Sorry, something went wrong. Please try again.'}]);}setLoading(false);};
+
+  // Course search
+  const doSearch=q=>{
+    if(!q.trim()){setSearchResults([]);return;}
+    const lq=q.toLowerCase();
+    const res=(courses||[]).filter(c=>
+      c.chapterTitle.toLowerCase().includes(lq)||
+      c.courseName.toLowerCase().includes(lq)
+    ).slice(0,8);
+    setSearchResults(res);
+  };
+
+  useEffect(()=>{doSearch(searchQ);},[searchQ,courses]);
+
+  const send=async text=>{
+    const msg=text||input.trim();
+    if(!msg||loading)return;
+    setInput('');
+
+    // If it looks like a search query, also show search results
+    if(isSearchQuery(msg)){
+      doSearch(msg);
+      if(searchResults.length>0) setTab('search');
+    }
+
+    const next=[...messages,{role:'user',content:msg}];
+    setMessages(next);setLoading(true);
+    try{
+      const ctx={...context,courseName:context?.courseName,chapterTitle:context?.chapterTitle,allCourses:courses?.map(c=>c.chapterTitle+' ('+c.courseName+')').join(', ')};
+      const reply=await sendChatMessage(next.filter(m=>m.role!=='system'),ctx);
+      setMessages(m=>[...m,{role:'assistant',content:reply}]);
+    }catch{
+      setMessages(m=>[...m,{role:'assistant',content:'Sorry, something went wrong. Please try again.'}]);
+    }
+    setLoading(false);
+  };
+
+  if(!open) return(
+    <button onClick={()=>setOpen(true)} className="no-print" title="Open StudyBot"
+      style={{position:'fixed',bottom:58,right:22,width:54,height:54,borderRadius:'50%',border:'none',cursor:'pointer',zIndex:200,background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',boxShadow:'0 4px 24px rgba(79,156,249,.45)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,animation:'pulse 3s ease infinite'}}>
+      🤖
+    </button>
+  );
+
   return(
-    <>
-      <button onClick={()=>setOpen(o=>!o)} className="no-print" style={{position:'fixed',bottom:52,right:22,width:52,height:52,borderRadius:'50%',border:'none',cursor:'pointer',zIndex:200,background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',boxShadow:open?'none':'0 4px 24px rgba(79,156,249,.4)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,animation:open?'none':'pulse 3s ease infinite'}}>
-        {open?'✕':'🤖'}
-      </button>
-      {open&&<div className="slide-up no-print" style={{position:'fixed',bottom:114,right:18,width:360,maxHeight:'68vh',background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,display:'flex',flexDirection:'column',zIndex:200,overflow:'hidden',boxShadow:'var(--shadow)'}}>
-        <div style={{padding:'13px 17px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--surface)'}}>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <div style={{width:32,height:32,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>🤖</div>
-            <div><div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>StudyBot</div><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#4f9cf9',letterSpacing:1}}>AI TUTOR · GROQ</div></div>
+    <div className="no-print" style={{position:'fixed',bottom:58,right:18,width:370,maxHeight:minimised?52:'72vh',background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,display:'flex',flexDirection:'column',zIndex:200,overflow:'hidden',boxShadow:'var(--shadow)',transition:'max-height .3s ease'}}>
+      {/* Header */}
+      <div style={{padding:'10px 14px',borderBottom:minimised?'none':'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'linear-gradient(135deg,rgba(79,156,249,.08),rgba(127,95,249,.08))',flexShrink:0,cursor:'pointer'}} onClick={()=>setMinimised(m=>!m)}>
+        <div style={{display:'flex',alignItems:'center',gap:9}}>
+          <div style={{width:28,height:28,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>🤖</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:600,color:'var(--text)',lineHeight:1}}>StudyBot</div>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',letterSpacing:1}}>AI TUTOR · GROQ · ALWAYS ON</div>
           </div>
-          <button onClick={()=>setMessages([])} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>CLEAR</button>
+          {context?.chapterTitle&&!minimised&&<div style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.2)',borderRadius:4,padding:'2px 7px',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{context.chapterTitle}</div>}
         </div>
-        {context?.chapterTitle&&<div style={{padding:'5px 14px',background:'rgba(79,156,249,.05)',borderBottom:'1px solid var(--border)'}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#4f9cf9',letterSpacing:1}}>STUDYING: </span><span style={{fontSize:11,color:'var(--muted)'}}>{context.chapterTitle}</span></div>}
-        <div style={{flex:1,overflowY:'auto',padding:'12px 12px 6px'}}>
-          {messages.map((m,i)=>(
-            <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start',marginBottom:10}}>
-              {m.role==='assistant'&&<div style={{width:24,height:24,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,flexShrink:0,marginRight:7,marginTop:2}}>🤖</div>}
-              <div style={{maxWidth:'78%',background:m.role==='user'?'linear-gradient(135deg,#4f9cf9,#7f5ff9)':'var(--surface)',color:m.role==='user'?'#fff':'var(--text)',borderRadius:m.role==='user'?'14px 14px 4px 14px':'14px 14px 14px 4px',padding:'9px 12px',fontSize:13,lineHeight:1.65,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{m.content}</div>
+        <div style={{display:'flex',gap:4,alignItems:'center'}}>
+          <button onClick={e=>{e.stopPropagation();setMessages([]);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 6px'}} title="Clear chat">CLR</button>
+          <button onClick={e=>{e.stopPropagation();setMinimised(m=>!m);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,padding:'0 3px',lineHeight:1}}>{minimised?'▲':'▼'}</button>
+          <button onClick={e=>{e.stopPropagation();setOpen(false);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,padding:'0 3px',lineHeight:1}}>✕</button>
+        </div>
+      </div>
+
+      {!minimised&&<>
+        {/* Tabs */}
+        <div style={{display:'flex',borderBottom:'1px solid var(--border)',flexShrink:0}}>
+          {[{id:'chat',label:'💬 Chat'},{id:'search',label:`🔍 Search${searchResults.length>0?' ('+searchResults.length+')':''}`}].map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:'7px 0',border:'none',borderBottom:tab===t.id?'2px solid #4f9cf9':'2px solid transparent',background:'none',color:tab===t.id?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:tab===t.id?600:400}}>{t.label}</button>
+          ))}
+        </div>
+
+        {/* Chat panel */}
+        {tab==='chat'&&<>
+          <div style={{flex:1,overflowY:'auto',padding:'12px 12px 6px'}}>
+            {messages.map((m,i)=>(
+              <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start',marginBottom:9}}>
+                {m.role==='assistant'&&<div style={{width:22,height:22,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,flexShrink:0,marginRight:6,marginTop:2}}>🤖</div>}
+                <div style={{maxWidth:'80%',background:m.role==='user'?'linear-gradient(135deg,#4f9cf9,#7f5ff9)':'var(--surface)',color:m.role==='user'?'#fff':'var(--text)',borderRadius:m.role==='user'?'13px 13px 3px 13px':'13px 13px 13px 3px',padding:'8px 12px',fontSize:12.5,lineHeight:1.65,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{m.content}</div>
+              </div>
+            ))}
+            {loading&&<div style={{display:'flex',alignItems:'center',gap:7,marginBottom:9}}><div style={{width:22,height:22,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11}}>🤖</div><div style={{background:'var(--surface)',borderRadius:'13px 13px 13px 3px',padding:'9px 14px',display:'flex',gap:5,alignItems:'center'}}>{[0,1,2].map(i=><div key={i} style={{width:5,height:5,borderRadius:'50%',background:'#4f9cf9',animation:`blink 1.2s ease ${i*.2}s infinite`}}/>)}</div></div>}
+            <div ref={bottomRef}/>
+          </div>
+          {messages.length<=1&&<div style={{padding:'4px 10px 6px',display:'flex',gap:5,flexWrap:'wrap'}}>{QUICK_PROMPTS.map((p,i)=><button key={i} onClick={()=>send(p)} style={{background:'rgba(79,156,249,.07)',border:'1px solid rgba(79,156,249,.18)',borderRadius:20,color:'#4f9cf9',cursor:'pointer',padding:'3px 9px',fontSize:10}}>{p}</button>)}</div>}
+        </>}
+
+        {/* Search panel */}
+        {tab==='search'&&<div style={{flex:1,overflowY:'auto',padding:'10px'}}>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search courses, topics, keywords…"
+            style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:9,padding:'8px 12px',color:'var(--text)',fontSize:13,marginBottom:10,fontFamily:"'DM Sans',sans-serif"}}
+            autoFocus/>
+          {searchResults.length===0&&searchQ&&<div style={{color:'var(--muted)',textAlign:'center',padding:20,fontSize:12}}>No courses match "{searchQ}"</div>}
+          {searchResults.length===0&&!searchQ&&<div style={{color:'var(--muted)',textAlign:'center',padding:20,fontSize:12}}>Type to search across all courses</div>}
+          {searchResults.map(c=>(
+            <div key={c.id} onClick={()=>{setTab('chat');send(`Tell me about ${c.chapterTitle} from ${c.courseName}`);}} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,padding:'10px 13px',marginBottom:8,cursor:'pointer'}}
+              onMouseEnter={e=>e.currentTarget.style.borderColor='#4f9cf970'}
+              onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[c.year]||'#4f9cf9',marginBottom:3}}>Yr {c.year} · Sem {c.semester||1} · {DEPT_SHORT[c.department]||'CS'}</div>
+              <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:2}}>{c.chapterTitle}</div>
+              <div style={{fontSize:11,color:'var(--muted)'}}>{c.courseName} · {c.qCount} questions</div>
             </div>
           ))}
-          {loading&&<div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}><div style={{width:24,height:24,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12}}>🤖</div><div style={{background:'var(--surface)',borderRadius:'14px 14px 14px 4px',padding:'10px 15px',display:'flex',gap:5,alignItems:'center'}}>{[0,1,2].map(i=><div key={i} style={{width:6,height:6,borderRadius:'50%',background:'#4f9cf9',animation:`blink 1.2s ease ${i*.2}s infinite`}}/>)}</div></div>}
-          <div ref={bottomRef}/>
+        </div>}
+
+        {/* Input */}
+        <div style={{padding:'8px 10px',borderTop:'1px solid var(--border)',display:'flex',gap:7,alignItems:'flex-end',flexShrink:0}}>
+          <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}
+            placeholder={tab==='search'?'Ask about a course or topic…':'Ask anything or type a search… (Enter to send)'}
+            rows={1} style={{flex:1,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'7px 10px',color:'var(--text)',fontSize:12.5,fontFamily:"'DM Sans',sans-serif",resize:'none',maxHeight:80,lineHeight:1.5}}/>
+          <button onClick={()=>send()} disabled={!input.trim()||loading}
+            style={{width:32,height:32,borderRadius:'50%',border:'none',flexShrink:0,background:!input.trim()||loading?'var(--border)':'linear-gradient(135deg,#4f9cf9,#7f5ff9)',color:!input.trim()||loading?'var(--muted)':'#fff',cursor:!input.trim()||loading?'not-allowed':'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center'}}>↑</button>
         </div>
-        {messages.length<=1&&<div style={{padding:'4px 12px 8px',display:'flex',gap:6,flexWrap:'wrap'}}>{QUICK_PROMPTS.map((p,i)=><button key={i} onClick={()=>send(p)} style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:20,color:'#4f9cf9',cursor:'pointer',padding:'4px 10px',fontSize:11}}>{p}</button>)}</div>}
-        <div style={{padding:'9px 11px',borderTop:'1px solid var(--border)',display:'flex',gap:8,alignItems:'flex-end'}}>
-          <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}} placeholder="Ask anything… (Enter to send)" rows={1} style={{flex:1,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'8px 11px',color:'var(--text)',fontSize:13,fontFamily:"'DM Sans',sans-serif",resize:'none',maxHeight:80,lineHeight:1.5}}/>
-          <button onClick={()=>send()} disabled={!input.trim()||loading} style={{width:35,height:35,borderRadius:'50%',border:'none',flexShrink:0,background:!input.trim()||loading?'var(--border)':'linear-gradient(135deg,#4f9cf9,#7f5ff9)',color:!input.trim()||loading?'var(--muted)':'#fff',cursor:!input.trim()||loading?'not-allowed':'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>↑</button>
-        </div>
-      </div>}
-    </>
+      </>}
+    </div>
   );
 }
 
@@ -1020,6 +1213,254 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
 }
 
 
+/* ═══════════════ PRIORITY STYLES ═══════════════ */
+const PRIORITY={
+  info:    {color:'#4f9cf9',bg:'rgba(79,156,249,.08)',border:'rgba(79,156,249,.2)',icon:'ℹ️'},
+  warning: {color:'#f9a84f',bg:'rgba(249,168,79,.08)',border:'rgba(249,168,79,.2)', icon:'⚠️'},
+  urgent:  {color:'#f05050',bg:'rgba(240,80,80,.08)', border:'rgba(240,80,80,.25)',  icon:'🚨'},
+};
+
+/* ═══════════════ GLOBAL ANNOUNCEMENT STRIP ═══════════════ */
+function GlobalAnnouncementStrip({user}){
+  const[items,setItems]=useState([]);const[idx,setIdx]=useState(0);
+  useEffect(()=>{
+    dbLoadAnnouncements(null).then(d=>{
+      // show pinned first, then urgent, then by date
+      const sorted=[...d].sort((a,b)=>{
+        if(a.pinned&&!b.pinned)return -1;if(!a.pinned&&b.pinned)return 1;
+        if(a.priority==='urgent'&&b.priority!=='urgent')return -1;
+        if(a.priority!=='urgent'&&b.priority==='urgent')return 1;
+        return new Date(b.posted_at)-new Date(a.posted_at);
+      });
+      setItems(sorted);
+    });
+  },[]);
+  if(!items.length)return null;
+  const a=items[idx];
+  const p=PRIORITY[a.priority]||PRIORITY.info;
+  return(
+    <div className="fade-in" style={{background:p.bg,border:`1px solid ${p.border}`,borderRadius:10,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+      <span style={{fontSize:16,flexShrink:0}}>{p.icon}</span>
+      <div style={{flex:1,minWidth:0}}>
+        <span style={{fontSize:13,fontWeight:700,color:p.color,marginRight:8}}>{a.title}</span>
+        {a.body&&<span style={{fontSize:12.5,color:'var(--text)'}}>{a.body}</span>}
+      </div>
+      {a.pinned&&<span style={{fontSize:12}}>📌</span>}
+      {items.length>1&&<div style={{display:'flex',gap:5,flexShrink:0}}>
+        <button onClick={()=>setIdx(i=>(i-1+items.length)%items.length)} style={{background:'none',border:'1px solid var(--border)',borderRadius:5,color:'var(--muted)',cursor:'pointer',padding:'2px 7px',fontSize:11}}>‹</button>
+        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',display:'flex',alignItems:'center'}}>{idx+1}/{items.length}</span>
+        <button onClick={()=>setIdx(i=>(i+1)%items.length)} style={{background:'none',border:'1px solid var(--border)',borderRadius:5,color:'var(--muted)',cursor:'pointer',padding:'2px 7px',fontSize:11}}>›</button>
+      </div>}
+    </div>
+  );
+}
+
+/* ═══════════════ ANNOUNCEMENTS TAB ═══════════════ */
+function AnnouncementsTab({courseId,user,onNew}){
+  const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
+  const[form,setForm]=useState({title:'',body:'',priority:'info',pinned:false,global:false});
+  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
+  const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
+  const isSU2=user.role===ROLE.SUPERUSER;
+  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
+
+  const load=async()=>{const d=await dbLoadAnnouncements(courseId);setItems(d);};
+  useEffect(()=>{load();},[courseId]);
+
+  const save=async()=>{
+    if(!form.title.trim())return;setLoading(true);
+    const a={id:`ann-${Date.now()}`,course_id:form.global?null:courseId,title:form.title,body:form.body,priority:form.priority,pinned:form.pinned,posted_by:user.username,posted_at:new Date().toISOString()};
+    await dbSaveAnnouncement(a);
+    // Push notification if permission granted
+    pushNotification(`📢 ${form.priority==='urgent'?'URGENT: ':''}${form.title}`,form.body||'New announcement on StudyHub');
+    onNew?.();
+    setForm({title:'',body:'',priority:'info',pinned:false,global:false});setShowForm(false);setLoading(false);
+    await load();flash('✓ Announcement posted.');
+  };
+  const del=async id=>{await dbDeleteAnnouncement(id);await load();};
+  const togglePin=async(id,pinned)=>{await dbPinAnnouncement(id,!pinned);await load();};
+
+  return(
+    <div className="fade-up">
+      <SectionLabel>Announcements</SectionLabel>
+      {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:12}}>{msg}</div>}
+      {isPriv&&(
+        <button onClick={()=>setShowForm(s=>!s)} style={{background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.25)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600,marginBottom:14}}>
+          {showForm?'✕ Cancel':'📢 Post Announcement'}
+        </button>
+      )}
+      {showForm&&isPriv&&(
+        <div className="scale-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:16}}>
+          <Field label="TITLE *" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Exam date moved"/>
+          <Field label="MESSAGE (optional)" value={form.body} onChange={e=>setForm(f=>({...f,body:e.target.value}))} placeholder="Full details…"/>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>PRIORITY</div>
+            <div style={{display:'flex',gap:8}}>
+              {Object.entries(PRIORITY).map(([k,v])=>(
+                <button key={k} onClick={()=>setForm(f=>({...f,priority:k}))} style={{flex:1,padding:'8px 0',borderRadius:7,border:`1px solid ${form.priority===k?v.color+'70':'var(--border)'}`,background:form.priority===k?v.bg:'var(--input-bg)',color:form.priority===k?v.color:'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:form.priority===k?700:400,display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
+                  {v.icon} {k.charAt(0).toUpperCase()+k.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:16,marginBottom:14}}>
+            <label style={{display:'flex',alignItems:'center',gap:7,cursor:'pointer',fontSize:13,color:'var(--text)'}}>
+              <input type="checkbox" checked={form.pinned} onChange={e=>setForm(f=>({...f,pinned:e.target.checked}))} style={{width:15,height:15}}/>
+              📌 Pin to top
+            </label>
+            {isSU2&&(
+              <label style={{display:'flex',alignItems:'center',gap:7,cursor:'pointer',fontSize:13,color:'var(--text)'}}>
+                <input type="checkbox" checked={form.global} onChange={e=>setForm(f=>({...f,global:e.target.checked}))} style={{width:15,height:15}}/>
+                🌐 Post globally (all courses)
+              </label>
+            )}
+          </div>
+          <button onClick={save} disabled={loading||!form.title.trim()} style={{background:PRIORITY[form.priority].color,border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>
+            {loading?'Posting…':'Post Announcement'}
+          </button>
+        </div>
+      )}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {items.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No announcements yet.</div>}
+        {items.map((a,i)=>{
+          const p=PRIORITY[a.priority]||PRIORITY.info;
+          return(
+            <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:p.bg,border:`1px solid ${p.border}`,borderRadius:10,padding:'14px 17px',borderLeft:`3px solid ${p.color}`,position:'relative'}}>
+              {a.pinned&&<span style={{position:'absolute',top:10,right:isPriv?40:12,fontSize:14}}>📌</span>}
+              {!a.course_id&&<span style={{position:'absolute',top:10,right:isPriv?62:34,fontSize:11,fontFamily:"'IBM Plex Mono',monospace",color:'var(--muted)'}}>GLOBAL</span>}
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10}}>
+                <div style={{flex:1}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                    <span style={{fontSize:14}}>{p.icon}</span>
+                    <span style={{fontSize:14,fontWeight:700,color:p.color}}>{a.title}</span>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${p.color}18`,color:p.color,borderRadius:4,padding:'2px 7px',textTransform:'uppercase'}}>{a.priority}</span>
+                  </div>
+                  {a.body&&<p style={{fontSize:13,color:'var(--text)',lineHeight:1.7,margin:'0 0 6px'}}>{a.body}</p>}
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>@{a.posted_by} · {new Date(a.posted_at).toLocaleString()}</div>
+                </div>
+                {isPriv&&(
+                  <div style={{display:'flex',gap:6,flexShrink:0}}>
+                    <button onClick={()=>togglePin(a.id,a.pinned)} title={a.pinned?'Unpin':'Pin'} style={{background:'none',border:'none',color:a.pinned?'#f9a84f':'var(--muted)',cursor:'pointer',fontSize:14}}>📌</button>
+                    <button onClick={()=>del(a.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13}}>✕</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ NOTIFICATION BELL ═══════════════ */
+function NotificationBell({user,courses}){
+  const[open,setOpen]=useState(false);
+  const[notifs,setNotifs]=useState({items:[],unseenCount:0,seen:new Set()});
+  const[permState,requestPerm]=useNotificationPermission();
+  const[showPermBanner,setShowPermBanner]=useState(false);
+  const bellRef=useRef();
+
+  const load=useCallback(async()=>{
+    if(!user||user.isGuest)return;
+    const n=await dbLoadNotifications(user.username);
+    setNotifs(n);
+    // Show permission banner once if not asked yet
+    if(permState==='default'&&!localStorage.getItem('sh-notif-asked')&&n.unseenCount>0){
+      setShowPermBanner(true);
+    }
+  },[user,permState]);
+
+  useEffect(()=>{load();},[]);
+  useEffect(()=>{if(open)load();},[open]);
+
+  // Close on outside click
+  useEffect(()=>{
+    const h=e=>{if(bellRef.current&&!bellRef.current.contains(e.target))setOpen(false);};
+    document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h);
+  },[]);
+
+  const markAllSeen=async()=>{
+    const unseen=notifs.items.filter(i=>!notifs.seen.has(i.id));
+    await Promise.all(unseen.map(i=>dbMarkSeen(user.username,i.id,i.type)));
+    await load();
+  };
+
+  const handleOpen=()=>{setOpen(o=>!o);if(!open)markAllSeen();};
+
+  const askPermission=async()=>{
+    const result=await requestPerm();
+    setShowPermBanner(false);
+    if(result==='granted') pushNotification('🔔 Notifications enabled','You\'ll now get alerts for new assignments and announcements on StudyHub.');
+  };
+
+  const courseMap=Object.fromEntries((courses||[]).map(c=>[c.id,c.courseName||c.chapterTitle]));
+  const count=notifs.unseenCount;
+
+  return(
+    <div ref={bellRef} style={{position:'relative'}} className="no-print">
+      {/* Permission banner */}
+      {showPermBanner&&(
+        <div className="slide-down" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid rgba(249,168,79,.3)',borderRadius:12,padding:'13px 18px',display:'flex',alignItems:'center',gap:12,zIndex:700,boxShadow:'var(--shadow)',maxWidth:420,width:'calc(100% - 32px)'}}>
+          <span style={{fontSize:24}}>🔔</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:2}}>Enable notifications?</div>
+            <div style={{fontSize:11,color:'var(--muted)'}}>Get alerts for new assignments, CAs, and announcements.</div>
+          </div>
+          <button onClick={askPermission} style={{background:'#f9a84f',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'6px 13px',fontSize:12,fontWeight:700,flexShrink:0}}>Enable</button>
+          <button onClick={()=>{setShowPermBanner(false);localStorage.setItem('sh-notif-asked','1');}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'2px'}}>✕</button>
+        </div>
+      )}
+
+      {/* Bell button */}
+      <button onClick={handleOpen} style={{position:'relative',background:open?'rgba(249,168,79,.12)':'var(--surface)',border:`1px solid ${open?'rgba(249,168,79,.4)':'var(--border)'}`,borderRadius:10,color:open?'#f9a84f':'var(--text)',cursor:'pointer',padding:'8px 11px',fontSize:18,display:'flex',alignItems:'center',gap:0}}>
+        🔔
+        {count>0&&(
+          <span style={{position:'absolute',top:-4,right:-4,background:'#f05050',color:'#fff',borderRadius:'50%',width:17,height:17,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,border:'2px solid var(--bg)'}}>{count>9?'9+':count}</span>
+        )}
+      </button>
+
+      {/* Dropdown */}
+      {open&&(
+        <div className="scale-in" style={{position:'absolute',top:'calc(100% + 10px)',right:0,width:360,maxHeight:480,background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,boxShadow:'var(--shadow)',zIndex:500,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+          <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--surface)'}}>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--text)',letterSpacing:1,fontWeight:600}}>🔔 NOTIFICATIONS</div>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              {permState==='default'&&<button onClick={askPermission} style={{background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.3)',borderRadius:5,color:'#f9a84f',cursor:'pointer',padding:'3px 8px',fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>Enable Push</button>}
+              {permState==='granted'&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',letterSpacing:1}}>✓ Push on</span>}
+              {permState==='denied'&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:1}}>Push blocked</span>}
+            </div>
+          </div>
+          <div style={{overflowY:'auto',flex:1}}>
+            {notifs.items.length===0&&<div style={{padding:30,textAlign:'center',color:'var(--muted)',fontSize:13}}>No notifications yet.</div>}
+            {notifs.items.map((n,i)=>{
+              const p=PRIORITY[n.priority]||PRIORITY.info;
+              const unseen=!notifs.seen.has(n.id);
+              return(
+                <div key={n.id} style={{padding:'11px 16px',borderBottom:'1px solid var(--border)',display:'flex',gap:10,alignItems:'flex-start',background:unseen?`${p.color}08`:'transparent'}}>
+                  {unseen&&<div style={{width:6,height:6,borderRadius:'50%',background:p.color,flexShrink:0,marginTop:5}}/>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:unseen?600:400,color:'var(--text)',marginBottom:2,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                      <span>{p.icon}</span>
+                      <span>{n.title}</span>
+                      {n.priority==='urgent'&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:'rgba(240,80,80,.15)',color:'#f05050',borderRadius:3,padding:'1px 5px'}}>URGENT</span>}
+                    </div>
+                    {n.body&&<div style={{fontSize:11,color:'var(--muted)',lineHeight:1.5,marginBottom:3}}>{n.body}</div>}
+                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',display:'flex',gap:8,flexWrap:'wrap'}}>
+                      {n.courseId&&<span>📚 {courseMap[n.courseId]||n.courseId}</span>}
+                      <span>{new Date(n.time).toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ═══════════════ ASSIGNMENTS TAB ═══════════════ */
 function AssignmentsTab({courseId,user}){
   const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
@@ -1330,9 +1771,9 @@ function ResourcesTab({courseId,user}){
 }
 
 /* ═══════════════ COURSE VIEW ═══════════════ */
-const ALL_TABS=[{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
+const ALL_TABS=[{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'announcements',label:'📢 Announcements'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
 
-function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark}){
+function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses}){
   const[tab,setTab]=useState('concepts');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
   const d=course.data;const cp=progress[course.id]||{viewed:false,openedQs:[]};const isPriv=user.role!==ROLE.USER;
   const isBookmarked=bookmarks.includes(course.id);
@@ -1425,12 +1866,11 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
         </div>
       )}
 
+      {tab==='announcements'&&<AnnouncementsTab courseId={course.id} user={user} onNew={()=>{}}/>}
       {tab==='assignments'&&<AssignmentsTab courseId={course.id} user={user}/>}
       {tab==='ca'&&<CATab courseId={course.id} user={user}/>}
       {tab==='resources'&&<ResourcesTab courseId={course.id} user={user}/>}
       {tab==='community'&&<CommunityBoard courseId={course.id} user={user}/>}
-
-      <Chatbot context={chatCtx}/>
     </div>
   );
 }
@@ -1994,6 +2434,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         </div>
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
           <ThemeToggle dark={dark} toggle={toggleTheme}/>
+          {!user.isGuest&&<NotificationBell user={user} courses={courses}/>}
           {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 14px',fontSize:13}}>🔖 {bookmarks.length}</button>}
           {isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Panel':'⚙ Panel'}</button>}
           <button onClick={onLogout} style={{background:user.isGuest?'#4f9cf9':'none',border:user.isGuest?'none':'1px solid var(--border)',borderRadius:8,color:user.isGuest?'#000':'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:user.isGuest?700:400}}>
@@ -2016,6 +2457,9 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           </div>
         </div>
       )}
+
+      {/* Global announcements strip */}
+      <GlobalAnnouncementStrip user={user}/>
 
       {/* Year tabs */}
       <div className="stagger-1" style={{marginBottom:16}}>
@@ -2192,7 +2636,8 @@ export default function App(){
         <div style={{paddingTop:user?.isGuest?48:0}}>
           <CourseView course={active} user={user} progress={progress}
             onBack={()=>setView('home')} onProgressUpdate={handleProgress}
-            bookmarks={bookmarks} toggleBookmark={toggleBookmark}/>
+            bookmarks={bookmarks} toggleBookmark={toggleBookmark}
+            courses={courses}/>
         </div>
       )}
 
@@ -2204,6 +2649,15 @@ export default function App(){
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:3000}}>
           <div style={{color:'#4f9cf9',fontSize:32,animation:'spin 1s linear infinite'}}>⟳</div>
         </div>
+      )}
+
+      {/* Persistent chatbot — visible on home and course views, hidden on auth/admin */}
+      {user&&!user.isGuest&&view!=='auth'&&view!=='admin'&&(
+        <Chatbot context={view==='course'&&active?{
+          courseName:active.data?.courseName,
+          chapterTitle:active.data?.chapterTitle,
+          summary:active.data?.keyConcepts?.slice(0,5).map(c=>c.title).join(', ')
+        }:null} courses={courses} user={user}/>
       )}
 
       {view!=='auth'&&<CopyrightBar/>}
