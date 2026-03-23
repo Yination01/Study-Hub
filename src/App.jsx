@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════╝
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 /* ═══════════════ CONFIG ═══════════════ */
@@ -124,7 +124,18 @@ const css = `
   button:active{transform:scale(.97)}
 
   /* Mobile touch targets */
-  /* ── Mobile: phones ≤640px ── */
+  /* Hide text labels on very small screens */
+  @media(max-width:400px){
+    .hide-xs{display:none!important}
+  }
+
+  /* GPU-accelerate animations */
+  .fade-in,.fade-up,.scale-in,.slide-down,.slide-up{will-change:transform,opacity}
+  /* Remove will-change after animation to free memory */
+  .fade-in,.fade-up,.scale-in{animation-fill-mode:both}
+
+  /* Contain layout shifts in course grid */
+  .course-grid>*{contain:layout style}
   @media(max-width:640px){
     /* Touch targets */
     button{min-height:44px}
@@ -1599,6 +1610,38 @@ Return ONLY valid JSON with this exact structure:
 }
 Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none, chapters 4-8 with EXACTLY 3 takeaways each, questions EXACTLY 25 exam-style with full worked answers. Return ONLY the JSON.`;
 
+/* Format descriptions shown in the info card when a chip is selected */
+const FORMAT_INFO = {
+  'PDF': {
+    desc: 'Portable Document Format. The most common format for lecture slides and textbooks exported from PowerPoint or Word.',
+    how:  'Export any document as PDF, then upload it here. Text is extracted automatically. Scanned PDFs use AI vision.',
+  },
+  'Word Doc': {
+    desc: 'Microsoft Word documents (.docx). Great for lecture notes, assignments, and handouts created in Word or Google Docs.',
+    how:  'From Google Docs: File → Download → .docx. From Word: Save As → .docx.',
+  },
+  'PowerPoint': {
+    desc: 'Microsoft PowerPoint presentations (.pptx). Upload lecture slide decks directly.',
+    how:  'From Google Slides: File → Download → .pptx. From PowerPoint: Save As → .pptx.',
+  },
+  'Text / MD': {
+    desc: 'Plain text (.txt) or Markdown (.md) files. Good for notes, outlines, or raw content copied from anywhere.',
+    how:  'Paste your notes into Notepad/TextEdit and save as .txt, or use any Markdown editor and save as .md.',
+  },
+  'Image': {
+    desc: 'PNG, JPG, JPEG, or WebP images. Upload a photo of a whiteboard, handwritten notes, or a scanned page.',
+    how:  'Take a clear photo with your phone camera, or screenshot any document. AI reads the text from the image.',
+  },
+  'CSV': {
+    desc: 'Comma-separated values. Good for tables of definitions, data sets, or structured study material.',
+    how:  'Export any spreadsheet as CSV from Excel or Google Sheets: File → Download → .csv.',
+  },
+  'JSON': {
+    desc: 'If you already have a StudyHub JSON study guide (generated in a previous session), upload it directly — no AI processing needed.',
+    how:  'Copy the JSON output from Claude.ai or ChatGPT and save it as a .json file, then upload here.',
+  },
+};
+
 function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
   const[uploadMode,setUploadMode]=useState('file'); // 'file' | 'paste'
   const[year,setYear]=useState(1);
@@ -1611,6 +1654,8 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
   const[error,setError]=useState('');
   const[copied,setCopied]=useState(false);
   const[smartSortMsg,setSmartSortMsg]=useState('');
+  const[activeFilter,setActiveFilter]=useState('All');
+  const[filterInfo,setFilterInfo]=useState(null);
   const fileRef=useRef();
 
   const copyPrompt=()=>{navigator.clipboard.writeText(JSON_PROMPT);setCopied(true);setTimeout(()=>setCopied(false),2000);};
@@ -1744,46 +1789,134 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
         {/* FILE MODE */}
         {uploadMode==='file'&&(
           <div className="fade-in">
-            {/* Format grid */}
-            <div style={{marginBottom:14}}>
-              <Mono color="var(--muted)" size={10}>SUPPORTED FORMATS</Mono>
-              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}}>
-                {FILE_TYPES.map(t=>(
-                  <div key={t.label} style={{background:`${t.color}10`,border:`1px solid ${t.color}30`,borderRadius:6,padding:'4px 10px',display:'flex',alignItems:'center',gap:5}}>
-                    <span style={{fontSize:12}}>{t.icon}</span>
-                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:t.color,letterSpacing:1}}>{t.label}</span>
-                  </div>
-                ))}
+
+            {/* ── Gemini-style format chip bar ── */}
+            <div style={{marginBottom:16}}>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
+                {[{label:'All',icon:'📂',color:'#8892a4',filter:null},...FILE_TYPES.map(t=>({...t,filter:t.ext}))].map(t=>{
+                  const active=activeFilter===t.label;
+                  return(
+                    <button key={t.label} onClick={()=>{
+                      setActiveFilter(t.label);
+                      // Show info tooltip
+                      setFilterInfo(t.label==='All'?null:t);
+                    }}
+                      style={{display:'flex',alignItems:'center',gap:5,
+                        background:active?`${t.color}18`:'var(--input-bg)',
+                        border:`1.5px solid ${active?t.color:t.color+'30'}`,
+                        borderRadius:20,padding:'5px 12px',cursor:'pointer',
+                        transition:'all .15s',outline:'none'}}>
+                      <span style={{fontSize:14}}>{t.icon}</span>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,
+                        color:active?t.color:'var(--muted)',fontWeight:active?700:400,
+                        letterSpacing:.5}}>{t.label}</span>
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* Format info card — shows when a specific chip is selected */}
+              {filterInfo&&(
+                <div className="fade-in" style={{marginTop:10,background:`${filterInfo.color}08`,
+                  border:`1px solid ${filterInfo.color}25`,borderRadius:10,padding:'11px 14px',
+                  display:'flex',gap:12,alignItems:'flex-start'}}>
+                  <span style={{fontSize:24,flexShrink:0}}>{filterInfo.icon}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:filterInfo.color,marginBottom:3}}>
+                      {filterInfo.label}
+                    </div>
+                    <div style={{fontSize:11,color:'var(--muted)',lineHeight:1.6}}>
+                      {FORMAT_INFO[filterInfo.label]?.desc}
+                    </div>
+                    <div style={{marginTop:6,display:'flex',gap:6,flexWrap:'wrap'}}>
+                      {filterInfo.ext.map(e=>(
+                        <span key={e} style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,
+                          background:`${filterInfo.color}15`,color:filterInfo.color,
+                          borderRadius:4,padding:'2px 7px'}}>
+                          .{e}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{marginTop:6,fontSize:11,color:'var(--muted)',fontStyle:'italic'}}>
+                      {FORMAT_INFO[filterInfo.label]?.how}
+                    </div>
+                  </div>
+                  <button onClick={()=>setFilterInfo(null)}
+                    style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,lineHeight:1,flexShrink:0}}>✕</button>
+                </div>
+              )}
             </div>
 
             {/* Drop zone */}
             <div
               onClick={()=>fileRef.current?.click()}
-              onDragOver={e=>e.preventDefault()}
-              onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){setFile(f);setError('');}}}
-              style={{border:`2px dashed ${file?YEAR_COLORS[year]+'80':'var(--border)'}`,borderRadius:10,padding:'24px 20px',textAlign:'center',cursor:'pointer',background:file?YEAR_BG[year]:'var(--input-bg)',transition:'var(--transition)',marginBottom:10}}
+              onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor='#4f9cf9';e.currentTarget.style.background='rgba(79,156,249,.05)';}}
+              onDragLeave={e=>{e.currentTarget.style.borderColor='';e.currentTarget.style.background='';}}
+              onDrop={e=>{
+                e.preventDefault();
+                e.currentTarget.style.borderColor='';e.currentTarget.style.background='';
+                const f=e.dataTransfer.files[0];
+                if(f){setFile(f);setError('');
+                  // Auto-select matching chip
+                  const ext=f.name.split('.').pop().toLowerCase();
+                  const match=FILE_TYPES.find(t=>t.ext.includes(ext));
+                  if(match){setActiveFilter(match.label);setFilterInfo(match);}
+                }
+              }}
+              style={{border:`2px dashed ${file?YEAR_COLORS[year]+'80':'var(--border)'}`,
+                borderRadius:12,padding:'28px 20px',textAlign:'center',cursor:'pointer',
+                background:file?YEAR_BG[year]:'var(--input-bg)',
+                transition:'border-color .15s,background .15s',marginBottom:8}}
             >
               {file?(
-                <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:10}}>
-                  <span style={{fontSize:28}}>{fileType?.icon||'📄'}</span>
-                  <div style={{textAlign:'left'}}>
-                    <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{file.name}</div>
-                    <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{(file.size/1024).toFixed(1)} KB · {fileType?.label||'File'}</div>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:12}}>
+                  <div style={{width:44,height:44,borderRadius:10,
+                    background:`${fileType?.color||'#4f9cf9'}15`,
+                    border:`1px solid ${fileType?.color||'#4f9cf9'}30`,
+                    display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0}}>
+                    {fileType?.icon||'📄'}
                   </div>
-                  <button onClick={e=>{e.stopPropagation();setFile(null);}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,marginLeft:8}}>✕</button>
+                  <div style={{textAlign:'left',flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'var(--text)',
+                      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</div>
+                    <div style={{fontSize:11,color:'var(--muted)',marginTop:2,display:'flex',gap:8}}>
+                      <span>{(file.size/1024).toFixed(1)} KB</span>
+                      <span style={{color:fileType?.color||'#4f9cf9',fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>{fileType?.label||'File'}</span>
+                    </div>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();setFile(null);setActiveFilter('All');setFilterInfo(null);}}
+                    style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,flexShrink:0}}>✕</button>
                 </div>
               ):(
                 <>
-                  <div style={{fontSize:32,marginBottom:8}}>📂</div>
-                  <div style={{fontSize:13,color:'var(--text)',fontWeight:500}}>Click to browse or drag & drop</div>
-                  <div style={{fontSize:11,color:'var(--muted)',marginTop:4}}>PDF · Word · PowerPoint · Images · Text · CSV · JSON</div>
+                  <div style={{fontSize:36,marginBottom:10}}>
+                    {activeFilter==='All'?'📂':FILE_TYPES.find(t=>t.label===activeFilter)?.icon||'📂'}
+                  </div>
+                  <div style={{fontSize:13,color:'var(--text)',fontWeight:600,marginBottom:4}}>
+                    {activeFilter==='All'?'Click to browse or drag & drop':
+                     `Select a ${activeFilter} file`}
+                  </div>
+                  <div style={{fontSize:11,color:'var(--muted)'}}>
+                    {activeFilter==='All'
+                      ? FILE_TYPES.map(t=>t.ext[0].toUpperCase()).join(' · ')
+                      : FILE_TYPES.find(t=>t.label===activeFilter)?.ext.map(e=>'.'+e).join(', ')}
+                  </div>
                 </>
               )}
-              <input ref={fileRef} type="file" accept={ALL_ACCEPT} onChange={e=>{const f=e.target.files[0];if(f){setFile(f);setError('');}}} style={{display:'none'}}/>
+              <input ref={fileRef} type="file"
+                accept={activeFilter==='All'?ALL_ACCEPT:(FILE_TYPES.find(t=>t.label===activeFilter)?.accept||ALL_ACCEPT)}
+                onChange={e=>{
+                  const f=e.target.files[0];
+                  if(f){
+                    setFile(f);setError('');
+                    const ext=f.name.split('.').pop().toLowerCase();
+                    const match=FILE_TYPES.find(t=>t.ext.includes(ext));
+                    if(match){setActiveFilter(match.label);setFilterInfo(match);}
+                  }
+                }} style={{display:'none'}}/>
             </div>
-            <div style={{fontSize:11,color:'var(--muted)',marginBottom:4,textAlign:'center'}}>
-              Files are processed by AI to extract course content automatically.
+            <div style={{fontSize:11,color:'var(--muted)',textAlign:'center',marginBottom:2}}>
+              AI extracts course content automatically · Tap a format chip above to filter
             </div>
           </div>
         )}
@@ -3480,35 +3613,75 @@ function StatusChangesTab({reviewerUsername}){
   );
 }
 
+/* ═══════════════ COURSE CARD (memoised) ═══════════════ */
+const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect}){
+  const accent=YEAR_COLORS[c.year]||CARD_ACCENTS[i%CARD_ACCENTS.length];
+  return(
+    <div className={`stagger-${Math.min(i%4+1,4)}`}
+      onClick={()=>onSelect(c.id)}
+      style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'18px 20px',
+        cursor:'pointer',transition:'transform .18s,box-shadow .18s',
+        borderTop:`3px solid ${accent}`,position:'relative',boxShadow:'none'}}
+      onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-3px)';e.currentTarget.style.boxShadow='0 8px 24px rgba(0,0,0,.2)';}}
+      onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='none';}}>
+      <div style={{position:'absolute',top:12,right:12,display:'flex',gap:6,alignItems:'center'}}>
+        {viewed&&<div style={{width:7,height:7,borderRadius:'50%',background:'#7fda96'}} title="Visited"/>}
+        {bookmarked&&<span style={{fontSize:12}}>🔖</span>}
+      </div>
+      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:accent,letterSpacing:2,textTransform:'uppercase',marginBottom:4,display:'flex',alignItems:'center',gap:6}}>
+        {c.courseName} · SEM {c.semester}
+        <span style={{background:`${DEPT_COLOR[c.department]||'#4f9cf9'}18`,color:DEPT_COLOR[c.department]||'#4f9cf9',borderRadius:4,padding:'1px 6px',fontSize:8,letterSpacing:1}}>{DEPT_SHORT[c.department]||'CS'}</span>
+      </div>
+      <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:'var(--text)',marginBottom:11,lineHeight:1.3,paddingRight:30}}>{c.chapterTitle}</div>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+        <Tag color={accent}>{c.conceptCount} concepts</Tag>
+        <Tag color={accent}>{c.termCount} terms</Tag>
+        <Tag color={accent}>{c.qCount} Q&A</Tag>
+      </div>
+      {!isPriv&&<ProgressBar pct={pct} color={accent}/>}
+      <div style={{marginTop:9,fontSize:10,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace"}}>Added {c.addedAt}</div>
+    </div>
+  );
+});
+
 /* ═══════════════ HOME ═══════════════ */
 function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme}){
   const isExternal=user.role===ROLE.EXTERNAL;
   const[activeYear,setActiveYear]=useState(isExternal?'all':(user.year||1));
   const[activeSemester,setActiveSemester]=useState(1);
   const[activeDept,setActiveDept]=useState('all');
-  const[search,setSearch]=useState('');const[showBookmarks,setShowBookmarks]=useState(false);
+  const[searchRaw,setSearchRaw]=useState('');
+  const[search,setSearch]=useState('');
+  const[showBookmarks,setShowBookmarks]=useState(false);
   const[showStatusModal,setShowStatusModal]=useState(false);
   const[showPWADebug,setShowPWADebug]=useState(false);
   const nativePrompt=usePWAPrompt();
   const[statusMsg,setStatusMsg]=useState('');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
 
-  const visible=courses.filter(c=>{
+  // Debounce search — input feels instant, filtering only runs after 150ms pause
+  useEffect(()=>{
+    const t=setTimeout(()=>setSearch(searchRaw),150);
+    return()=>clearTimeout(t);
+  },[searchRaw]);
+
+  const visible=useMemo(()=>courses.filter(c=>{
     const matchYear=activeYear==='all'||c.year===activeYear;
     const matchSem=activeYear==='all'||c.semester===activeSemester;
     const matchDept=activeDept==='all'||c.department===activeDept;
-    const matchSearch=!search||c.chapterTitle.toLowerCase().includes(search.toLowerCase())||c.courseName.toLowerCase().includes(search.toLowerCase());
+    const lq=search.toLowerCase();
+    const matchSearch=!search||c.chapterTitle.toLowerCase().includes(lq)||c.courseName.toLowerCase().includes(lq);
     return matchYear&&matchSem&&matchDept&&matchSearch;
-  });
+  }),[courses,activeYear,activeSemester,activeDept,search]);
 
-  const semCount=s=>courses.filter(c=>(activeYear==='all'||c.year===activeYear)&&c.semester===s).length;
-  const deptCount=d=>courses.filter(c=>(activeYear==='all'||c.year===activeYear)&&(activeYear==='all'||c.semester===activeSemester)&&(d==='all'||c.department===d)).length;
+  const semCount=useCallback(s=>courses.filter(c=>(activeYear==='all'||c.year===activeYear)&&c.semester===s).length,[courses,activeYear]);
+  const deptCount=useCallback(d=>courses.filter(c=>(activeYear==='all'||c.year===activeYear)&&(activeYear==='all'||c.semester===activeSemester)&&(d==='all'||c.department===d)).length,[courses,activeYear,activeSemester]);
 
-  const bookmarkedCourses=courses.filter(c=>bookmarks.includes(c.id));
-  const pct=id=>{const cp=progress[id];const m=courses.find(c=>c.id===id);if(!cp||!m||m.qCount===0)return 0;return Math.round((cp.openedQs?.length||0)/m.qCount*100);};
-  const yearStat=y=>{const yc=courses.filter(c=>c.year===y);if(!yc.length)return null;return `${yc.filter(c=>progress[c.id]?.viewed).length}/${yc.length} started`;};
+  const bookmarkedCourses=useMemo(()=>courses.filter(c=>bookmarks.includes(c.id)),[courses,bookmarks]);
+  const pct=useCallback(id=>{const cp=progress[id];const m=courses.find(c=>c.id===id);if(!cp||!m||m.qCount===0)return 0;return Math.round((cp.openedQs?.length||0)/m.qCount*100);},[progress,courses]);
+  const yearStat=useCallback(y=>{const yc=courses.filter(c=>c.year===y);if(!yc.length)return null;return `${yc.filter(c=>progress[c.id]?.viewed).length}/${yc.length} started`;},[courses,progress]);
 
-  const selectYear=y=>{setActiveYear(y);setActiveSemester(1);setActiveDept('all');setSearch('');};
+  const selectYear=useCallback(y=>{setActiveYear(y);setActiveSemester(1);setActiveDept('all');setSearch('');setSearchRaw('');},[]);
 
   return(
     <div className="home-page" style={{maxWidth:990,margin:'0 auto',padding:'34px 20px 88px'}}>
@@ -3530,12 +3703,12 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
             </div>
           </div>
         </div>
+
+        {/* Right side — ordered: theme | install | bookmarks | change status | panel | sign out | 🔔 */}
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',flexShrink:0}}>
           <ThemeToggle dark={dark} toggle={toggleTheme}/>
-          {!user.isGuest&&<NotificationBell user={user} courses={courses}/>}
-          {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 14px',fontSize:13}}>🔖 {bookmarks.length}</button>}
 
-          {/* Install button — always visible when not installed, uses shared nativePrompt */}
+          {/* Install App */}
           {!window.matchMedia('(display-mode: standalone)').matches&&!window.navigator.standalone&&nativePrompt&&(
             <button onClick={async()=>{
               if(!nativePrompt)return;
@@ -3548,16 +3721,26 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
             </button>
           )}
 
-          {/* Status change — only for regular users/external, not guests/admins */}
+          {/* Bookmarks */}
+          {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:13,display:'flex',alignItems:'center',gap:5}}>🔖<span className="hide-xs">{bookmarks.length}</span></button>}
+
+          {/* Change Status */}
           {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(
             <button onClick={()=>setShowStatusModal(true)} title="Request account status change" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
-              🔄 Change Status
+              🔄 <span className="hide-xs">Change Status</span>
             </button>
           )}
-          {isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Panel':'⚙ Panel'}</button>}
-          <button onClick={onLogout} style={{background:user.isGuest?'#4f9cf9':'none',border:user.isGuest?'none':'1px solid var(--border)',borderRadius:8,color:user.isGuest?'#000':'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:user.isGuest?700:400}}>
-            {user.isGuest?'Sign In / Sign Up':'Sign Out'}
+
+          {/* Admin Panel */}
+          {isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Panel':'⚙ Panel'}</button>}
+
+          {/* Sign Out */}
+          <button onClick={onLogout} title={user.isGuest?'Sign In':'Sign Out'} style={{background:user.isGuest?'#4f9cf9':'none',border:user.isGuest?'none':'1px solid var(--border)',borderRadius:8,color:user.isGuest?'#000':'var(--muted)',cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:user.isGuest?700:400}}>
+            {user.isGuest?'Sign In':'Sign Out'}
           </button>
+
+          {/* 🔔 Bell — always far right */}
+          {!user.isGuest&&<NotificationBell user={user} courses={courses}/>}
         </div>
       </div>
 
@@ -3627,8 +3810,8 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       {/* Search */}
       <div className="stagger-3" style={{marginBottom:16}}>
         <div style={{position:'relative'}}>
-          <SearchBar value={search} onChange={setSearch} placeholder={activeYear==='all'?`Search all courses…`:`Search Year ${activeYear} Sem ${activeSemester}${activeDept!=='all'?' · '+DEPT_SHORT[activeDept]:''} courses…`}/>
-          {!search&&<div className="kbd-hint" style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:4,padding:'1px 6px',pointerEvents:'none'}}>Press /</div>}
+          <SearchBar value={searchRaw} onChange={setSearchRaw} placeholder={activeYear==='all'?`Search all courses…`:`Search Year ${activeYear} Sem ${activeSemester}${activeDept!=='all'?' · '+DEPT_SHORT[activeDept]:''} courses…`}/>
+          {!searchRaw&&<div className="kbd-hint" style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:4,padding:'1px 6px',pointerEvents:'none'}}>Press /</div>}
         </div>
       </div>
 
@@ -3659,32 +3842,11 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         </div>
       ):(
         <div className="course-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(278px,1fr))',gap:14,marginTop:16}}>
-          {visible.map((c,i)=>{
-            const accent=YEAR_COLORS[c.year]||CARD_ACCENTS[i%CARD_ACCENTS.length];
-            const p=pct(c.id);const viewed=progress[c.id]?.viewed;const bm=bookmarks.includes(c.id);
-            return(
-              <div key={c.id} className={`stagger-${Math.min(i%4+1,4)}`} onClick={()=>onSelectCourse(c.id)} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'18px 20px',cursor:'pointer',transition:'transform .18s, box-shadow .18s',borderTop:`3px solid ${accent}`,position:'relative',boxShadow:'none'}}
-                onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-3px)';e.currentTarget.style.boxShadow='0 8px 24px rgba(0,0,0,.2)';}}
-                onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='none';}}>
-                <div style={{position:'absolute',top:12,right:12,display:'flex',gap:6,alignItems:'center'}}>
-                  {viewed&&<div style={{width:7,height:7,borderRadius:'50%',background:'#7fda96'}} title="Visited"/>}
-                  {bm&&<span style={{fontSize:12}}>🔖</span>}
-                </div>
-                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:accent,letterSpacing:2,textTransform:'uppercase',marginBottom:4,display:'flex',alignItems:'center',gap:6}}>
-                  {c.courseName} · SEM {c.semester}
-                  <span style={{background:`${DEPT_COLOR[c.department]||'#4f9cf9'}18`,color:DEPT_COLOR[c.department]||'#4f9cf9',borderRadius:4,padding:'1px 6px',fontSize:8,letterSpacing:1}}>{DEPT_SHORT[c.department]||'CS'}</span>
-                </div>
-                <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:'var(--text)',marginBottom:11,lineHeight:1.3,paddingRight:30}}>{c.chapterTitle}</div>
-                <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
-                  <Tag color={accent}>{c.conceptCount} concepts</Tag>
-                  <Tag color={accent}>{c.termCount} terms</Tag>
-                  <Tag color={accent}>{c.qCount} Q&A</Tag>
-                </div>
-                {!isPriv&&<ProgressBar pct={p} color={accent}/>}
-                <div style={{marginTop:9,fontSize:10,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace"}}>Added {c.addedAt}</div>
-              </div>
-            );
-          })}
+          {visible.map((c,i)=>(
+            <CourseCard key={c.id} course={c} index={i} pct={pct(c.id)}
+              viewed={!!progress[c.id]?.viewed} bookmarked={bookmarks.includes(c.id)}
+              isPriv={isPriv} onSelect={onSelectCourse}/>
+          ))}
         </div>
       )}
     </div>
@@ -3959,7 +4121,7 @@ export default function App(){
   },[online,user?.username,user?.role]);
 
   // ── Auth handlers ─────────────────────────────────────────────────────
-  const handleLogin=async u=>{
+  const handleLogin=useCallback(async u=>{
     setUser(u);
     saveSession(u);
     if(u.role===ROLE.USER&&!u.isGuest){
@@ -3968,21 +4130,19 @@ export default function App(){
     }
     if(u.isNew) setShowWelcome(true);
     setView('home');
-  };
+  },[]);
 
-  const handleGuest=()=>{
-    const g={username:'guest',displayName:'Guest',role:ROLE.USER,isGuest:true,year:1};
-    setUser(g);
-    // don't save guest to localStorage
+  const handleGuest=useCallback(()=>{
+    setUser({username:'guest',displayName:'Guest',role:ROLE.USER,isGuest:true,year:1});
     setView('home');
-  };
+  },[]);
 
-  const handleLogout=()=>{
+  const handleLogout=useCallback(()=>{
     clearSession();
     setUser(null);setProgress({});setActive(null);setView('auth');
-  };
+  },[]);
 
-  const handleSelect=async id=>{
+  const handleSelect=useCallback(async id=>{
     setLoading(true);
     let data=null,year=null,semester=1,department='Computer Science';
     try{
@@ -3994,15 +4154,15 @@ export default function App(){
     }
     if(data){setActive({id,data,year,semester,department});setView('course');}
     setLoading(false);
-  };
+  },[courses]);
 
-  const handleProgress=async p=>{
+  const handleProgress=useCallback(async p=>{
     setProgress(p);
     if(user?.role===ROLE.USER&&!user?.isGuest)
       await dbSaveProgress(user.username,p).catch(()=>{});
-  };
+  },[user?.username,user?.role,user?.isGuest]);
 
-  const goToSignUp=()=>{clearSession();setUser(null);setProgress({});setActive(null);setView('auth');};
+  const goToSignUp=useCallback(()=>{clearSession();setUser(null);setProgress({});setActive(null);setView('auth');},[]);
 
   return(
     <>
