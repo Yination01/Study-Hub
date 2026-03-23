@@ -698,7 +698,7 @@ function InstallPrompt(){
         <span style={{fontSize:18}}>✅</span>
         <div>
           <div style={{fontSize:13,fontWeight:700,color:'#0d2010'}}>StudyHub installed!</div>
-          <div style={{fontSize:11,color:'rgba(0,0,0,.6)'}}>Open it from your home screen</div>
+          <div style={{fontSize:11,color:'rgba(0,0,0,.65)'}}>Check your home screen or app drawer</div>
         </div>
       </>}
       {status==='failed' && <>
