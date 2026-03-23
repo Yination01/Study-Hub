@@ -2,41 +2,36 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- viewport-fit=cover is essential for iPhone notch safe areas -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 
-    <!-- ── PWA core ── -->
+    <!-- PWA core -->
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#0d0f14" />
 
-    <!-- ── Android Chrome ── -->
+    <!-- Android -->
     <meta name="mobile-web-app-capable" content="yes" />
 
-    <!-- ── iOS Safari (Apple) ── -->
+    <!-- iOS Safari -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="StudyHub" />
 
-    <!-- ── iOS home screen icons
-         Apple ignores the manifest icons — these link tags are required ── -->
+    <!-- iOS home screen icons (Safari ignores manifest icons entirely) -->
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png" />
 
-    <!-- ── Favicon ── -->
+    <!-- Favicon -->
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
 
-    <!-- ── iOS splash screen background colour while app loads ── -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-
-    <!-- ── General meta ── -->
+    <!-- General -->
     <title>StudyHub</title>
     <meta name="description" content="AI-powered course companion. © 2025 Yination &amp; Excalibur." />
     <meta name="application-name" content="StudyHub" />
     <meta name="robots" content="noindex, nofollow" />
 
-    <!-- ── Open Graph ── -->
+    <!-- Open Graph -->
     <meta property="og:title" content="StudyHub" />
     <meta property="og:description" content="AI-powered course companion" />
     <meta property="og:type" content="website" />
