@@ -161,8 +161,7 @@ const css = `
     .chatbot-panel{right:0!important;left:0!important;width:100%!important;bottom:52px!important;border-radius:14px 14px 0 0!important;max-height:60vh!important}
     .chatbot-btn{right:12px!important;bottom:60px!important}
 
-    /* Notification dropdown */
-    .notif-dropdown{right:-10px!important;width:calc(100vw - 20px)!important;max-width:none!important}
+    /* Notification dropdown handled by position:fixed inline */
 
     /* Cards */
     .modal-inner{padding:20px 16px!important;border-radius:14px!important}
@@ -1974,13 +1973,14 @@ function NotificationBell({user,courses}){
   const[notifs,setNotifs]=useState({items:[],unseenCount:0,seen:new Set()});
   const[permState,requestPerm]=useNotificationPermission();
   const[showPermBanner,setShowPermBanner]=useState(false);
+  const[askingPerm,setAskingPerm]=useState(false); // blocks outside-click while dialog is open
   const bellRef=useRef();
+  const dropRef=useRef();
 
   const load=useCallback(async()=>{
     if(!user||user.isGuest)return;
     const n=await dbLoadNotifications(user.username);
     setNotifs(n);
-    // Show permission banner once if not asked yet
     if(permState==='default'&&!localStorage.getItem('sh-notif-asked')&&n.unseenCount>0){
       setShowPermBanner(true);
     }
@@ -1989,11 +1989,22 @@ function NotificationBell({user,courses}){
   useEffect(()=>{load();},[]);
   useEffect(()=>{if(open)load();},[open]);
 
-  // Close on outside click
+  // Close on outside click — but NOT while the permission dialog is open
   useEffect(()=>{
-    const h=e=>{if(bellRef.current&&!bellRef.current.contains(e.target))setOpen(false);};
-    document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h);
-  },[]);
+    const h=e=>{
+      if(askingPerm) return; // system permission dialog is showing — don't close
+      if(bellRef.current&&!bellRef.current.contains(e.target)&&
+         dropRef.current&&!dropRef.current.contains(e.target)){
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown',h);
+    document.addEventListener('touchstart',h,{passive:true});
+    return()=>{
+      document.removeEventListener('mousedown',h);
+      document.removeEventListener('touchstart',h);
+    };
+  },[askingPerm]);
 
   const markAllSeen=async()=>{
     const unseen=notifs.items.filter(i=>!notifs.seen.has(i.id));
@@ -2003,10 +2014,19 @@ function NotificationBell({user,courses}){
 
   const handleOpen=()=>{setOpen(o=>!o);if(!open)markAllSeen();};
 
-  const askPermission=async()=>{
-    const result=await requestPerm();
-    setShowPermBanner(false);
-    if(result==='granted') pushNotification('🔔 Notifications enabled','You\'ll now get alerts for new assignments and announcements on StudyHub.');
+  const askPermission=async(e)=>{
+    e?.stopPropagation(); // prevent click bubbling to outside handler
+    setAskingPerm(true);
+    try{
+      const result=await requestPerm();
+      setShowPermBanner(false);
+      localStorage.setItem('sh-notif-asked','1');
+      if(result==='granted'){
+        pushNotification('🔔 Notifications enabled','You\'ll get alerts for new assignments and announcements.');
+      }
+    }finally{
+      setAskingPerm(false);
+    }
   };
 
   const courseMap=Object.fromEntries((courses||[]).map(c=>[c.id,c.courseName||c.chapterTitle]));
@@ -2014,51 +2034,107 @@ function NotificationBell({user,courses}){
 
   return(
     <div ref={bellRef} style={{position:'relative'}} className="no-print">
-      {/* Permission banner */}
+
+      {/* Permission banner — fixed, centred, above everything */}
       {showPermBanner&&(
-        <div className="slide-down" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid rgba(249,168,79,.3)',borderRadius:12,padding:'13px 18px',display:'flex',alignItems:'center',gap:12,zIndex:700,boxShadow:'var(--shadow)',maxWidth:420,width:'calc(100% - 32px)'}}>
-          <span style={{fontSize:24}}>🔔</span>
-          <div style={{flex:1}}>
+        <div className="slide-down" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',
+          background:'var(--card)',border:'1px solid rgba(249,168,79,.35)',borderRadius:13,
+          padding:'13px 18px',display:'flex',alignItems:'center',gap:12,
+          zIndex:9800,boxShadow:'var(--shadow)',maxWidth:400,width:'calc(100% - 32px)'}}>
+          <span style={{fontSize:24,flexShrink:0}}>🔔</span>
+          <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:2}}>Enable notifications?</div>
-            <div style={{fontSize:11,color:'var(--muted)'}}>Get alerts for new assignments, CAs, and announcements.</div>
+            <div style={{fontSize:11,color:'var(--muted)',lineHeight:1.4}}>Get alerts for assignments, CAs and announcements.</div>
           </div>
-          <button onClick={askPermission} style={{background:'#f9a84f',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'6px 13px',fontSize:12,fontWeight:700,flexShrink:0}}>Enable</button>
-          <button onClick={()=>{setShowPermBanner(false);localStorage.setItem('sh-notif-asked','1');}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'2px'}}>✕</button>
+          <button onClick={e=>askPermission(e)}
+            style={{background:'#f9a84f',border:'none',borderRadius:7,color:'#000',
+              cursor:'pointer',padding:'7px 14px',fontSize:12,fontWeight:700,flexShrink:0,minHeight:36}}>
+            {askingPerm?'…':'Enable'}
+          </button>
+          <button onClick={e=>{e.stopPropagation();setShowPermBanner(false);localStorage.setItem('sh-notif-asked','1');}}
+            style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'4px',lineHeight:1,flexShrink:0}}>✕</button>
         </div>
       )}
 
       {/* Bell button */}
-      <button onClick={handleOpen} style={{position:'relative',background:open?'rgba(249,168,79,.12)':'var(--surface)',border:`1px solid ${open?'rgba(249,168,79,.4)':'var(--border)'}`,borderRadius:10,color:open?'#f9a84f':'var(--text)',cursor:'pointer',padding:'8px 11px',fontSize:18,display:'flex',alignItems:'center',gap:0}}>
+      <button onClick={handleOpen}
+        style={{position:'relative',background:open?'rgba(249,168,79,.12)':'var(--surface)',
+          border:`1px solid ${open?'rgba(249,168,79,.4)':'var(--border)'}`,
+          borderRadius:10,color:open?'#f9a84f':'var(--text)',cursor:'pointer',
+          padding:'8px 11px',fontSize:18,display:'flex',alignItems:'center',minHeight:40,minWidth:40,justifyContent:'center'}}>
         🔔
         {count>0&&(
-          <span style={{position:'absolute',top:-4,right:-4,background:'#f05050',color:'#fff',borderRadius:'50%',width:17,height:17,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,border:'2px solid var(--bg)'}}>{count>9?'9+':count}</span>
+          <span style={{position:'absolute',top:-4,right:-4,background:'#f05050',color:'#fff',
+            borderRadius:'50%',width:17,height:17,display:'flex',alignItems:'center',justifyContent:'center',
+            fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
+            border:'2px solid var(--bg)'}}>{count>9?'9+':count}</span>
         )}
       </button>
 
-      {/* Dropdown */}
+      {/* Dropdown — fixed on mobile, stays in viewport */}
       {open&&(
-        <div className="scale-in notif-dropdown" style={{position:'absolute',top:'calc(100% + 10px)',right:0,width:360,maxHeight:480,background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,boxShadow:'var(--shadow)',zIndex:500,display:'flex',flexDirection:'column',overflow:'hidden'}}>
-          <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--surface)'}}>
+        <div ref={dropRef} className="scale-in" style={{
+          position:'fixed',
+          /* Anchor to right edge of viewport, with 10px gap */
+          right:10,
+          /* Position below the topbar — 72px covers most topbars */
+          top:72,
+          width:'min(360px, calc(100vw - 20px))',
+          maxHeight:'calc(100vh - 90px)',
+          background:'var(--card)',border:'1px solid var(--border)',
+          borderRadius:14,boxShadow:'0 8px 32px rgba(0,0,0,.4)',
+          zIndex:9700,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+
+          {/* Header */}
+          <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',
+            display:'flex',alignItems:'center',justifyContent:'space-between',
+            background:'var(--surface)',flexShrink:0}}>
             <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--text)',letterSpacing:1,fontWeight:600}}>🔔 NOTIFICATIONS</div>
             <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              {permState==='default'&&<button onClick={askPermission} style={{background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.3)',borderRadius:5,color:'#f9a84f',cursor:'pointer',padding:'3px 8px',fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>Enable Push</button>}
-              {permState==='granted'&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',letterSpacing:1}}>✓ Push on</span>}
-              {permState==='denied'&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:1}}>Push blocked</span>}
+              {permState==='default'&&(
+                <button onClick={e=>askPermission(e)}
+                  style={{background:'rgba(249,168,79,.12)',border:'1px solid rgba(249,168,79,.35)',
+                    borderRadius:6,color:'#f9a84f',cursor:'pointer',padding:'4px 10px',
+                    fontSize:11,fontWeight:600,minHeight:30}}>
+                  {askingPerm?'Asking…':'🔔 Enable Push'}
+                </button>
+              )}
+              {permState==='granted'&&(
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',letterSpacing:1}}>✓ Push on</span>
+              )}
+              {permState==='denied'&&(
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#f05050',letterSpacing:1}}>Push blocked in settings</span>
+              )}
+              <button onClick={()=>setOpen(false)}
+                style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,lineHeight:1,padding:'2px 4px'}}>✕</button>
             </div>
           </div>
+
+          {/* Items */}
           <div style={{overflowY:'auto',flex:1}}>
-            {notifs.items.length===0&&<div style={{padding:30,textAlign:'center',color:'var(--muted)',fontSize:13}}>No notifications yet.</div>}
+            {notifs.items.length===0&&(
+              <div style={{padding:30,textAlign:'center',color:'var(--muted)',fontSize:13}}>
+                <div style={{fontSize:28,marginBottom:8}}>🔕</div>
+                No notifications yet
+              </div>
+            )}
             {notifs.items.map((n,i)=>{
               const p=PRIORITY[n.priority]||PRIORITY.info;
               const unseen=!notifs.seen.has(n.id);
               return(
-                <div key={n.id} style={{padding:'11px 16px',borderBottom:'1px solid var(--border)',display:'flex',gap:10,alignItems:'flex-start',background:unseen?`${p.color}08`:'transparent'}}>
-                  {unseen&&<div style={{width:6,height:6,borderRadius:'50%',background:p.color,flexShrink:0,marginTop:5}}/>}
+                <div key={n.id} style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',
+                  display:'flex',gap:10,alignItems:'flex-start',
+                  background:unseen?`${p.color}08`:'transparent'}}>
+                  {unseen&&<div style={{width:6,height:6,borderRadius:'50%',background:p.color,flexShrink:0,marginTop:6}}/>}
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:unseen?600:400,color:'var(--text)',marginBottom:2,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                    <div style={{fontSize:13,fontWeight:unseen?600:400,color:'var(--text)',
+                      marginBottom:3,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                       <span>{p.icon}</span>
-                      <span>{n.title}</span>
-                      {n.priority==='urgent'&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:'rgba(240,80,80,.15)',color:'#f05050',borderRadius:3,padding:'1px 5px'}}>URGENT</span>}
+                      <span style={{wordBreak:'break-word'}}>{n.title}</span>
+                      {n.priority==='urgent'&&(
+                        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,
+                          background:'rgba(240,80,80,.15)',color:'#f05050',borderRadius:3,padding:'1px 5px'}}>URGENT</span>
+                      )}
                     </div>
                     {n.body&&<div style={{fontSize:11,color:'var(--muted)',lineHeight:1.5,marginBottom:3}}>{n.body}</div>}
                     <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',display:'flex',gap:8,flexWrap:'wrap'}}>
