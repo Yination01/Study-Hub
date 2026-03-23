@@ -2144,7 +2144,7 @@ function AnnouncementsTab({courseId,user,onNew}){
 }
 
 /* ═══════════════ NOTIFICATION BELL ═══════════════ */
-function NotificationBell({user,courses}){
+function NotificationBell({user,courses,onNavigate}){
   const[open,setOpen]=useState(false);
   const[notifs,setNotifs]=useState({items:[],unseenCount:0,seen:new Set()});
   const[permState,requestPerm]=useNotificationPermission();
@@ -2247,82 +2247,143 @@ function NotificationBell({user,courses}){
         )}
       </button>
 
-      {/* Dropdown — fixed on mobile, stays in viewport */}
+      {/* Full-screen backdrop + panel */}
       {open&&(
-        <div ref={dropRef} className="scale-in" style={{
-          position:'fixed',
-          /* Anchor to right edge of viewport, with 10px gap */
-          right:10,
-          /* Position below the topbar — 72px covers most topbars */
-          top:72,
-          width:'min(360px, calc(100vw - 20px))',
-          maxHeight:'calc(100vh - 90px)',
-          background:'var(--card)',border:'1px solid var(--border)',
-          borderRadius:14,boxShadow:'0 8px 32px rgba(0,0,0,.4)',
-          zIndex:9999,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+        <>
+          {/* Backdrop — dims everything behind, closes on tap */}
+          <div onClick={()=>setOpen(false)} style={{
+            position:'fixed',inset:0,
+            background:'rgba(0,0,0,.55)',
+            backdropFilter:'blur(2px)',
+            zIndex:9998,
+          }}/>
 
-          {/* Header */}
-          <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',
-            display:'flex',alignItems:'center',justifyContent:'space-between',
-            background:'var(--surface)',flexShrink:0}}>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--text)',letterSpacing:1,fontWeight:600}}>🔔 NOTIFICATIONS</div>
-            <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              {permState==='default'&&(
-                <button onClick={e=>askPermission(e)}
-                  style={{background:'rgba(249,168,79,.12)',border:'1px solid rgba(249,168,79,.35)',
-                    borderRadius:6,color:'#f9a84f',cursor:'pointer',padding:'4px 10px',
-                    fontSize:11,fontWeight:600,minHeight:30}}>
-                  {askingPerm?'Asking…':'🔔 Enable Push'}
-                </button>
-              )}
-              {permState==='granted'&&(
-                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',letterSpacing:1}}>✓ Push on</span>
-              )}
-              {permState==='denied'&&(
-                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#f05050',letterSpacing:1}}>Push blocked in settings</span>
-              )}
-              <button onClick={()=>setOpen(false)}
-                style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,lineHeight:1,padding:'2px 4px'}}>✕</button>
-            </div>
-          </div>
+          {/* Panel — bottom sheet on mobile, dropdown on desktop */}
+          <div ref={dropRef} style={{
+            position:'fixed',
+            /* Mobile: full-width bottom sheet */
+            bottom:0, left:0, right:0,
+            /* Desktop: dropdown from top-right */
+            maxWidth:'min(420px, 100vw)',
+            marginLeft:'auto',
+            /* On desktop push it below topbar */
+            maxHeight:'80vh',
+            background:'var(--card)',
+            border:'1px solid var(--border)',
+            borderRadius:'18px 18px 0 0',
+            boxShadow:'0 -8px 40px rgba(0,0,0,.6)',
+            zIndex:9999,
+            display:'flex',flexDirection:'column',
+            overflow:'hidden',
+            animation:'slideUp .28s cubic-bezier(.4,0,.2,1) both',
+          }}>
+            {/* Handle bar (mobile feel) */}
+            <div style={{width:40,height:4,borderRadius:2,background:'var(--border)',margin:'10px auto 0',flexShrink:0}}/>
 
-          {/* Items */}
-          <div style={{overflowY:'auto',flex:1}}>
-            {notifs.items.length===0&&(
-              <div style={{padding:30,textAlign:'center',color:'var(--muted)',fontSize:13}}>
-                <div style={{fontSize:28,marginBottom:8}}>🔕</div>
-                No notifications yet
+            {/* Header */}
+            <div style={{
+              padding:'12px 18px',
+              borderBottom:'1px solid var(--border)',
+              display:'flex',alignItems:'center',justifyContent:'space-between',
+              background:'var(--surface)',flexShrink:0,marginTop:4,
+            }}>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:'var(--text)',letterSpacing:1,fontWeight:700}}>
+                🔔 NOTIFICATIONS
               </div>
-            )}
-            {notifs.items.map((n,i)=>{
-              const p=PRIORITY[n.priority]||PRIORITY.info;
-              const unseen=!notifs.seen.has(n.id);
-              return(
-                <div key={n.id} style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',
-                  display:'flex',gap:10,alignItems:'flex-start',
-                  background:unseen?`${p.color}08`:'transparent'}}>
-                  {unseen&&<div style={{width:6,height:6,borderRadius:'50%',background:p.color,flexShrink:0,marginTop:6}}/>}
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:unseen?600:400,color:'var(--text)',
-                      marginBottom:3,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                      <span>{p.icon}</span>
-                      <span style={{wordBreak:'break-word'}}>{n.title}</span>
-                      {n.priority==='urgent'&&(
-                        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,
-                          background:'rgba(240,80,80,.15)',color:'#f05050',borderRadius:3,padding:'1px 5px'}}>URGENT</span>
-                      )}
-                    </div>
-                    {n.body&&<div style={{fontSize:11,color:'var(--muted)',lineHeight:1.5,marginBottom:3}}>{n.body}</div>}
-                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',display:'flex',gap:8,flexWrap:'wrap'}}>
-                      {n.courseId&&<span>📚 {courseMap[n.courseId]||n.courseId}</span>}
-                      <span>{new Date(n.time).toLocaleString()}</span>
+              <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                {permState==='default'&&(
+                  <button onClick={e=>askPermission(e)}
+                    style={{background:'rgba(249,168,79,.12)',border:'1px solid rgba(249,168,79,.35)',
+                      borderRadius:7,color:'#f9a84f',cursor:'pointer',padding:'5px 12px',
+                      fontSize:12,fontWeight:700,minHeight:34,display:'flex',alignItems:'center',gap:5}}>
+                    {askingPerm?'Asking…':'🔔 Enable Push'}
+                  </button>
+                )}
+                {permState==='granted'&&(
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',
+                    background:'rgba(127,218,150,.1)',border:'1px solid rgba(127,218,150,.3)',
+                    borderRadius:5,padding:'3px 8px',letterSpacing:1}}>✓ Push on</span>
+                )}
+                {permState==='denied'&&(
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#f05050',letterSpacing:1}}>Push blocked</span>
+                )}
+                <button onClick={()=>setOpen(false)}
+                  style={{background:'var(--surface)',border:'1px solid var(--border)',
+                    borderRadius:'50%',color:'var(--muted)',cursor:'pointer',
+                    width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',
+                    fontSize:16,flexShrink:0}}>✕</button>
+              </div>
+            </div>
+
+            {/* Items list */}
+            <div style={{overflowY:'auto',flex:1,paddingBottom:'env(safe-area-inset-bottom,12px)'}}>
+              {notifs.items.length===0&&(
+                <div style={{padding:'40px 20px',textAlign:'center',color:'var(--muted)',fontSize:13}}>
+                  <div style={{fontSize:36,marginBottom:10}}>🔕</div>
+                  <div style={{fontWeight:600,marginBottom:4}}>No notifications yet</div>
+                  <div style={{fontSize:11}}>New assignments, CAs and announcements will appear here</div>
+                </div>
+              )}
+              {notifs.items.map((n,i)=>{
+                const p=PRIORITY[n.priority]||PRIORITY.info;
+                const unseen=!notifs.seen.has(n.id);
+                // Map notification type to the tab it should open
+                const targetTab = n.type==='assignment'?'assignments'
+                  : n.type==='ca'?'ca'
+                  : n.type==='announcement'?'announcements'
+                  : null;
+                const isClickable = !!(n.courseId && onNavigate);
+                const handleClick = ()=>{
+                  if(!isClickable) return;
+                  setOpen(false);
+                  onNavigate(n.courseId, targetTab);
+                };
+                return(
+                  <div key={n.id}
+                    onClick={handleClick}
+                    style={{
+                      padding:'14px 18px',
+                      borderBottom:'1px solid var(--border)',
+                      display:'flex',gap:12,alignItems:'flex-start',
+                      background:unseen?`${p.color}08`:'transparent',
+                      cursor:isClickable?'pointer':'default',
+                      transition:'background .15s',
+                    }}
+                    onMouseEnter={e=>isClickable&&(e.currentTarget.style.background=`${p.color}15`)}
+                    onMouseLeave={e=>(e.currentTarget.style.background=unseen?`${p.color}08`:'transparent')}
+                  >
+                    {/* Priority colour strip */}
+                    <div style={{width:3,alignSelf:'stretch',borderRadius:2,
+                      background:unseen?p.color:'transparent',flexShrink:0,minHeight:20}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:unseen?700:400,color:'var(--text)',
+                        marginBottom:4,display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'}}>
+                        <span>{p.icon}</span>
+                        <span style={{wordBreak:'break-word'}}>{n.title}</span>
+                        {n.priority==='urgent'&&(
+                          <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,
+                            background:'rgba(240,80,80,.15)',color:'#f05050',
+                            borderRadius:3,padding:'2px 6px',fontWeight:700}}>URGENT</span>
+                        )}
+                        {unseen&&<span style={{width:7,height:7,borderRadius:'50%',
+                          background:p.color,display:'inline-block',flexShrink:0}}/>}
+                      </div>
+                      {n.body&&<div style={{fontSize:12.5,color:'var(--text)',opacity:.8,
+                        lineHeight:1.6,marginBottom:5}}>{n.body}</div>}
+                      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,
+                        color:'var(--muted)',display:'flex',gap:10,flexWrap:'wrap',marginTop:2,
+                        alignItems:'center'}}>
+                        {n.courseId&&<span>📚 {courseMap[n.courseId]||n.courseId}</span>}
+                        <span>{new Date(n.time).toLocaleString()}</span>
+                        {isClickable&&<span style={{color:p.color,fontSize:9}}>Tap to open →</span>}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -2357,7 +2418,7 @@ function AssignmentsTab({courseId,user}){
     <div className="fade-up">
       <SectionLabel>Assignments</SectionLabel>
       {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:12}}>{msg}</div>}
-      {!isPriv&&<div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',fontSize:12,color:'var(--muted)',marginBottom:14}}>📋 Assignments posted by your lecturers will appear here.</div>}
+      {!isPriv&&<div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',fontSize:12,color:'var(--muted)',marginBottom:14}}>📋 Assignments posted by admins will appear here.</div>}
       {isPriv&&(
         <button onClick={()=>setShowForm(s=>!s)} style={{background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.25)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600,marginBottom:14}}>
           {showForm?'✕ Cancel':isSU2?'+ Add Assignment':'+ Request Assignment'}
@@ -2663,7 +2724,7 @@ function DefinitionRow({def,isLast}){
 const ALL_TABS=[{id:'announcements',label:'📢 Announcements'},{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
 
 function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses}){
-  const[tab,setTab]=useState('announcements');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
+  const[tab,setTab]=useState(course.initialTab||'announcements');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
   const d=course.data;const cp=progress[course.id]||{viewed:false,openedQs:[]};const isPriv=user.role!==ROLE.USER;
   const isBookmarked=bookmarks.includes(course.id);
 
@@ -3729,7 +3790,18 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   return(
     <div className="home-page" style={{maxWidth:990,margin:'0 auto',padding:'34px 20px 88px'}}>
       {/* Top bar */}
-      <div className="topbar fade-up" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24,gap:10,flexWrap:'wrap'}}>
+      <div className="topbar fade-up" style={{
+        display:'flex',alignItems:'center',justifyContent:'space-between',
+        marginBottom:24,gap:10,flexWrap:'wrap',
+        position:'sticky',top:0,
+        background:'var(--bg)',
+        zIndex:50,
+        padding:'10px 0',
+        marginLeft:-20,marginRight:-20,paddingLeft:20,paddingRight:20,
+        borderBottom:'1px solid var(--border)',
+        backdropFilter:'blur(12px)',
+        WebkitBackdropFilter:'blur(12px)',
+      }}>
         <div style={{display:'flex',alignItems:'center',gap:16}}>
           <Logo onClick={null} size="md"/>
           <div style={{width:1,height:32,background:'var(--border)'}}/>
@@ -3783,7 +3855,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           </button>
 
           {/* 🔔 Bell — always far right */}
-          {!user.isGuest&&<NotificationBell user={user} courses={courses}/>}
+          {!user.isGuest&&<NotificationBell user={user} courses={courses} onNavigate={(courseId,tab)=>{onSelectCourse(courseId,tab);}}/>}
         </div>
       </div>
 
@@ -3878,10 +3950,36 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''}{activeYear==='all'?` · ALL YEARS`:` · YEAR ${activeYear} · SEM ${activeSemester}`}{activeDept!=='all'?` · ${DEPT_SHORT[activeDept]}`:''}{search?` · "${search}"`:''}</Mono>
 
       {visible.length===0?(
-        <div style={{textAlign:'center',padding:'55px 20px',border:'1px dashed var(--border)',borderRadius:16,marginTop:16}}>
-          <div style={{fontSize:34,marginBottom:12}}>📚</div>
-          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>{search?'No courses match your search':activeYear==='all'?'No courses yet':`No Year ${activeYear} Semester ${activeSemester} courses yet`}</div>
-          <p style={{color:'var(--muted)',fontSize:13}}>{search?'Try a different keyword':(isPriv?'Open the panel to add courses.':'Check back later.')}</p>
+        <div style={{textAlign:'center',padding:'50px 24px',border:'1px dashed var(--border)',
+          borderRadius:16,marginTop:16,background:'var(--surface)'}}>
+          <div style={{fontSize:48,marginBottom:14,lineHeight:1}}>
+            {search?'🔍':isPriv?'➕':'📭'}
+          </div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>
+            {search?`No results for "${search}"`
+             :activeYear==='all'?'No courses yet'
+             :`No Year ${activeYear}, Semester ${activeSemester} courses yet`}
+          </div>
+          <p style={{color:'var(--muted)',fontSize:13,lineHeight:1.6,maxWidth:280,margin:'0 auto 16px'}}>
+            {search?'Try a different keyword or clear the search.'
+             :isPriv?'Open the admin panel and add courses for this year and semester.'
+             :'No courses have been added here yet. Check back soon.'}
+          </p>
+          {search&&(
+            <button onClick={()=>{setSearch('');setSearchRaw('');}}
+              style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',
+                borderRadius:8,color:'#4f9cf9',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:600}}>
+              Clear search
+            </button>
+          )}
+          {!search&&isPriv&&(
+            <button onClick={onShowAdmin}
+              style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,
+                borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',
+                padding:'8px 18px',fontSize:13,fontWeight:600}}>
+              {user.role===ROLE.SUPERUSER?'⚡ Open Panel':'⚙ Open Panel'}
+            </button>
+          )}
         </div>
       ):(
         <div className="course-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(278px,1fr))',gap:14,marginTop:16}}>
@@ -4185,7 +4283,7 @@ export default function App(){
     setUser(null);setProgress({});setActive(null);setView('auth');
   },[]);
 
-  const handleSelect=useCallback(async id=>{
+  const handleSelect=useCallback(async(id,initialTab)=>{
     setLoading(true);
     let data=null,year=null,semester=1,department='Computer Science';
     try{
@@ -4195,7 +4293,7 @@ export default function App(){
     }catch{
       try{const c=JSON.parse(localStorage.getItem(CACHE_KEY(id)));data=c?.data;year=c?.year;semester=c?.semester||1;department=c?.department||'Computer Science';}catch{}
     }
-    if(data){setActive({id,data,year,semester,department});setView('course');}
+    if(data){setActive({id,data,year,semester,department,initialTab:initialTab||null});setView('course');}
     setLoading(false);
   },[courses]);
 
