@@ -2239,6 +2239,136 @@ function SettingsTab({onReload}){
   );
 }
 
+/* ═══════════════ USER ROW ═══════════════ */
+function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
+  const[expanded,setExpanded]=useState(false);
+  const[busy,setBusy]=useState('');
+  const[localYear,setLocalYear]=useState(u.year||1);
+  const accentColor=ROLE_COLOR[role]||ROLE_COLOR.user;
+
+  const doRoleChange=async(accountType)=>{
+    setBusy('role');
+    await onRoleChange(accountType);
+    setBusy('');
+  };
+  const doAdminToggle=async()=>{
+    setBusy('admin');
+    await onAdminToggle();
+    setBusy('');
+  };
+  const doYearChange=async(yr)=>{
+    setLocalYear(yr);
+    setBusy('year');
+    await onYearChange(yr);
+    setBusy('');
+  };
+
+  const isExternal=u.account_type==='external';
+
+  return(
+    <div style={{background:'var(--surface)',border:`1px solid ${expanded?accentColor+'40':'var(--border)'}`,borderRadius:10,overflow:'hidden',transition:'border-color .2s'}}>
+      {/* Row summary */}
+      <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',cursor:isSU2?'pointer':'default'}} onClick={()=>isSU2&&setExpanded(e=>!e)}>
+        <Avatar name={u.display_name||u.username}/>
+        <div style={{flex:1,minWidth:130}}>
+          <div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div>
+          <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>
+            @{u.username} · {new Date(u.created_at).toLocaleDateString()}
+          </div>
+        </div>
+        <RolePill role={role} accountType={u.account_type}/>
+        {!isExternal&&u.year>0&&(
+          <div style={{background:YEAR_BG[u.year]||'transparent',border:`1px solid ${YEAR_COLORS[u.year]||'var(--border)'}40`,borderRadius:5,padding:'3px 9px'}}>
+            <Mono color={YEAR_COLORS[u.year]||'var(--muted)'} size={9}>Yr {u.year}</Mono>
+          </div>
+        )}
+        {isAdm&&<Mono color="#da7ff0" size={9}>ADMIN</Mono>}
+        {isSU2&&<span style={{color:'var(--muted)',fontSize:13,marginLeft:'auto'}}>{expanded?'▲':'▼'}</span>}
+      </div>
+
+      {/* Expanded editor — superuser only */}
+      {isSU2&&expanded&&(
+        <div className="fade-in" style={{borderTop:'1px solid var(--border)',padding:'14px 16px',background:'var(--card)',display:'flex',flexDirection:'column',gap:14}}>
+          <Mono color="var(--muted)" size={9}>DIRECT CONTROLS — changes take effect immediately</Mono>
+
+          {/* Account type */}
+          <div>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:7,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>ACCOUNT TYPE</div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {USER_TYPES.map(ut=>{
+                const active=(ut.roleKey==='external'&&isExternal)||(ut.roleKey!=='external'&&!isExternal);
+                return(
+                  <button key={ut.id} onClick={()=>doRoleChange(ut.roleKey==='external'?'external':'student')}
+                    disabled={active||busy==='role'}
+                    style={{padding:'7px 14px',borderRadius:8,cursor:active||busy==='role'?'default':'pointer',border:`1px solid ${active?ut.color+'70':'var(--border)'}`,background:active?`${ut.color}12`:'var(--input-bg)',color:active?ut.color:'var(--muted)',fontWeight:active?700:400,fontSize:12,display:'flex',alignItems:'center',gap:6,opacity:busy==='role'&&!active?.6:1}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:active?`${ut.color}20`:'var(--border)',color:active?ut.color:'var(--muted)',borderRadius:3,padding:'1px 5px'}}>{ut.shortCode}</span>
+                    {ut.label}
+                    {active&&<span style={{fontSize:10,color:ut.color}}>✓</span>}
+                  </button>
+                );
+              })}
+              {busy==='role'&&<Mono color="var(--muted)" size={9}>Updating…</Mono>}
+            </div>
+          </div>
+
+          {/* Admin toggle */}
+          <div>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:7,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>ADMIN PRIVILEGES</div>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              <button onClick={doAdminToggle} disabled={busy==='admin'}
+                style={{padding:'7px 16px',borderRadius:8,cursor:busy==='admin'?'default':'pointer',border:`1px solid ${isAdm?'rgba(240,80,80,.4)':'rgba(218,127,240,.4)'}`,background:isAdm?'rgba(240,80,80,.1)':'rgba(218,127,240,.1)',color:isAdm?'#f05050':'#da7ff0',fontWeight:600,fontSize:12}}>
+                {busy==='admin'?'…':isAdm?'✕ Remove Admin':'🛡 Make Admin'}
+              </button>
+              <span style={{fontSize:11,color:'var(--muted)'}}>{isAdm?'Currently has admin access to the panel':'No admin privileges'}</span>
+            </div>
+          </div>
+
+          {/* Year change — only for non-external */}
+          {!isExternal&&(
+            <div>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:7,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>YEAR LEVEL</div>
+              <div style={{display:'flex',gap:7,alignItems:'center'}}>
+                {YEARS.map(y=>(
+                  <button key={y} onClick={()=>doYearChange(y)} disabled={busy==='year'}
+                    style={{width:42,height:36,borderRadius:7,cursor:busy==='year'?'default':'pointer',border:`1px solid ${localYear===y?YEAR_COLORS[y]+'70':'var(--border)'}`,background:localYear===y?YEAR_BG[y]:'var(--input-bg)',color:localYear===y?YEAR_COLORS[y]:'var(--muted)',fontWeight:localYear===y?700:400,fontSize:13}}>
+                    {y}
+                  </button>
+                ))}
+                {busy==='year'&&<Mono color="var(--muted)" size={9}>Saving…</Mono>}
+              </div>
+            </div>
+          )}
+
+          {/* Status requests for this user */}
+          <div style={{paddingTop:4,borderTop:'1px solid var(--border)'}}>
+            <UserStatusHistory username={u.username}/>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Mini component: shows pending/recent status request for a specific user */
+function UserStatusHistory({username}){
+  const[req,setReq]=useState(null);const[loaded,setLoaded]=useState(false);
+  useEffect(()=>{
+    dbGetPendingStatusRequest(username).then(r=>{setReq(r);setLoaded(true);});
+  },[username]);
+  if(!loaded)return null;
+  if(!req)return<div style={{fontSize:11,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace"}}>No pending status request</div>;
+  return(
+    <div style={{background:'rgba(168,249,79,.06)',border:'1px solid rgba(168,249,79,.2)',borderRadius:7,padding:'9px 13px',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+      <span style={{fontSize:14}}>⏳</span>
+      <div style={{flex:1}}>
+        <div style={{fontSize:12,color:'#a8f94f',fontWeight:600}}>Pending status request</div>
+        <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>{req.from_type} → {req.to_type} · {new Date(req.requested_at).toLocaleString()}</div>
+        {req.reason&&<div style={{fontSize:11,color:'var(--muted)',marginTop:3,fontStyle:'italic'}}>"{req.reason}"</div>}
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════ ADMIN PANEL ═══════════════ */
 function AdminPanel({user,courses,onClose,onCoursesChange}){
   const isSU2=user.role===ROLE.SUPERUSER;
@@ -2356,16 +2486,30 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 
         {tab==='users'&&(
           <div className="fade-up">
+            {isSU2&&<div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:8,padding:'9px 14px',fontSize:12,color:'#f9a84f',marginBottom:14}}>⚡ Superuser: click any field below to change it directly — no approval needed.</div>}
             <div style={{marginBottom:14}}><SearchBar value={search} onChange={setSearch} placeholder="Search users…"/></div>
             <div style={{display:'flex',flexDirection:'column',gap:9}}>
-              {allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).map((u,i)=>{const isAdm=admins.includes(u.username.toLowerCase());return(
-                <div key={i} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-                  <Avatar name={u.display_name||u.username}/>
-                  <div style={{flex:1}}><div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>@{u.username} · Yr {u.year} · {new Date(u.created_at).toLocaleDateString()}</div></div>
-                  <RolePill role={isAdm?ROLE.ADMIN:ROLE.USER} accountType={u.account_type}/>
-                  <div style={{background:YEAR_BG[u.year],border:`1px solid ${YEAR_COLORS[u.year]}40`,borderRadius:5,padding:'3px 9px'}}><Mono color={YEAR_COLORS[u.year]} size={9}>Yr {u.year}</Mono></div>
-                </div>
-              );})}
+              {allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).map((u,i)=>{
+                const isAdm=admins.includes(u.username.toLowerCase());
+                const role=isAdm?ROLE.ADMIN:u.account_type==='external'?ROLE.EXTERNAL:ROLE.USER;
+                return(
+                  <UserRow key={i} u={u} role={role} isAdm={isAdm} isSU2={isSU2}
+                    onRoleChange={async(newAccountType)=>{
+                      await dbApplyStatusChange(u.username,newAccountType);
+                      const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
+                      setAllUsers(users);setAdmins(adms);
+                    }}
+                    onAdminToggle={async()=>{
+                      const next=isAdm?admins.filter(a=>a!==u.username.toLowerCase()):[...admins,u.username.toLowerCase()];
+                      setAdmins(next);await dbSetAdmins(next);
+                    }}
+                    onYearChange={async(yr)=>{
+                      await supabase.from('users').update({year:yr}).eq('username',u.username);
+                      setAllUsers(prev=>prev.map(x=>x.username===u.username?{...x,year:yr}:x));
+                    }}
+                  />
+                );
+              })}
               {allUsers.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12}}>No users yet.</div>}
             </div>
           </div>
