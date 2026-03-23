@@ -13,7 +13,7 @@ import { createClient } from '@supabase/supabase-js';
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '3.8.0';
+const APP_VERSION    = '4.0.0';
 const COPYRIGHT_YEAR = '2025';
 
 const supabase = createClient(
@@ -133,7 +133,18 @@ const css = `
     .topbar{flex-wrap:wrap;gap:10px}
   }
 
-  /* Print / PDF styles */
+  @keyframes slideUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+  .slide-up{animation:slideUp .28s cubic-bezier(.4,0,.2,1) both}
+
+  /* Focus visible — keyboard nav */
+  :focus-visible{outline:2px solid rgba(79,156,249,.6)!important;outline-offset:2px}
+
+  /* Text selection colour */
+  ::selection{background:rgba(79,156,249,.25);color:var(--text)}
+
+  /* Smooth transitions on theme switch */
+  *{transition:background-color .25s,border-color .25s,color .15s}
+  button,input,textarea,select{transition:background-color .25s,border-color .25s,color .15s,transform .1s,box-shadow .15s}
   @media print{
     .no-print{display:none!important}
     body{background:#fff!important;color:#000!important}
@@ -449,7 +460,7 @@ footer{margin-top:30px;border-top:1px solid #ccc;padding-top:10px;font-size:10px
 const Tag=({children,color='#4f9cf9'})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,background:`${color}18`,color,borderRadius:4,padding:'2px 8px',marginRight:5,display:'inline-block'}}>{children}</span>);
 const Mono=({children,color='#4f9cf9',size=10})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:size,color,letterSpacing:2,textTransform:'uppercase'}}>{children}</span>);
 const SectionLabel=({children})=>(<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:3,textTransform:'uppercase',color:'#f9a84f',marginBottom:20,display:'flex',alignItems:'center',gap:10}}>{children}<div style={{flex:1,height:1,background:'var(--border)'}}/></div>);
-const Field=({label,type='text',value,onChange,placeholder,error,disabled})=>(<div style={{marginBottom:14}}>{label&&<div style={{fontSize:11,color:'var(--muted)',marginBottom:5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{label}</div>}<input type={type} value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} style={{width:'100%',background:disabled?'rgba(0,0,0,.2)':'var(--input-bg)',border:`1px solid ${error?'#f05050':'var(--border)'}`,borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>{error&&<div style={{color:'#f05050',fontSize:11,marginTop:4}}>{error}</div>}</div>);
+const Field=({label,type='text',value,onChange,placeholder,error,disabled,onKeyDown})=>(<div style={{marginBottom:14}}>{label&&<div style={{fontSize:11,color:'var(--muted)',marginBottom:5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{label}</div>}<input type={type} value={value} onChange={onChange} onKeyDown={onKeyDown} placeholder={placeholder} disabled={disabled} style={{width:'100%',background:disabled?'rgba(0,0,0,.2)':'var(--input-bg)',border:`1px solid ${error?'#f05050':'var(--border)'}`,borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>{error&&<div style={{color:'#f05050',fontSize:11,marginTop:4}}>{error}</div>}</div>);
 const Avatar=({name,size=32})=>{const ini=name?name.slice(0,2).toUpperCase():'??';const hue=name?name.split('').reduce((a,c)=>a+c.charCodeAt(0),0)%360:200;return<div style={{width:size,height:size,borderRadius:'50%',background:`hsl(${hue},55%,25%)`,border:`2px solid hsl(${hue},55%,45%)`,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'IBM Plex Mono',monospace",fontSize:size*.33,color:`hsl(${hue},80%,80%)`,flexShrink:0}}>{ini}</div>;};
 const RoleBadge=({role,accountType})=>{
   const col=ROLE_COLOR[role]||ROLE_COLOR.user;
@@ -801,7 +812,7 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
           {tab==='signin'?(
             <div className="fade-in">
               <Field label="USERNAME" value={f.username} onChange={e=>set('username',e.target.value)} placeholder="your_username" error={errs.username}/>
-              <Field label="PASSWORD" type="password" value={f.password} onChange={e=>set('password',e.target.value)} placeholder="••••••••" error={errs.password}/>
+              <Field label="PASSWORD" type="password" value={f.password} onChange={e=>set('password',e.target.value)} placeholder="••••••••" error={errs.password} onKeyDown={e=>e.key==='Enter'&&signIn()}/>
               <button onClick={signIn} disabled={loading} style={{width:'100%',background:loading?'var(--border)':'#4f9cf9',border:'none',borderRadius:8,color:loading?'var(--muted)':'#000',cursor:loading?'not-allowed':'pointer',padding:'12px 0',fontSize:14,fontWeight:700,marginTop:4}}>
                 {loading?'Signing in…':'Sign In'}
               </button>
@@ -1639,7 +1650,11 @@ function CommunityBoard({courseId,user}){
   };
 
   const vote=async id=>{if(isGuest)return;await dbUpvote(user.username,id);await load();};
-  const del=async id=>{if(!confirm('Delete this post?'))return;await dbDeletePost(id);await load();};
+  const del=async id=>{
+    const ok=await(window.shConfirm?.({title:'Delete post?',message:'This post will be permanently removed.',danger:true,confirmLabel:'Delete'})??Promise.resolve(window.confirm('Delete this post?')));
+    if(!ok)return;
+    await dbDeletePost(id);await load();
+  };
 
   return(
     <div className="fade-up">
@@ -1771,6 +1786,24 @@ function ResourcesTab({courseId,user}){
 }
 
 /* ═══════════════ COURSE VIEW ═══════════════ */
+/* Definition row with copy-to-clipboard */
+function DefinitionRow({def,isLast}){
+  const[copied,setCopied]=useState(false);
+  const copy=()=>{
+    navigator.clipboard.writeText(`${def.term}: ${def.definition}`);
+    setCopied(true);setTimeout(()=>setCopied(false),1500);
+  };
+  return(
+    <div style={{display:'grid',gridTemplateColumns:'190px 1fr auto',borderBottom:isLast?'none':'1px solid var(--border)',alignItems:'stretch'}} className="fade-in">
+      <div style={{padding:'12px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'#7fda96',background:'var(--surface)',display:'flex',alignItems:'center'}}>{def.term}</div>
+      <div style={{padding:'12px 14px',fontSize:13,color:'var(--text)',lineHeight:1.7}}>{def.definition}</div>
+      <button onClick={copy} title="Copy term and definition" style={{background:'none',border:'none',color:copied?'#7fda96':'var(--muted)',cursor:'pointer',padding:'0 12px',fontSize:13,flexShrink:0,opacity:copied?1:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>!copied&&(e.currentTarget.style.opacity='.5')}>
+        {copied?'✓':'⎘'}
+      </button>
+    </div>
+  );
+}
+
 const ALL_TABS=[{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'announcements',label:'📢 Announcements'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
 
 function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses}){
@@ -1831,7 +1864,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       {/* Tab content */}
       {tab==='concepts'&&<div className="fade-up"><SectionLabel>Key Concepts</SectionLabel><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))',gap:12}}>{(d.keyConcepts||[]).map((c,i)=><div key={i} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'15px 17px',borderLeft:`3px solid ${(COLOR_MAP[c.color]||COLOR_MAP.blue).bar}`}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'var(--text)',marginBottom:5}}>{c.title}</div><p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.65,margin:0}}>{c.description}</p></div>)}</div></div>}
 
-      {tab==='definitions'&&<div className="fade-up"><SectionLabel>Terms & Definitions</SectionLabel><div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>{(d.definitions||[]).map((def,i)=><div key={i} style={{display:'grid',gridTemplateColumns:'190px 1fr',borderBottom:i<d.definitions.length-1?'1px solid var(--border)':'none'}}><div style={{padding:'12px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'#7fda96',background:'var(--surface)'}}>{def.term}</div><div style={{padding:'12px 14px',fontSize:13,color:'var(--text)',lineHeight:1.7}}>{def.definition}</div></div>)}</div></div>}
+      {tab==='definitions'&&<div className="fade-up"><SectionLabel>Terms & Definitions</SectionLabel><div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>{(d.definitions||[]).map((def,i)=><DefinitionRow key={i} def={def} isLast={i===d.definitions.length-1}/>)}</div></div>}
 
       {tab==='mechanisms'&&<div className="fade-up"><SectionLabel>Mechanisms Explained</SectionLabel><div style={{display:'flex',flexDirection:'column',gap:13}}>{(d.mechanisms||[]).map((m,i)=><div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'18px 22px'}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:10}}>{m.title}</div><p style={{fontSize:13,color:'var(--muted)',lineHeight:1.85,margin:0,whiteSpace:'pre-line'}}>{m.body}</p></div>)}</div></div>}
 
@@ -2116,7 +2149,8 @@ function SettingsTab({onReload}){
     flash(`✓ Department "${deptForm.name}" added.`);
   };
   const delDept=async(id,name)=>{
-    if(!confirm(`Remove department "${name}"? This won't delete courses already assigned to it.`))return;
+    const ok=await(window.shConfirm?.({title:`Remove "${name}"?`,message:"This won't delete courses already assigned to this department.",danger:true,confirmLabel:'Remove'})??Promise.resolve(true));
+    if(!ok)return;
     await dbDeleteDepartment(id);await loadAll();await loadDepartments();onReload?.();
     flash(`Department removed.`);
   };
@@ -2130,7 +2164,8 @@ function SettingsTab({onReload}){
     flash(`✓ User type "${typeForm.label}" added.`);
   };
   const delType=async(id,label)=>{
-    if(!confirm(`Remove user type "${label}"?`))return;
+    const ok=await(window.shConfirm?.({title:`Remove user type "${label}"?`,message:'Users with this type will keep their current access level.',danger:true,confirmLabel:'Remove'})??Promise.resolve(true));
+    if(!ok)return;
     await dbDeleteUserType(id);await loadAll();await loadUserTypes();
     flash(`User type removed.`);
   };
@@ -2384,7 +2419,13 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 
   // Admins submit for approval; superuser acts directly
   const doDelete=async id=>{
-    if(!confirm(isSU2?'Delete this course permanently?':'Submit deletion request for superuser approval?'))return;
+    const ok=await(window.shConfirm?.({
+      title:isSU2?'Delete course permanently?':'Submit deletion request?',
+      message:isSU2?'This course and all its data will be permanently removed. This cannot be undone.':'Your deletion request will be sent to the superuser for approval.',
+      danger:true,
+      confirmLabel:isSU2?'Delete':'Submit Request'
+    })??Promise.resolve(true));
+    if(!ok)return;
     if(isSU2){
       await dbDeleteCourse(id);const idx=await dbLoadCourseIndex();onCoursesChange(idx);
     } else {
@@ -2886,7 +2927,10 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
 
       {/* Search */}
       <div className="stagger-3" style={{marginBottom:16}}>
-        <SearchBar value={search} onChange={setSearch} placeholder={activeYear==='all'?`Search all courses…`:`Search Year ${activeYear} Sem ${activeSemester}${activeDept!=='all'?' · '+DEPT_SHORT[activeDept]:''} courses…`}/>
+        <div style={{position:'relative'}}>
+          <SearchBar value={search} onChange={setSearch} placeholder={activeYear==='all'?`Search all courses…`:`Search Year ${activeYear} Sem ${activeSemester}${activeDept!=='all'?' · '+DEPT_SHORT[activeDept]:''} courses…`}/>
+          {!search&&<div style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:4,padding:'1px 6px',pointerEvents:'none'}}>Press /</div>}
+        </div>
       </div>
 
       {/* Department filter */}
@@ -2966,6 +3010,84 @@ function loadSession(){
 }
 function clearSession(){try{localStorage.removeItem(SESSION_KEY);}catch{}}
 
+/* ═══════════════ GLOBAL ERROR TOAST ═══════════════ */
+function useErrorToast(){
+  const[err,setErr]=useState('');
+  useEffect(()=>{
+    const h=e=>{
+      const msg=e?.reason?.message||e?.message||'Something went wrong';
+      if(msg.includes('ResizeObserver')||msg.includes('Script error'))return; // ignore noise
+      setErr(msg);setTimeout(()=>setErr(''),5000);
+    };
+    window.addEventListener('unhandledrejection',h);
+    window.addEventListener('error',h);
+    return()=>{window.removeEventListener('unhandledrejection',h);window.removeEventListener('error',h);};
+  },[]);
+  return[err,setErr];
+}
+function ErrorToast({message,onDismiss}){
+  if(!message)return null;
+  return(
+    <div className="slide-down" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'rgba(240,80,80,.95)',backdropFilter:'blur(8px)',border:'1px solid rgba(240,80,80,.6)',borderRadius:10,padding:'10px 18px',display:'flex',alignItems:'center',gap:10,zIndex:9998,maxWidth:420,width:'calc(100% - 32px)',boxShadow:'0 4px 20px rgba(240,80,80,.3)'}}>
+      <span style={{fontSize:16}}>⚠️</span>
+      <span style={{flex:1,fontSize:12.5,color:'#fff',lineHeight:1.4}}>{message}</span>
+      <button onClick={onDismiss} style={{background:'none',border:'none',color:'rgba(255,255,255,.7)',cursor:'pointer',fontSize:16,padding:0,lineHeight:1}}>✕</button>
+    </div>
+  );
+}
+
+/* ═══════════════ CONFIRM MODAL ═══════════════ */
+// Usage: const confirmed = await confirm({title, message, danger})
+let _confirmResolve=null;
+function useConfirm(){
+  const[state,setState]=useState(null);
+  const confirm=useCallback((opts)=>new Promise(res=>{
+    _confirmResolve=res;setState(opts);
+  }),[]);
+  const ConfirmModal=state?(
+    <div className="modal-overlay" onClick={()=>{setState(null);_confirmResolve?.(false);}}>
+      <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'26px 28px',maxWidth:380,width:'100%',boxShadow:'var(--shadow)'}}>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:19,color:'var(--text)',marginBottom:8}}>{state.title||'Are you sure?'}</div>
+        {state.message&&<p style={{fontSize:13,color:'var(--muted)',lineHeight:1.6,marginBottom:20}}>{state.message}</p>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+          <button onClick={()=>{setState(null);_confirmResolve?.(false);}} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>Cancel</button>
+          <button onClick={()=>{setState(null);_confirmResolve?.(true);}} style={{background:state.danger?'rgba(240,80,80,.15)':'rgba(79,156,249,.15)',border:`1px solid ${state.danger?'rgba(240,80,80,.4)':'rgba(79,156,249,.4)'}`,borderRadius:8,color:state.danger?'#f05050':'#4f9cf9',cursor:'pointer',padding:'9px 20px',fontSize:13,fontWeight:700}}>
+            {state.confirmLabel||'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ):null;
+  return[confirm,ConfirmModal];
+}
+
+/* ═══════════════ PAGE TITLE HOOK ═══════════════ */
+function usePageTitle(view,active){
+  useEffect(()=>{
+    const base='StudyHub';
+    if(view==='auth')document.title=base;
+    else if(view==='course'&&active?.data?.chapterTitle)document.title=`${active.data.chapterTitle} · ${base}`;
+    else if(view==='admin')document.title=`Admin Panel · ${base}`;
+    else document.title=base;
+  },[view,active?.data?.chapterTitle]);
+}
+
+/* ═══════════════ KEYBOARD SHORTCUTS ═══════════════ */
+function useKeyboardShortcuts({onSearch,onEscape}){
+  useEffect(()=>{
+    const h=e=>{
+      // '/' focuses search — ignore if typing in input/textarea
+      if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){
+        e.preventDefault();onSearch?.();
+      }
+      // Escape
+      if(e.key==='Escape')onEscape?.();
+    };
+    window.addEventListener('keydown',h);
+    return()=>window.removeEventListener('keydown',h);
+  },[onSearch,onEscape]);
+}
+
 /* Silent refresh toast */
 function SyncToast({visible}){
   if(!visible)return null;
@@ -2980,6 +3102,11 @@ export default function App(){
   const[dark,toggleTheme]=useTheme();
   const[bookmarks,toggleBookmark]=useBookmarks();
   const online=useOnline();
+  const[errMsg,setErrMsg]=useErrorToast();
+  const[confirm,ConfirmModal]=useConfirm();
+
+  // Expose confirm globally so child components can call window.shConfirm()
+  useEffect(()=>{window.shConfirm=confirm;return()=>{delete window.shConfirm;};},[confirm]);
 
   // Restore session from localStorage on mount
   const savedSession=loadSession();
@@ -2990,6 +3117,23 @@ export default function App(){
   const[progress,setProgress]=useState({});
   const[loading,setLoading]=useState(false);
   const[syncing,setSyncing]=useState(false);
+
+  // Page title updates on view change
+  usePageTitle(view,active);
+
+  // Global search ref for keyboard shortcut
+  const searchRef=useRef(null);
+  useKeyboardShortcuts({
+    onSearch:useCallback(()=>{
+      // Focus search bar in home or questions filter — best-effort
+      const el=document.querySelector('input[placeholder*="Search"]');
+      el?.focus();
+    },[]),
+    onEscape:useCallback(()=>{
+      // Close course view → home, or home stays
+      if(view==='course')setView('home');
+    },[view]),
+  });
 
   // ── Startup: config + courses + restore progress ─────────────────────
   useEffect(()=>{
@@ -3164,6 +3308,8 @@ export default function App(){
       <style>{css}</style>
       {!online&&<OfflineBanner/>}
       <SyncToast visible={syncing&&online}/>
+      <ErrorToast message={errMsg} onDismiss={()=>setErrMsg('')}/>
+      {ConfirmModal}
       {user?.isGuest&&view!=='auth'&&<GuestBanner onSignUp={goToSignUp}/>}
       <InstallPrompt/>
 
