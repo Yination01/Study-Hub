@@ -3,7 +3,7 @@
   "name": "StudyHub",
   "short_name": "StudyHub",
   "description": "AI-powered course companion by Yination & Excalibur",
-  "start_url": "/?source=pwa",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0d0f14",
