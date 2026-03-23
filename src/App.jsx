@@ -1646,7 +1646,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
   const[uploadMode,setUploadMode]=useState('file'); // 'file' | 'paste'
   const[year,setYear]=useState(1);
   const[semester,setSemester]=useState(1);
-  const[department,setDepartment]=useState('Computer Science');
+  const[departments,setDepartments]=useState(['Computer Science']); // multi-select array
   const[pasteText,setPasteText]=useState('');
   const[file,setFile]=useState(null);
   const[status,setStatus]=useState('idle');
@@ -1662,20 +1662,31 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
 
   const saveEntry=async(data,autoDetected)=>{
     if(!data.chapterTitle) throw new Error('Missing chapterTitle in response');
-    // Apply smart sort — use detected values, fall back to current picker values
     const finalYear     = autoDetected?.year      || year;
     const finalSemester = autoDetected?.semester  || semester;
-    const finalDept     = autoDetected?.department|| department;
-    // Update pickers so user can see what was auto-applied
+    // Multi-dept: use detected dept if auto, otherwise use all selected
+    const finalDepts = autoDetected?.department
+      ? [autoDetected.department]
+      : departments.length>0 ? departments : ['Computer Science'];
+
     if(autoDetected?.year)      setYear(autoDetected.year);
     if(autoDetected?.semester)  setSemester(autoDetected.semester);
-    if(autoDetected?.department)setDepartment(autoDetected.department);
-    const id=`c-${Date.now()}`;
-    const entry={id,year:finalYear,semester:finalSemester,department:finalDept,courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
-    if(adminMode){
-      await onDone(null,entry,data);
-    } else {
-      await dbSaveCourse(entry,data);
+    if(autoDetected?.department)setDepartments([autoDetected.department]);
+
+    // Save one entry per selected department
+    for(const dept of finalDepts){
+      const id=`c-${Date.now()}-${dept.slice(0,3)}`;
+      const entry={id,year:finalYear,semester:finalSemester,department:dept,
+        courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,
+        conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,
+        qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+      if(adminMode){
+        await onDone(null,entry,data);
+      } else {
+        await dbSaveCourse(entry,data);
+      }
+    }
+    if(!adminMode){
       const idx=await dbLoadCourseIndex();
       setTimeout(()=>onDone(idx),600);
     }
@@ -1737,7 +1748,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
   };
 
   const fileType = file ? getFileType(file.name) : null;
-  const canGo = status!=='processing'&&status!=='done'&&(uploadMode==='file'?!!file:!!pasteText.trim());
+  const canGo = status!=='processing'&&status!=='done'&&departments.length>0&&(uploadMode==='file'?!!file:!!pasteText.trim());
 
   return(
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -1775,15 +1786,47 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
           </div>
         </div>
         <div style={{marginBottom:18}}>
-          <Mono color="var(--muted)" size={10}>DEPARTMENT</Mono>
-          <div style={{display:'flex',gap:8,marginTop:6}}>
-            {DEPARTMENTS.map(d=>{const active=department===d;const col=DEPT_COLOR[d];return(
-              <button key={d} onClick={()=>setDepartment(d)} style={{flex:1,padding:'8px 10px',borderRadius:8,cursor:'pointer',border:`1px solid ${active?col+'70':'var(--border)'}`,background:active?`${col}12`:'var(--input-bg)',color:active?col:'var(--muted)',fontWeight:active?600:400,fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
-                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:active?`${col}20`:'var(--border)',color:active?col:'var(--muted)',borderRadius:3,padding:'1px 5px'}}>{DEPT_SHORT[d]}</span>
-                <span style={{fontSize:11}}>{d}</span>
-              </button>
-            );})}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+            <Mono color="var(--muted)" size={10}>DEPARTMENT</Mono>
+            {departments.length>1&&(
+              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',letterSpacing:1}}>
+                {departments.length} SELECTED — course added to each
+              </span>
+            )}
           </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {DEPARTMENTS.map(d=>{
+              const active=departments.includes(d);
+              const col=DEPT_COLOR[d]||'#4f9cf9';
+              return(
+                <button key={d} onClick={()=>setDepartments(prev=>
+                  prev.includes(d) ? prev.filter(x=>x!==d).length===0 ? prev : prev.filter(x=>x!==d) : [...prev,d]
+                )}
+                  style={{padding:'8px 12px',borderRadius:8,cursor:'pointer',
+                    border:`1.5px solid ${active?col:col+'30'}`,
+                    background:active?`${col}14`:'var(--input-bg)',
+                    color:active?col:'var(--muted)',
+                    fontWeight:active?700:400,fontSize:12,
+                    display:'flex',alignItems:'center',gap:7,
+                    transition:'all .15s',position:'relative'}}>
+                  {active&&<span style={{fontSize:10,lineHeight:1}}>✓</span>}
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,
+                    background:active?`${col}25`:'var(--border)',
+                    color:active?col:'var(--muted)',borderRadius:3,padding:'1px 5px'}}>{DEPT_SHORT[d]}</span>
+                  <span style={{fontSize:11}}>{d}</span>
+                </button>
+              );
+            })}
+          </div>
+          {departments.length===0&&(
+            <div style={{fontSize:11,color:'#f05050',marginTop:5}}>Select at least one department</div>
+          )}
+          {departments.length>1&&(
+            <div style={{fontSize:11,color:'#4f9cf9',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
+              <span>ℹ️</span>
+              <span>This course will appear under <strong>{departments.map(d=>DEPT_SHORT[d]||d).join(' and ')}</strong> — one copy per department.</span>
+            </div>
+          )}
         </div>
 
         {/* FILE MODE */}
@@ -1941,7 +1984,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
         {smartSortMsg&&<div style={{background:'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.25)',borderRadius:8,padding:'8px 14px',color:'#a8f94f',fontSize:12,marginBottom:10,display:'flex',alignItems:'center',gap:8}}><span>✨</span>{smartSortMsg.replace('✨ Smart sort: ','')}<span style={{color:'var(--muted)',fontSize:11,marginLeft:4}}>— pickers updated above</span></div>}
         {error&&<div style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,padding:'9px 14px',color:'#f05050',fontSize:12.5,marginBottom:10}}>{error}</div>}
         {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>{progress||'Processing…'}</div>}
-        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':`✓ Course added — Year ${year}, Semester ${semester}, ${DEPT_SHORT[department]}!`}</div>}
+        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':`✓ Course added — Year ${year}, Semester ${semester}${departments.length?`, ${departments.map(d=>DEPT_SHORT[d]||d).join(' + ')}`:''}.`}</div>}
 
         {/* Actions */}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:4}}>
@@ -2216,7 +2259,7 @@ function NotificationBell({user,courses}){
           maxHeight:'calc(100vh - 90px)',
           background:'var(--card)',border:'1px solid var(--border)',
           borderRadius:14,boxShadow:'0 8px 32px rgba(0,0,0,.4)',
-          zIndex:9700,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+          zIndex:9999,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
           {/* Header */}
           <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',
@@ -2617,10 +2660,10 @@ function DefinitionRow({def,isLast}){
   );
 }
 
-const ALL_TABS=[{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'announcements',label:'📢 Announcements'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
+const ALL_TABS=[{id:'announcements',label:'📢 Announcements'},{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
 
 function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses}){
-  const[tab,setTab]=useState('concepts');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
+  const[tab,setTab]=useState('announcements');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
   const d=course.data;const cp=progress[course.id]||{viewed:false,openedQs:[]};const isPriv=user.role!==ROLE.USER;
   const isBookmarked=bookmarks.includes(course.id);
 
