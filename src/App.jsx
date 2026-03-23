@@ -2242,11 +2242,12 @@ function SettingsTab({onReload}){
 /* ═══════════════ ADMIN PANEL ═══════════════ */
 function AdminPanel({user,courses,onClose,onCoursesChange}){
   const isSU2=user.role===ROLE.SUPERUSER;
-  const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
+  const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[statusPendingCount,setStatusPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
 
   useEffect(()=>{
     Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});
     if(isSU2)dbCountPending().then(setPendingCount);
+    dbCountPendingStatusRequests().then(setStatusPendingCount);
   },[]);
 
   const flash=m=>{setActionMsg(m);setTimeout(()=>setActionMsg(''),3000);};
@@ -2267,6 +2268,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
     {id:'courses',label:'Courses'},
     {id:'users',label:'Users'},
     {id:'analytics',label:'📊 Analytics'},
+    {id:'status',label:'status',statusCount:statusPendingCount},
     ...(isSU2?[{id:'approvals',label:'approvals',pendingCount},{id:'admins',label:'⚡ Manage Admins'},{id:'settings',label:'⚙️ Settings'}]:[])
   ];
 
@@ -2306,8 +2308,9 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:22,flexWrap:'wrap'}}>
           {pTabs.map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?'rgba(249,168,79,.06)':'none',border:'none',borderBottom:tab===t.id?'2px solid #f9a84f':'2px solid transparent',color:tab===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'9px 16px',fontSize:13,fontWeight:tab===t.id?600:400,display:'flex',alignItems:'center',gap:6}}>
-              {t.id==='approvals'?'⚡ Approvals':t.label}
+              {t.id==='approvals'?'⚡ Approvals':t.id==='status'?'🔄 Status Changes':t.label}
               {t.id==='approvals'&&t.pendingCount>0&&<span style={{background:'#f9a84f',color:'#000',borderRadius:10,padding:'1px 7px',fontSize:10,fontWeight:700}}>{t.pendingCount}</span>}
+              {t.id==='status'&&t.statusCount>0&&<span style={{background:'#a8f94f',color:'#000',borderRadius:10,padding:'1px 7px',fontSize:10,fontWeight:700}}>{t.statusCount}</span>}
             </button>
           ))}
         </div>
@@ -2369,6 +2372,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         )}
 
         {tab==='analytics'&&<AnalyticsTab courses={courses}/>}
+        {tab==='status'&&<StatusChangesTab reviewerUsername={user.username}/>}
         {tab==='approvals'&&isSU2&&<ApprovalsTab onCourseChange={onCoursesChange} courses={courses} reviewerUsername={user.username}/>}
         {tab==='admins'&&isSU2&&<ManageAdminsTab/>}
         {tab==='settings'&&isSU2&&<SettingsTab onReload={()=>onCoursesChange([...courses])}/>}
@@ -2386,6 +2390,231 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
   );
 }
 
+/* ═══════════════ STATUS CHANGE MODAL ═══════════════ */
+function StatusChangeModal({user,onClose,onSubmitted}){
+  const[reason,setReason]=useState('');
+  const[targetType,setTargetType]=useState('');
+  const[loading,setLoading]=useState(false);
+  const[pending,setPending]=useState(null);
+  const[checking,setChecking]=useState(true);
+
+  // Map account_type to role key for display
+  const currentType=user.accountType||user.account_type||'student';
+  const currentLabel=USER_TYPES.find(u=>u.roleKey===(user.role===ROLE.EXTERNAL?'external':'user'))?.shortCode||
+    (user.role===ROLE.EXTERNAL?'External':'Student');
+
+  // Available types to switch to (exclude current)
+  const options=USER_TYPES.filter(t=>
+    t.roleKey!==(user.role===ROLE.EXTERNAL?'external':'user')
+  );
+
+  useEffect(()=>{
+    if(options.length>0)setTargetType(options[0].id);
+    dbGetPendingStatusRequest(user.username).then(p=>{setPending(p);setChecking(false);});
+  },[]);
+
+  const submit=async()=>{
+    if(!targetType)return;
+    setLoading(true);
+    const target=USER_TYPES.find(t=>t.id===targetType);
+    await dbSubmitStatusRequest({
+      id:`sr-${Date.now()}`,
+      username:user.username,
+      from_type:currentType,
+      to_type:target?.id||targetType,
+      reason:reason.trim()||null,
+      status:'pending',
+      requested_at:new Date().toISOString()
+    });
+    setLoading(false);
+    onSubmitted?.();
+    onClose();
+  };
+
+  if(checking) return null;
+
+  const target=USER_TYPES.find(t=>t.id===targetType);
+
+  return(
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 30px',maxWidth:440,width:'100%',margin:'auto',boxShadow:'var(--shadow)'}}>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'var(--text)',marginBottom:6}}>Change Account Status</div>
+        <p style={{color:'var(--muted)',fontSize:13,marginBottom:20}}>Request a status change. An admin or superuser will review and approve or reject it.</p>
+
+        {pending?(
+          <div style={{background:'rgba(249,168,79,.07)',border:'1px solid rgba(249,168,79,.25)',borderRadius:10,padding:'16px 18px',textAlign:'center'}}>
+            <div style={{fontSize:24,marginBottom:8}}>⏳</div>
+            <div style={{fontSize:14,fontWeight:600,color:'#f9a84f',marginBottom:4}}>Request Pending</div>
+            <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.6}}>
+              You already have a pending request to change your status.<br/>
+              Submitted {new Date(pending.requested_at).toLocaleString()}
+            </div>
+            {pending.reason&&<div style={{fontSize:12,color:'var(--text)',marginTop:8,fontStyle:'italic'}}>"{pending.reason}"</div>}
+            <button onClick={onClose} style={{marginTop:16,background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 20px',fontSize:13}}>Close</button>
+          </div>
+        ):(
+          <>
+            {/* Current → Target */}
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+              <div style={{flex:1,textAlign:'center'}}>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:1,marginBottom:4}}>CURRENT</div>
+                <div style={{background:ROLE_BG[user.role]||ROLE_BG.user,color:ROLE_COLOR[user.role]||ROLE_COLOR.user,borderRadius:8,padding:'6px 14px',fontSize:13,fontWeight:600,display:'inline-block'}}>{currentLabel}</div>
+              </div>
+              <div style={{fontSize:22,color:'var(--muted)',flexShrink:0}}>→</div>
+              <div style={{flex:1,textAlign:'center'}}>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:1,marginBottom:4}}>REQUESTING</div>
+                {target&&<div style={{background:`${target.color}15`,color:target.color,border:`1px solid ${target.color}40`,borderRadius:8,padding:'6px 14px',fontSize:13,fontWeight:600,display:'inline-block'}}>{target.shortCode}</div>}
+              </div>
+            </div>
+
+            {/* Pick target type if more than one option */}
+            {options.length>1&&(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>SWITCH TO</div>
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {options.map(o=>(
+                    <button key={o.id} onClick={()=>setTargetType(o.id)} style={{padding:'10px 14px',borderRadius:8,cursor:'pointer',border:`1px solid ${targetType===o.id?o.color+'70':'var(--border)'}`,background:targetType===o.id?`${o.color}10`:'var(--input-bg)',color:targetType===o.id?o.color:'var(--muted)',fontWeight:targetType===o.id?600:400,fontSize:13,textAlign:'left',display:'flex',alignItems:'center',gap:10}}>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:targetType===o.id?`${o.color}20`:'var(--border)',color:targetType===o.id?o.color:'var(--muted)',borderRadius:4,padding:'2px 7px'}}>{o.shortCode}</span>
+                      <div>
+                        <div>{o.label}</div>
+                        {o.description&&<div style={{fontSize:11,color:'var(--muted)',marginTop:1}}>{o.description}</div>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Reason */}
+            <div style={{marginBottom:18}}>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>REASON (optional)</div>
+              <textarea value={reason} onChange={e=>setReason(e.target.value)} placeholder="Tell the admin why you want to change your account type…" rows={3} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 13px',color:'var(--text)',fontSize:13,fontFamily:"'DM Sans',sans-serif",resize:'none'}}/>
+            </div>
+
+            <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',fontSize:11,color:'var(--muted)',marginBottom:18,lineHeight:1.6}}>
+              ℹ️ Your request will be reviewed by an admin. You'll keep your current access until it's approved. You cannot submit another request while one is pending.
+            </div>
+
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>Cancel</button>
+              <button onClick={submit} disabled={loading||!targetType} style={{background:loading||!targetType?'var(--border)':'#4f9cf9',border:'none',borderRadius:8,color:loading||!targetType?'var(--muted)':'#000',cursor:'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}>
+                {loading?'Submitting…':'Submit Request'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ STATUS CHANGES TAB (admin/superuser) ═══════════════ */
+function StatusChangesTab({reviewerUsername}){
+  const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);
+  const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);
+  const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);
+  const[rejectNote,setRejectNote]=useState('');
+
+  const load=async()=>{
+    setLoading(true);
+    const[p,all]=await Promise.all([dbLoadStatusRequests('pending'),dbLoadAllStatusRequests()]);
+    setPending(p);setHistory(all.filter(r=>r.status!=='pending'));setLoading(false);
+  };
+  useEffect(()=>{load();},[]);
+
+  const approve=async req=>{
+    setBusy(req.id);
+    const target=USER_TYPES.find(t=>t.id===req.to_type);
+    const newAccountType=target?.roleKey==='external'?'external':'student';
+    await dbApplyStatusChange(req.username,newAccountType);
+    await dbReviewStatusRequest(req.id,'approved',reviewerUsername);
+    setBusy('');await load();
+  };
+
+  const reject=async()=>{
+    if(!rejectModal)return;setBusy(rejectModal.id);
+    await dbReviewStatusRequest(rejectModal.id,'rejected',reviewerUsername,rejectNote);
+    setRejectModal(null);setRejectNote('');setBusy('');await load();
+  };
+
+  const list=tab==='pending'?pending:history;
+
+  if(loading)return<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>Loading…</div>;
+
+  return(
+    <div className="fade-up">
+      {/* Reject modal */}
+      {rejectModal&&(
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setRejectModal(null)}>
+          <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'24px 26px',maxWidth:400,width:'100%',boxShadow:'var(--shadow)'}}>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'var(--text)',marginBottom:12}}>Reject Request</div>
+            <textarea value={rejectNote} onChange={e=>setRejectNote(e.target.value)} placeholder="Reason for rejection (optional)…" rows={3} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px',color:'var(--text)',fontSize:13,resize:'none',marginBottom:14}}/>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setRejectModal(null)} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13}}>Cancel</button>
+              <button onClick={reject} style={{background:'rgba(240,80,80,.15)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>Confirm Reject</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{background:'rgba(168,249,79,.06)',border:'1px solid rgba(168,249,79,.2)',borderRadius:10,padding:'11px 15px',marginBottom:18,display:'flex',gap:10}}>
+        <span style={{fontSize:18}}>🔄</span>
+        <div><div style={{color:'#a8f94f',fontSize:13,fontWeight:600,marginBottom:2}}>Status Change Requests</div><div style={{color:'var(--muted)',fontSize:12}}>Review user requests to change their account type. Approving immediately updates their access.</div></div>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18}}>
+        {[{id:'pending',label:`Pending${pending.length>0?` (${pending.length})`:''}`,color:pending.length>0?'#a8f94f':undefined},{id:'history',label:'History'}].map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#a8f94f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#a8f94f'):'var(--muted)',cursor:'pointer',padding:'7px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
+        ))}
+      </div>
+
+      <div style={{display:'flex',flexDirection:'column',gap:11}}>
+        {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?'✅ No pending requests.':'No history yet.'}</div>}
+        {list.map((r,i)=>{
+          const fromUT=USER_TYPES.find(t=>t.id===r.from_type||t.roleKey===r.from_type);
+          const toUT=USER_TYPES.find(t=>t.id===r.to_type||t.roleKey===r.to_type);
+          const isPending=r.status==='pending';
+          const isApproved=r.status==='approved';
+          return(
+            <div key={r.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${isPending?'rgba(168,249,79,.2)':isApproved?'rgba(127,218,150,.2)':'rgba(240,80,80,.2)'}`,borderRadius:11,padding:'15px 18px'}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+                <div style={{flex:1,minWidth:180}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6,flexWrap:'wrap'}}>
+                    <Avatar name={r.username} size={28}/>
+                    <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>@{r.username}</span>
+                    {/* From → To */}
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:ROLE_BG.user,color:ROLE_COLOR.user,borderRadius:4,padding:'2px 7px'}}>{fromUT?.shortCode||r.from_type}</span>
+                      <span style={{color:'var(--muted)',fontSize:12}}>→</span>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${(toUT?.color||'#a8f94f')}15`,color:toUT?.color||'#a8f94f',borderRadius:4,padding:'2px 7px'}}>{toUT?.shortCode||r.to_type}</span>
+                    </div>
+                    {!isPending&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:isApproved?'rgba(127,218,150,.15)':'rgba(240,80,80,.15)',color:isApproved?'#7fda96':'#f05050',borderRadius:4,padding:'2px 7px'}}>{r.status.toUpperCase()}</span>}
+                  </div>
+                  {r.reason&&<p style={{fontSize:12,color:'var(--muted)',margin:'0 0 4px',fontStyle:'italic'}}>"{r.reason}"</p>}
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',display:'flex',gap:12,flexWrap:'wrap'}}>
+                    <span>Requested {new Date(r.requested_at).toLocaleString()}</span>
+                    {!isPending&&r.reviewed_by&&<span>Reviewed by @{r.reviewed_by}</span>}
+                    {!isPending&&r.note&&<span>Note: {r.note}</span>}
+                  </div>
+                </div>
+                {isPending&&(
+                  <div style={{display:'flex',gap:8,flexShrink:0}}>
+                    <button onClick={()=>approve(r)} disabled={busy===r.id} style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'7px 14px',fontSize:12,fontWeight:700}}>
+                      {busy===r.id?'…':'✓ Approve'}
+                    </button>
+                    <button onClick={()=>setRejectModal(r)} disabled={busy===r.id} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'7px 12px',fontSize:12,fontWeight:700}}>✕ Reject</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════ HOME ═══════════════ */
 function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme}){
   const isExternal=user.role===ROLE.EXTERNAL;
@@ -2393,6 +2622,8 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[activeSemester,setActiveSemester]=useState(1);
   const[activeDept,setActiveDept]=useState('all');
   const[search,setSearch]=useState('');const[showBookmarks,setShowBookmarks]=useState(false);
+  const[showStatusModal,setShowStatusModal]=useState(false);
+  const[statusMsg,setStatusMsg]=useState('');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
 
   const visible=courses.filter(c=>{
@@ -2436,12 +2667,22 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <ThemeToggle dark={dark} toggle={toggleTheme}/>
           {!user.isGuest&&<NotificationBell user={user} courses={courses}/>}
           {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 14px',fontSize:13}}>🔖 {bookmarks.length}</button>}
+          {/* Status change button — only for regular users/external, not guests/admins */}
+          {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(
+            <button onClick={()=>setShowStatusModal(true)} title="Request status change" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
+              🔄 <span style={{display:'none'}}>Change Status</span>
+            </button>
+          )}
           {isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Panel':'⚙ Panel'}</button>}
           <button onClick={onLogout} style={{background:user.isGuest?'#4f9cf9':'none',border:user.isGuest?'none':'1px solid var(--border)',borderRadius:8,color:user.isGuest?'#000':'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:user.isGuest?700:400}}>
             {user.isGuest?'Sign In / Sign Up':'Sign Out'}
           </button>
         </div>
       </div>
+
+      {/* Status change modal */}
+      {showStatusModal&&<StatusChangeModal user={user} onClose={()=>setShowStatusModal(false)} onSubmitted={()=>{setStatusMsg('✓ Request submitted — an admin will review it shortly.');setTimeout(()=>setStatusMsg(''),4000);}}/>}
+      {statusMsg&&<div className="slide-down" style={{background:'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.3)',borderRadius:8,padding:'10px 16px',color:'#a8f94f',fontSize:13,marginBottom:14}}>{statusMsg}</div>}
 
       {/* Bookmarks panel */}
       {showBookmarks&&bookmarkedCourses.length>0&&(
@@ -2564,35 +2805,164 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
 }
 
 /* ═══════════════ ROOT APP ═══════════════ */
+const SESSION_KEY = 'sh-session';
+
+function saveSession(u){
+  try{localStorage.setItem(SESSION_KEY,JSON.stringify({...u,savedAt:Date.now()}));}catch{}
+}
+function loadSession(){
+  try{
+    const raw=localStorage.getItem(SESSION_KEY);
+    if(!raw)return null;
+    const s=JSON.parse(raw);
+    // Expire sessions older than 30 days
+    if(Date.now()-s.savedAt>30*24*60*60*1000){localStorage.removeItem(SESSION_KEY);return null;}
+    return s;
+  }catch{return null;}
+}
+function clearSession(){try{localStorage.removeItem(SESSION_KEY);}catch{}}
+
+/* Silent refresh toast */
+function SyncToast({visible}){
+  if(!visible)return null;
+  return(
+    <div className="fade-in" style={{position:'fixed',bottom:52,left:20,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'6px 14px',display:'flex',alignItems:'center',gap:8,zIndex:9999,fontSize:11,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1,boxShadow:'var(--shadow)'}}>
+      <span style={{animation:'spin .8s linear infinite',display:'inline-block',fontSize:12}}>⟳</span> Syncing…
+    </div>
+  );
+}
+
 export default function App(){
   const[dark,toggleTheme]=useTheme();
   const[bookmarks,toggleBookmark]=useBookmarks();
   const online=useOnline();
-  const[view,setView]=useState('auth');
-  const[user,setUser]=useState(null);
+
+  // Restore session from localStorage on mount
+  const savedSession=loadSession();
+  const[view,setView]=useState(savedSession?'home':'auth');
+  const[user,setUser]=useState(savedSession||null);
   const[courses,setCourses]=useState([]);
   const[active,setActive]=useState(null);
   const[progress,setProgress]=useState({});
   const[loading,setLoading]=useState(false);
+  const[syncing,setSyncing]=useState(false);
 
+  // ── Startup: config + courses + restore progress ─────────────────────
   useEffect(()=>{
-    // Load dynamic config first, then courses
     Promise.all([loadDepartments(),loadUserTypes()]).catch(()=>{});
-    dbLoadCourseIndex().then(setCourses).catch(async()=>{
-      const cached=[];
-      for(let i=0;i<localStorage.length;i++){
-        const k=localStorage.key(i);
-        if(k?.startsWith('sh-course-cache-')){
-          try{const d=JSON.parse(localStorage.getItem(k));if(d?.data)cached.push({id:k.replace('sh-course-cache-',''),year:d.year,semester:d.semester||1,department:d.department||'Computer Science',courseName:d.data.courseName,chapterTitle:d.data.chapterTitle,conceptCount:d.data.keyConcepts?.length||0,termCount:d.data.definitions?.length||0,qCount:d.data.questions?.length||0,addedAt:'Cached'});}catch{}
+
+    // Reload courses silently
+    const loadCourses=()=>{
+      dbLoadCourseIndex().then(data=>{
+        setCourses(data);
+      }).catch(async()=>{
+        const cached=[];
+        for(let i=0;i<localStorage.length;i++){
+          const k=localStorage.key(i);
+          if(k?.startsWith('sh-course-cache-')){
+            try{const d=JSON.parse(localStorage.getItem(k));if(d?.data)cached.push({id:k.replace('sh-course-cache-',''),year:d.year,semester:d.semester||1,department:d.department||'Computer Science',courseName:d.data.courseName,chapterTitle:d.data.chapterTitle,conceptCount:d.data.keyConcepts?.length||0,termCount:d.data.definitions?.length||0,qCount:d.data.questions?.length||0,addedAt:'Cached'});}catch{}
+          }
         }
-      }
-      if(cached.length>0)setCourses(cached);
-    });
+        if(cached.length>0)setCourses(cached);
+      });
+    };
+    loadCourses();
+
+    // Restore progress for saved session
+    if(savedSession&&savedSession.role===ROLE.USER&&!savedSession.isGuest){
+      dbLoadProgress(savedSession.username).then(setProgress).catch(()=>{});
+    }
   },[]);
 
-  const handleLogin=async u=>{setUser(u);if(u.role===ROLE.USER){const p=await dbLoadProgress(u.username).catch(()=>({}));setProgress(p);}setView('home');};
-  const handleGuest=()=>{setUser({username:'guest',displayName:'Guest',role:ROLE.USER,isGuest:true,year:1});setView('home');};
-  const handleLogout=()=>{setUser(null);setProgress({});setActive(null);setView('auth');};
+  // ── Real-time Supabase subscriptions ─────────────────────────────────
+  useEffect(()=>{
+    // Courses channel — when any course is added/removed/updated
+    const coursesCh=supabase.channel('rt-courses')
+      .on('postgres_changes',{event:'*',schema:'public',table:'courses'},()=>{
+        setSyncing(true);
+        dbLoadCourseIndex().then(data=>{setCourses(data);setSyncing(false);}).catch(()=>setSyncing(false));
+      }).subscribe();
+
+    // Announcements channel
+    const annCh=supabase.channel('rt-announcements')
+      .on('postgres_changes',{event:'*',schema:'public',table:'announcements'},()=>{
+        // Just trigger a re-render signal — GlobalAnnouncementStrip will re-fetch
+        setSyncing(true);setTimeout(()=>setSyncing(false),600);
+      }).subscribe();
+
+    // Assignments — push notification on new one if permission granted
+    const assignCh=supabase.channel('rt-assignments')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'assignments'},(payload)=>{
+        setSyncing(true);setTimeout(()=>setSyncing(false),600);
+        if(payload.new){
+          pushNotification(`📋 New Assignment: ${payload.new.title}`,payload.new.due_date?`Due ${new Date(payload.new.due_date).toLocaleDateString()}`:'Check StudyHub for details');
+        }
+      }).subscribe();
+
+    // CAs channel
+    const caCh=supabase.channel('rt-cas')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'course_cas'},(payload)=>{
+        setSyncing(true);setTimeout(()=>setSyncing(false),600);
+        if(payload.new){
+          pushNotification(`📝 New ${payload.new.type}: ${payload.new.title}`,payload.new.date?`On ${new Date(payload.new.date).toLocaleDateString()}`:'Check StudyHub for details');
+        }
+      }).subscribe();
+
+    // Pending approvals counter (superuser only)
+    const pendingCh=supabase.channel('rt-pending')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'pending_actions'},()=>{
+        setSyncing(true);setTimeout(()=>setSyncing(false),600);
+        if(user?.role===ROLE.SUPERUSER){
+          pushNotification('⚡ New Approval Request','An admin has submitted a request for your approval on StudyHub.');
+        }
+      }).subscribe();
+
+    return()=>{
+      supabase.removeChannel(coursesCh);
+      supabase.removeChannel(annCh);
+      supabase.removeChannel(assignCh);
+      supabase.removeChannel(caCh);
+      supabase.removeChannel(pendingCh);
+    };
+  },[user?.role]);
+
+  // ── Periodic silent background refresh (every 90s) ────────────────────
+  useEffect(()=>{
+    if(!online)return;
+    const tick=setInterval(()=>{
+      setSyncing(true);
+      Promise.all([
+        dbLoadCourseIndex().then(setCourses),
+        loadDepartments(),
+        loadUserTypes(),
+        ...(user&&!user.isGuest?[dbLoadProgress(user.username).then(setProgress)]:[]),
+      ]).catch(()=>{}).finally(()=>setSyncing(false));
+    },90_000);
+    return()=>clearInterval(tick);
+  },[online,user?.username]);
+
+  // ── Auth handlers ─────────────────────────────────────────────────────
+  const handleLogin=async u=>{
+    setUser(u);
+    saveSession(u);
+    if(u.role===ROLE.USER&&!u.isGuest){
+      const p=await dbLoadProgress(u.username).catch(()=>({}));
+      setProgress(p);
+    }
+    setView('home');
+  };
+
+  const handleGuest=()=>{
+    const g={username:'guest',displayName:'Guest',role:ROLE.USER,isGuest:true,year:1};
+    setUser(g);
+    // don't save guest to localStorage
+    setView('home');
+  };
+
+  const handleLogout=()=>{
+    clearSession();
+    setUser(null);setProgress({});setActive(null);setView('auth');
+  };
 
   const handleSelect=async id=>{
     setLoading(true);
@@ -2608,15 +2978,19 @@ export default function App(){
     setLoading(false);
   };
 
-  // Guests get in-memory progress only — no DB writes
-  const handleProgress=async p=>{setProgress(p);if(user?.role===ROLE.USER&&!user?.isGuest)await dbSaveProgress(user.username,p).catch(()=>{});};
+  const handleProgress=async p=>{
+    setProgress(p);
+    if(user?.role===ROLE.USER&&!user?.isGuest)
+      await dbSaveProgress(user.username,p).catch(()=>{});
+  };
 
-  const goToSignUp=()=>{setUser(null);setProgress({});setActive(null);setView('auth');};
+  const goToSignUp=()=>{clearSession();setUser(null);setProgress({});setActive(null);setView('auth');};
 
   return(
     <>
       <style>{css}</style>
       {!online&&<OfflineBanner/>}
+      <SyncToast visible={syncing&&online}/>
       {user?.isGuest&&view!=='auth'&&<GuestBanner onSignUp={goToSignUp}/>}
       <InstallPrompt/>
 
