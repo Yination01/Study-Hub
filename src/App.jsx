@@ -190,7 +190,9 @@ const css = `
   }
 
   @keyframes slideUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes slideDown {from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
   .slide-up{animation:slideUp .28s cubic-bezier(.4,0,.2,1) both}
+  .slide-down{animation:slideDown .28s cubic-bezier(.4,0,.2,1) both}
 
   /* Focus visible — keyboard nav */
   :focus-visible{outline:2px solid rgba(79,156,249,.6)!important;outline-offset:2px}
@@ -570,120 +572,321 @@ function OfflineBanner(){
 
 /* ═══════════════ PWA INSTALL ═══════════════ */
 /* ═══════════════ INSTALL PROMPT (cross-browser) ═══════════════ */
+const PWA_KEY      = 'sh-pwa-v2';   // bump suffix to reset all stored state
+const SNOOZE_DAYS  = 3;             // "Later" re-shows after this many days
+
 function useBrowserInfo(){
-  const ua=navigator.userAgent;
-  const isIOS=/iPad|iPhone|iPod/.test(ua)&&!window.MSStream;
-  const isSafari=/^((?!chrome|android).)*safari/i.test(ua);
-  const isFirefox=/firefox/i.test(ua);
-  const isAndroid=/android/i.test(ua);
-  const isStandalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
-  const isChromium=!!(window.chrome);
-  return{isIOS,isSafari,isFirefox,isAndroid,isStandalone,isChromium};
+  const ua = navigator.userAgent;
+  // iOS: iPhone, iPad (including iPadOS 13+ which drops iPad from UA)
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  // Safari: present but NOT Chrome/Firefox/Edge/Samsung
+  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS|OPiOS|SamsungBrowser/.test(ua);
+  const isFirefox = /Firefox|FxiOS/.test(ua);
+  const isAndroid = /Android/.test(ua);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  return { isIOS, isSafari, isFirefox, isAndroid, isStandalone };
+}
+
+function pwaState(){
+  try { return JSON.parse(localStorage.getItem(PWA_KEY)||'{}'); } catch { return {}; }
+}
+function savePwaState(patch){
+  try { localStorage.setItem(PWA_KEY, JSON.stringify({...pwaState(),...patch})); } catch {}
+}
+
+function shouldShowPrompt(){
+  const s = pwaState();
+  if(s.neverShow) return false;              // user clicked ✕
+  if(!s.snoozeUntil) return true;            // never seen before
+  return Date.now() > s.snoozeUntil;         // snooze expired
 }
 
 function InstallPrompt(){
-  const[prompt,setPrompt]=useState(null);   // beforeinstallprompt event
-  const[show,setShow]=useState(false);
-  const[showIOSGuide,setShowIOSGuide]=useState(false);
-  const browser=useBrowserInfo();
+  const [prompt,  setPrompt]  = useState(null);
+  const [show,    setShow]    = useState(false);
+  const [status,  setStatus]  = useState(null); // null | 'installing' | 'installed' | 'failed'
+  const browser = useBrowserInfo();
 
   useEffect(()=>{
-    if(browser.isStandalone)return;
-    if(localStorage.getItem('pwa-dismissed'))return;
-    if(sessionStorage.getItem('pwa-dismissed'))return;
+    if(browser.isStandalone) return;
+    if(!shouldShowPrompt()) return;
 
-    // Chrome / Edge / Samsung / Opera / Brave — standard beforeinstallprompt
-    const h=e=>{e.preventDefault();setPrompt(e);setShow(true);};
-    window.addEventListener('beforeinstallprompt',h);
+    const h = e => { e.preventDefault(); setPrompt(e); setShow(true); };
+    window.addEventListener('beforeinstallprompt', h);
 
-    // iOS Safari — show manual guide after a short delay (no API available)
-    if(browser.isIOS&&browser.isSafari){
-      const t=setTimeout(()=>setShow(true),2500);
-      return()=>{window.removeEventListener('beforeinstallprompt',h);clearTimeout(t);};
+    // Listen for successful install (fires in Chrome/Edge/Samsung)
+    const installed = () => {
+      setStatus('installed');
+      savePwaState({ neverShow: true });
+      setTimeout(()=>setStatus(null), 4000);
+    };
+    window.addEventListener('appinstalled', installed);
+
+    const needsManual = (browser.isIOS) || (browser.isFirefox && browser.isAndroid);
+    if(needsManual){
+      const t = setTimeout(()=>setShow(true), 3000);
+      return ()=>{
+        window.removeEventListener('beforeinstallprompt', h);
+        window.removeEventListener('appinstalled', installed);
+        clearTimeout(t);
+      };
     }
 
-    // Firefox on Android — show manual guide (no API)
-    if(browser.isFirefox&&browser.isAndroid){
-      const t=setTimeout(()=>setShow(true),2500);
-      return()=>{window.removeEventListener('beforeinstallprompt',h);clearTimeout(t);};
-    }
-
-    return()=>window.removeEventListener('beforeinstallprompt',h);
+    return ()=>{
+      window.removeEventListener('beforeinstallprompt', h);
+      window.removeEventListener('appinstalled', installed);
+    };
   },[]);
 
-  const install=async()=>{
-    if(!prompt)return;
-    prompt.prompt();
-    const{outcome}=await prompt.userChoice;
-    setShow(false);setPrompt(null);
-    localStorage.setItem('pwa-dismissed','1');
+  const doInstall = async()=>{
+    if(!prompt) return;
+    setShow(false);
+    setStatus('installing');
+    try{
+      prompt.prompt();
+      const { outcome } = await prompt.userChoice;
+      if(outcome === 'accepted'){
+        // 'appinstalled' event will fire shortly and set status='installed'
+        // but set a fallback in case it's slow
+        setTimeout(()=>setStatus(s=>s==='installing'?'installed':s), 1500);
+        setTimeout(()=>setStatus(null), 5500);
+      } else {
+        // User cancelled the native dialog
+        setStatus(null);
+        // Re-show our banner with snooze so they can try again later
+        savePwaState({ snoozeUntil: Date.now() + SNOOZE_DAYS * 86400_000 });
+      }
+    } catch{
+      setStatus('failed');
+      setTimeout(()=>setStatus(null), 4000);
+    }
+    setPrompt(null);
+    savePwaState({ neverShow: true });
   };
-  const dismiss=()=>{setShow(false);setPrompt(null);sessionStorage.setItem('pwa-dismissed','1');};
-  const neverShow=()=>{setShow(false);setPrompt(null);localStorage.setItem('pwa-dismissed','1');};
 
-  if(!show)return null;
+  const snooze = ()=>{
+    savePwaState({ snoozeUntil: Date.now() + SNOOZE_DAYS * 86400_000 });
+    setShow(false); setPrompt(null);
+  };
+  const never = ()=>{
+    savePwaState({ neverShow: true });
+    setShow(false); setPrompt(null);
+  };
 
-  // ── iOS Safari: step-by-step guide ──────────────────────────────
-  if(browser.isIOS&&!prompt){
-    return(
-      <div className="slide-down no-print" style={{position:'fixed',bottom:0,left:0,right:0,background:'var(--card)',borderTop:'1px solid var(--border)',borderRadius:'16px 16px 0 0',padding:'20px 20px 32px',zIndex:600,boxShadow:'0 -8px 32px rgba(0,0,0,.4)'}}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+  // ── Status toasts (installing / installed / failed) ──────────────
+  const StatusToast = status ? (
+    <div style={{
+      position:'fixed', bottom:64, left:'50%', transform:'translateX(-50%)',
+      background:
+        status==='installed' ? 'rgba(127,218,150,.97)' :
+        status==='failed'    ? 'rgba(240,80,80,.97)'   :
+        'rgba(30,40,70,.97)',
+      backdropFilter:'blur(8px)',
+      border:`1px solid ${status==='installed'?'rgba(127,218,150,.5)':status==='failed'?'rgba(240,80,80,.5)':'rgba(79,156,249,.3)'}`,
+      borderRadius:12, padding:'11px 20px',
+      display:'flex', alignItems:'center', gap:10,
+      zIndex:9999, boxShadow:'0 4px 24px rgba(0,0,0,.4)',
+      maxWidth:320, width:'calc(100% - 32px)',
+      animation:'slideUp .3s cubic-bezier(.4,0,.2,1) both',
+      whiteSpace:'nowrap',
+    }}>
+      {status==='installing' && <>
+        <span style={{fontSize:18,animation:'spin .8s linear infinite',display:'inline-block'}}>⟳</span>
+        <span style={{fontSize:13,fontWeight:600,color:'#fff'}}>Installing StudyHub…</span>
+      </>}
+      {status==='installed' && <>
+        <span style={{fontSize:18}}>✅</span>
+        <div>
+          <div style={{fontSize:13,fontWeight:700,color:'#0d2010'}}>StudyHub installed!</div>
+          <div style={{fontSize:11,color:'rgba(0,0,0,.6)'}}>Open it from your home screen</div>
+        </div>
+      </>}
+      {status==='failed' && <>
+        <span style={{fontSize:18}}>❌</span>
+        <span style={{fontSize:13,fontWeight:600,color:'#fff'}}>Install failed — try again later</span>
+      </>}
+    </div>
+  ) : null;
+
+  if(!show) return StatusToast || null;
+
+  /* ── iOS bottom-sheet guide ── */
+  if(browser.isIOS && !prompt){
+    return(<>
+      {StatusToast}
+      <div className="no-print" style={{position:'fixed',bottom:0,left:0,right:0,
+        background:'var(--card)',borderTop:'1px solid var(--border)',
+        borderRadius:'18px 18px 0 0',padding:'20px 20px 36px',
+        zIndex:9900,boxShadow:'0 -8px 40px rgba(0,0,0,.5)',
+        animation:'slideUp .35s cubic-bezier(.4,0,.2,1) both'}}>
+        {/* Handle bar */}
+        <div style={{width:36,height:4,borderRadius:2,background:'var(--border)',margin:'0 auto 16px'}}/>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <div style={{width:36,height:36,borderRadius:8,background:'linear-gradient(135deg,#1a2a4a,#0d1929)',border:'1px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18}}>📚</div>
+            <div style={{width:40,height:40,borderRadius:10,background:'linear-gradient(135deg,#1a2a4a,#0d1929)',
+              border:'1px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>📚</div>
             <div>
-              <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>Install StudyHub</div>
-              <div style={{fontSize:11,color:'var(--muted)'}}>Add to your home screen</div>
+              <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>Install StudyHub</div>
+              <div style={{fontSize:11,color:'var(--muted)'}}>Works offline · Loads faster</div>
             </div>
           </div>
-          <button onClick={neverShow} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,lineHeight:1,padding:'4px'}}>✕</button>
+          <button onClick={never} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,padding:'4px',lineHeight:1}}>✕</button>
         </div>
-        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        <div style={{display:'flex',flexDirection:'column',gap:9,marginBottom:16}}>
           {[
-            {step:1,icon:'⬆️',text:<span>Tap the <strong style={{color:'var(--text)'}}>Share</strong> button at the bottom of Safari</span>},
-            {step:2,icon:'➕',text:<span>Scroll down and tap <strong style={{color:'var(--text)'}}>Add to Home Screen</strong></span>},
-            {step:3,icon:'✅',text:<span>Tap <strong style={{color:'var(--text)'}}>Add</strong> — StudyHub will appear on your home screen</span>},
-          ].map(({step,icon,text})=>(
-            <div key={step} style={{display:'flex',alignItems:'center',gap:12,background:'var(--surface)',borderRadius:10,padding:'10px 14px'}}>
-              <span style={{fontSize:22,flexShrink:0}}>{icon}</span>
-              <div style={{flex:1,fontSize:13,color:'var(--muted)',lineHeight:1.5}}>{text}</div>
+            {n:1, icon:'⬆️', html:<>Tap the <strong style={{color:'#4f9cf9'}}>Share</strong> button at the bottom of your screen</>},
+            {n:2, icon:'➕', html:<>Scroll down and tap <strong style={{color:'#4f9cf9'}}>Add to Home Screen</strong></>},
+            {n:3, icon:'✅', html:<>Tap <strong style={{color:'#4f9cf9'}}>Add</strong> — done!</>},
+          ].map(({n,icon,html})=>(
+            <div key={n} style={{display:'flex',alignItems:'center',gap:12,
+              background:'var(--surface)',borderRadius:10,padding:'11px 14px'}}>
+              <span style={{width:26,height:26,borderRadius:'50%',background:'rgba(79,156,249,.12)',
+                color:'#4f9cf9',display:'flex',alignItems:'center',justifyContent:'center',
+                fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,flexShrink:0}}>{n}</span>
+              <span style={{fontSize:13,color:'var(--muted)',lineHeight:1.5}}>{html}</span>
             </div>
           ))}
         </div>
-        <button onClick={dismiss} style={{width:'100%',marginTop:14,background:'none',border:'1px solid var(--border)',borderRadius:9,color:'var(--muted)',cursor:'pointer',padding:'11px 0',fontSize:13}}>Maybe later</button>
+        <button onClick={snooze} style={{width:'100%',background:'none',border:'1px solid var(--border)',
+          borderRadius:10,color:'var(--muted)',cursor:'pointer',padding:'12px 0',fontSize:13}}>
+          Remind me in {SNOOZE_DAYS} days
+        </button>
       </div>
-    );
+    </>);
   }
 
-  // ── Firefox on Android: manual guide ────────────────────────────
-  if(browser.isFirefox&&browser.isAndroid&&!prompt){
-    return(
-      <div className="slide-down no-print" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'14px 18px',zIndex:600,boxShadow:'var(--shadow)',maxWidth:360,width:'calc(100% - 32px)'}}>
-        <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
-          <span style={{fontSize:22}}>📲</span>
-          <div style={{flex:1}}>
-            <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:4}}>Install StudyHub</div>
-            <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.6}}>
-              Tap the <strong style={{color:'var(--text)'}}>⋮ menu</strong> → <strong style={{color:'var(--text)'}}>Install</strong> or <strong style={{color:'var(--text)'}}>Add to Home Screen</strong>
-            </div>
+  /* ── Firefox Android compact tip ── */
+  if(browser.isFirefox && browser.isAndroid && !prompt){
+    return(<>
+      {StatusToast}
+      <div className="no-print" style={{position:'fixed',bottom:60,left:12,right:12,
+        background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,
+        padding:'13px 16px',zIndex:9900,boxShadow:'var(--shadow)',
+        display:'flex',alignItems:'center',gap:12,
+        animation:'slideUp .3s ease both'}}>
+        <span style={{fontSize:22,flexShrink:0}}>📲</span>
+        <div style={{flex:1}}>
+          <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:3}}>Install StudyHub</div>
+          <div style={{fontSize:11,color:'var(--muted)',lineHeight:1.5}}>
+            Tap <strong style={{color:'var(--text)'}}>⋮</strong> → <strong style={{color:'var(--text)'}}>Install</strong> or <strong style={{color:'var(--text)'}}>Add to Home Screen</strong>
           </div>
-          <button onClick={neverShow} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'2px',lineHeight:1,flexShrink:0}}>✕</button>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:5,flexShrink:0}}>
+          <button onClick={never} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,lineHeight:1}}>✕</button>
+          <button onClick={snooze} style={{background:'none',border:'1px solid var(--border)',borderRadius:5,
+            color:'var(--muted)',cursor:'pointer',padding:'3px 7px',fontSize:10}}>Later</button>
         </div>
       </div>
-    );
+    </>);
   }
 
-  // ── Chrome / Edge / Samsung / Brave: native prompt ──────────────
-  return(
-    <div className="slide-down no-print" style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 18px',display:'flex',alignItems:'center',gap:12,zIndex:600,boxShadow:'var(--shadow)',maxWidth:390,width:'calc(100% - 32px)'}}>
-      <div style={{fontSize:22}}>📲</div>
+  /* ── Chrome / Edge / Samsung / Brave native prompt ── */
+  if(!prompt) return StatusToast || null;
+  return(<>
+    {StatusToast}
+    <div className="no-print" style={{position:'fixed',top:14,left:'50%',transform:'translateX(-50%)',
+      background:'var(--card)',border:'1px solid rgba(79,156,249,.35)',borderRadius:14,
+      padding:'13px 18px',display:'flex',alignItems:'center',gap:12,
+      zIndex:9900,boxShadow:'0 4px 24px rgba(79,156,249,.18)',
+      maxWidth:400,width:'calc(100% - 28px)',
+      animation:'slideDown .3s ease both'}}>
+      <div style={{width:36,height:36,borderRadius:9,background:'linear-gradient(135deg,#1a2a4a,#0d1929)',
+        border:'1px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>📚</div>
       <div style={{flex:1}}>
-        <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:2}}>Install StudyHub</div>
-        <div style={{fontSize:11,color:'var(--muted)'}}>Add to home screen — works offline too</div>
+        <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:1}}>Install StudyHub</div>
+        <div style={{fontSize:11,color:'var(--muted)'}}>Works offline · Opens instantly</div>
       </div>
       <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center'}}>
-        <button onClick={neverShow} title="Don't show again" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'2px 4px',lineHeight:1}}>✕</button>
-        <button onClick={dismiss} style={{background:'none',border:'1px solid var(--border)',borderRadius:7,color:'var(--muted)',cursor:'pointer',padding:'6px 10px',fontSize:11}}>Later</button>
-        <button onClick={install} style={{background:'#4f9cf9',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'6px 12px',fontSize:11,fontWeight:700}}>Install</button>
+        <button onClick={never} title="Don't show again"
+          style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:17,padding:'2px',lineHeight:1}}>✕</button>
+        <button onClick={snooze}
+          style={{background:'none',border:'1px solid var(--border)',borderRadius:7,
+            color:'var(--muted)',cursor:'pointer',padding:'6px 10px',fontSize:11}}>Later</button>
+        <button onClick={doInstall}
+          style={{background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',border:'none',borderRadius:7,
+            color:'#fff',cursor:'pointer',padding:'7px 14px',fontSize:12,fontWeight:700}}>Install</button>
+      </div>
+    </div>
+  </>);
+}
+
+/* ═══════════════ WELCOME MODAL (first sign-up) ═══════════════ */
+function WelcomeModal({user,onClose}){
+  const[step,setStep]=useState(0);
+  const isExternal=user.role===ROLE.EXTERNAL||user.accountType==='external';
+
+  const steps=[
+    {
+      icon:'🎉',
+      title:`Welcome to StudyHub, ${user.displayName}!`,
+      body:`We're really glad you're here. StudyHub is your AI-powered study companion — everything you need for your courses, all in one place.`,
+      cta:'Next',
+    },
+    {
+      icon:'📚',
+      title:'Everything in one place',
+      body: isExternal
+        ? `You have full access to all course materials across every year. Browse, study, bookmark and use StudyBot whenever you need.`
+        : `You're set up as a ${isExternal?'Visitor':'Year '+user.year+' student'}. Browse your courses, track your progress, and use StudyBot to get instant help on any topic.`,
+      cta:'Next',
+    },
+    {
+      icon:'🤖',
+      title:'Meet StudyBot',
+      body:`The 🤖 button in the corner is your AI tutor, powered by Groq. Ask it to explain anything, generate practice questions, or search for a course. It's always on.`,
+      cta:'Next',
+    },
+    {
+      icon:'📲',
+      title:'Install on your phone',
+      body:`StudyHub works as an app too. Look out for the "Install StudyHub" prompt, or on iPhone tap Share → Add to Home Screen. It works offline once installed.`,
+      cta:"Let's go →",
+    },
+  ];
+
+  const current=steps[step];
+  const isLast=step===steps.length-1;
+
+  return(
+    <div className="modal-overlay" style={{zIndex:9950}} onClick={isLast?onClose:undefined}>
+      <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:20,
+        padding:'36px 32px',maxWidth:440,width:'calc(100% - 32px)',margin:'auto',
+        boxShadow:'0 20px 60px rgba(0,0,0,.5)',textAlign:'center'}}>
+
+        {/* Progress dots */}
+        <div style={{display:'flex',gap:6,justifyContent:'center',marginBottom:28}}>
+          {steps.map((_,i)=>(
+            <div key={i} style={{width:i===step?24:7,height:7,borderRadius:4,
+              background:i===step?'#4f9cf9':i<step?'rgba(79,156,249,.4)':'var(--border)',
+              transition:'all .3s ease'}}/>
+          ))}
+        </div>
+
+        {/* Icon */}
+        <div style={{fontSize:52,marginBottom:16,lineHeight:1}}>{current.icon}</div>
+
+        {/* Title */}
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'var(--text)',
+          marginBottom:12,lineHeight:1.3}}>{current.title}</div>
+
+        {/* Body */}
+        <p style={{fontSize:14,color:'var(--muted)',lineHeight:1.7,marginBottom:28,
+          maxWidth:340,margin:'0 auto 28px'}}>{current.body}</p>
+
+        {/* CTA */}
+        <button onClick={isLast?onClose:()=>setStep(s=>s+1)}
+          style={{background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',border:'none',
+            borderRadius:10,color:'#fff',cursor:'pointer',
+            padding:'13px 32px',fontSize:14,fontWeight:700,width:'100%',
+            boxShadow:'0 4px 16px rgba(79,156,249,.3)'}}>
+          {current.cta}
+        </button>
+
+        {!isLast&&(
+          <button onClick={onClose} style={{background:'none',border:'none',
+            color:'var(--muted)',cursor:'pointer',fontSize:12,marginTop:12,
+            textDecoration:'underline'}}>Skip intro</button>
+        )}
       </div>
     </div>
   );
@@ -921,7 +1124,7 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
       const isExternal = f.accountType==='external';
       const nu={username:f.username,pw_hash:hashStr(f.password),display_name:f.username,year:isExternal?0:f.year,account_type:isExternal?'external':'student',created_at:new Date().toISOString()};
       await dbSaveUser(nu);
-      onLogin({username:nu.username,displayName:nu.display_name,year:nu.year,role:isExternal?ROLE.EXTERNAL:ROLE.USER});
+      onLogin({username:nu.username,displayName:nu.display_name,year:nu.year,role:isExternal?ROLE.EXTERNAL:ROLE.USER,isNew:true});
     }catch{setErrs({password:'Connection error. Try again.'});setLoading(false);}
   };
 
@@ -3249,6 +3452,7 @@ export default function App(){
   const[progress,setProgress]=useState({});
   const[loading,setLoading]=useState(false);
   const[syncing,setSyncing]=useState(false);
+  const[showWelcome,setShowWelcome]=useState(false);
 
   // Page title updates on view change
   usePageTitle(view,active);
@@ -3398,6 +3602,7 @@ export default function App(){
       const p=await dbLoadProgress(u.username).catch(()=>({}));
       setProgress(p);
     }
+    if(u.isNew) setShowWelcome(true);
     setView('home');
   };
 
@@ -3484,6 +3689,8 @@ export default function App(){
           summary:active.data?.keyConcepts?.slice(0,5).map(c=>c.title).join(', ')
         }:null} courses={courses} user={user}/>
       )}
+
+      {showWelcome&&user&&<WelcomeModal user={user} onClose={()=>setShowWelcome(false)}/>}
 
       {view!=='auth'&&<CopyrightBar/>}
     </>
