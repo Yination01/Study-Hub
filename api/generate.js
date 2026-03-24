@@ -80,15 +80,55 @@ async function callGroq(apiKey, messages, model, temperature) {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages, temperature: temperature ?? 0.2, max_tokens: 8192 }),
+    body: JSON.stringify({ model, messages, temperature: temperature ?? 0.2, max_tokens: 16000 }),
   });
   if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.choices?.[0]?.message?.content || '';
 }
 
+function sanitizeJsonStr(raw) {
+  // Strip BOM
+  let s = raw.replace(/^\uFEFF/, '');
+  // Strip markdown fences
+  s = s.replace(/```json|```/g, '').trim();
+  // Find the JSON boundaries — strip any leading/trailing non-JSON text
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start !== -1 && end !== -1) s = s.slice(start, end + 1);
+  // Replace unescaped control characters (0x00-0x1F) that break JSON.parse
+  // We walk char by char and escape only those inside string literals
+  let result = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    const code = s.charCodeAt(i);
+    if (escaped) { result += ch; escaped = false; continue; }
+    if (ch === '\\') { result += ch; escaped = true; continue; }
+    if (ch === '"') { inString = !inString; result += ch; continue; }
+    if (inString && code < 0x20) {
+      // Escape the control character properly
+      if (code === 0x09) result += '\\t';
+      else if (code === 0x0A) result += '\\n';
+      else if (code === 0x0D) result += '\\r';
+      else result += '\\u' + code.toString(16).padStart(4, '0');
+      continue;
+    }
+    result += ch;
+  }
+  return result;
+}
+
 function parseJSON(raw) {
-  return JSON.parse(raw.replace(/```json|```/g, '').trim());
+  const cleaned = sanitizeJsonStr(raw);
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    // Last resort: aggressive strip of all control chars
+    const aggressive = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ' ');
+    return JSON.parse(aggressive);
+  }
 }
 
 export default async function handler(req, res) {
