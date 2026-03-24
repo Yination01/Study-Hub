@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════╝
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
+import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 /* ═══════════════ CONFIG ═══════════════ */
@@ -1691,6 +1691,19 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
 
   const saveEntry=async(data,autoDetected)=>{
     if(!data.chapterTitle) throw new Error('Missing chapterTitle in response');
+    // Normalise all array fields so components never call .map() on null
+    data.keyConcepts  = Array.isArray(data.keyConcepts)  ? data.keyConcepts  : [];
+    data.definitions  = Array.isArray(data.definitions)  ? data.definitions  : [];
+    data.mechanisms   = Array.isArray(data.mechanisms)   ? data.mechanisms   : [];
+    data.algorithms   = Array.isArray(data.algorithms)   ? data.algorithms   : [];
+    data.chapters     = Array.isArray(data.chapters)     ? data.chapters     : [];
+    data.questions    = Array.isArray(data.questions)    ? data.questions    : [];
+    // Ensure nested arrays inside chapters are safe
+    data.chapters = data.chapters.map(ch=>({...ch,takeaways:Array.isArray(ch.takeaways)?ch.takeaways:[]}));
+    // Ensure every concept/definition has required string fields
+    data.keyConcepts = data.keyConcepts.map(c=>({title:c.title||'',description:c.description||'',color:c.color||'blue'}));
+    data.definitions = data.definitions.map(d=>({term:d.term||'',definition:d.definition||''}));
+    data.questions   = data.questions.map(q=>({question:q.question||'',answer:q.answer||''}));
     const finalYear     = autoDetected?.year      || year;
     const finalSemester = autoDetected?.semester  || semester;
     // Multi-dept: use detected dept if auto, otherwise use all selected
@@ -4209,6 +4222,35 @@ function SyncToast({visible}){
   );
 }
 
+/* ═══════════════ ERROR BOUNDARY ═══════════════ */
+class ErrorBoundary extends React.Component{
+  constructor(p){super(p);this.state={crashed:false,msg:''};}
+  static getDerivedStateFromError(e){return{crashed:true,msg:e?.message||'Unknown error'};}
+  componentDidCatch(e,info){console.error('StudyHub crash:',e,info);}
+  render(){
+    if(this.state.crashed){
+      return(
+        <div style={{minHeight:'100vh',background:'#0d0f14',display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div style={{maxWidth:420,width:'100%',background:'#1a1e27',border:'1px solid rgba(240,80,80,.3)',borderRadius:16,padding:'32px 28px',textAlign:'center'}}>
+            <div style={{fontSize:40,marginBottom:16}}>⚠️</div>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'#e2e6f0',marginBottom:10}}>Something went wrong</div>
+            <p style={{fontSize:13,color:'#8892a4',lineHeight:1.7,marginBottom:20}}>
+              {this.state.msg?.includes('map')||this.state.msg?.includes('undefined')
+                ?'A course was saved with missing data. The rest of your courses are safe — reload to continue.'
+                :this.state.msg||'An unexpected error occurred. Your data is safe.'}
+            </p>
+            <button onClick={()=>{this.setState({crashed:false,msg:''});window.location.reload();}}
+              style={{background:'#4f9cf9',border:'none',borderRadius:10,color:'#000',cursor:'pointer',padding:'11px 28px',fontSize:14,fontWeight:700}}>
+              🔄 Reload StudyHub
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App(){
   const[dark,toggleTheme]=useTheme();
   const[bookmarks,toggleBookmark]=useBookmarks();
@@ -4438,6 +4480,7 @@ export default function App(){
   const goToSignUp=useCallback(()=>{clearSession();setUser(null);setProgress({});setActive(null);setView('auth');},[]);
 
   return(
+    <ErrorBoundary>
     <>
       <style>{css}</style>
       {!online&&<OfflineBanner/>}
@@ -4491,5 +4534,6 @@ export default function App(){
 
       {view!=='auth'&&<CopyrightBar/>}
     </>
+    </ErrorBoundary>
   );
 }
