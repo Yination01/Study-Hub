@@ -227,7 +227,7 @@ const css = `
     position:fixed;inset:0;background:rgba(0,0,0,.72);
     backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
     display:flex;align-items:center;justify-content:center;
-    z-index:1500;padding:20px;overflow-y:auto
+    z-index:2500;padding:20px;overflow-y:auto
   }
 `;
 
@@ -1563,7 +1563,7 @@ async function extractText(file){
     });
     // Try parsing as existing StudyHub JSON first
     try{
-      const parsed=JSON.parse(text);
+      const parsed=safeParse(text);
       if(parsed.chapterTitle) return '__STUDYHUB_JSON__:'+text;
     }catch{}
     return text;
@@ -1618,6 +1618,23 @@ async function toBase64(file){
     r.onerror=()=>rej(new Error('Read failed'));
     r.readAsDataURL(file);
   });
+}
+
+/* Strip control characters that break JSON.parse (e.g. unescaped tabs, newlines inside strings) */
+function sanitizeJson(raw){
+  // Remove BOM if present
+  let s=raw.replace(/^\uFEFF/,'');
+  // Replace literal control chars (0x00-0x1F except \t \n \r) inside strings with a space
+  // We do a two-pass: first normalise CRLF, then strip bad chars
+  s=s.replace(/\r\n/g,'\\n').replace(/\r/g,'\\n');
+  // Strip remaining raw control chars (0x00–0x08, 0x0B–0x0C, 0x0E–0x1F)
+  s=s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,' ');
+  return s;
+}
+function safeParse(raw){
+  try{ return JSON.parse(raw); }catch{
+    return JSON.parse(sanitizeJson(raw));
+  }
 }
 
 const JSON_PROMPT=`Generate a StudyHub JSON study guide for this document.
@@ -1714,7 +1731,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
 
       // Already valid StudyHub JSON
       if(text.startsWith('__STUDYHUB_JSON__:')){
-        const data=JSON.parse(text.replace('__STUDYHUB_JSON__:',''));
+        const data=safeParse(text.replace('__STUDYHUB_JSON__:',''));
         setProgress('Saving course…');
         await saveEntry(data); return;
       }
@@ -1763,13 +1780,21 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy=''}){
       }
       setProgress('Saving course…');
       await saveEntry(data,detected);
-    }catch(e){setError('Failed: '+e.message);setStatus('idle');setProgress('');}
+    }catch(e){
+      const msg=e.message||'Unknown error';
+      const friendly=msg.includes('control character')||msg.includes('JSON')
+        ?'The file contains formatting that could not be parsed. Try saving it as plain .txt or .docx and uploading again.'
+        :msg.includes('413')||msg.includes('too large')
+        ?'File is too large. Try splitting it into smaller sections.'
+        :'Failed: '+msg;
+      setError(friendly);setStatus('idle');setProgress('');
+    }
   };
 
   const processPaste=async()=>{
     setError('');setSmartSortMsg('');
     try{
-      const data=JSON.parse(pasteText.replace(/```json|```/g,'').trim());
+      const data=safeParse(pasteText.replace(/```json|```/g,'').trim());
       if(!data.chapterTitle) throw new Error('Missing chapterTitle');
       setStatus('processing');setProgress('Applying smart sort…');
       const detected=detectMetadata(data);
@@ -3267,11 +3292,13 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
   const[expanded,setExpanded]=useState(false);
   const[busy,setBusy]=useState('');
   const[localYear,setLocalYear]=useState(u.year||1);
+  const[localAccountType,setLocalAccountType]=useState(u.account_type||'student');
   const accentColor=ROLE_COLOR[role]||ROLE_COLOR.user;
 
   const doRoleChange=async(accountType)=>{
     setBusy('role');
     await onRoleChange(accountType);
+    setLocalAccountType(accountType);
     setBusy('');
   };
   const doAdminToggle=async()=>{
@@ -3286,7 +3313,7 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
     setBusy('');
   };
 
-  const isExternal=u.account_type==='external';
+  const isExternal=localAccountType==='external';
 
   return(
     <div style={{background:'var(--surface)',border:`1px solid ${expanded?accentColor+'40':'var(--border)'}`,borderRadius:10,overflow:'hidden',transition:'border-color .2s'}}>
@@ -3299,10 +3326,10 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
             @{u.username} · {new Date(u.created_at).toLocaleDateString()}
           </div>
         </div>
-        <RolePill role={role} accountType={u.account_type}/>
-        {!isExternal&&u.year>0&&(
-          <div style={{background:YEAR_BG[u.year]||'transparent',border:`1px solid ${YEAR_COLORS[u.year]||'var(--border)'}40`,borderRadius:5,padding:'3px 9px'}}>
-            <Mono color={YEAR_COLORS[u.year]||'var(--muted)'} size={9}>Yr {u.year}</Mono>
+        <RolePill role={isAdm?ROLE.ADMIN:isExternal?ROLE.EXTERNAL:ROLE.USER} accountType={localAccountType}/>
+        {!isExternal&&localYear>0&&(
+          <div style={{background:YEAR_BG[localYear]||'transparent',border:`1px solid ${YEAR_COLORS[localYear]||'var(--border)'}40`,borderRadius:5,padding:'3px 9px'}}>
+            <Mono color={YEAR_COLORS[localYear]||'var(--muted)'} size={9}>Yr {localYear}</Mono>
           </div>
         )}
         {isAdm&&<Mono color="#da7ff0" size={9}>ADMIN</Mono>}
@@ -3407,20 +3434,31 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 
   // Admins submit for approval; superuser acts directly
   const doDelete=async id=>{
-    const ok=await(window.shConfirm?.({
-      title:isSU2?'Delete course permanently?':'Submit deletion request?',
-      message:isSU2?'This course and all its data will be permanently removed. This cannot be undone.':'Your deletion request will be sent to the superuser for approval.',
-      danger:true,
-      confirmLabel:isSU2?'Delete':'Submit Request'
-    })??Promise.resolve(true));
-    if(!ok)return;
-    if(isSU2){
-      await dbDeleteCourse(id);const idx=await dbLoadCourseIndex();onCoursesChange(idx);
+    // Use shConfirm if available, otherwise native confirm as reliable fallback
+    let ok;
+    if(typeof window.shConfirm==='function'){
+      ok=await window.shConfirm({
+        title:isSU2?'Delete course permanently?':'Submit deletion request?',
+        message:isSU2?'This course and all its data will be permanently removed. This cannot be undone.':'Your deletion request will be sent to the superuser for approval.',
+        danger:true,
+        confirmLabel:isSU2?'Delete':'Submit Request'
+      });
     } else {
-      const c=courses.find(x=>x.id===id);
-      await dbSubmitPending('delete_course',user.username,{id,chapterTitle:c?.chapterTitle,courseName:c?.courseName});
-      flash('✓ Deletion request submitted — awaiting superuser approval.');
+      ok=window.confirm(isSU2?'Delete this course permanently?':'Submit deletion request for superuser approval?');
     }
+    if(!ok)return;
+    try{
+      if(isSU2){
+        await dbDeleteCourse(id);
+        const idx=await dbLoadCourseIndex();
+        onCoursesChange(idx);
+        flash('✓ Course deleted.');
+      } else {
+        const c=courses.find(x=>x.id===id);
+        await dbSubmitPending('delete_course',user.username,{id,chapterTitle:c?.chapterTitle,courseName:c?.courseName});
+        flash('✓ Deletion request submitted — awaiting superuser approval.');
+      }
+    }catch(e){flash('Error: '+e.message);}
   };
 
   const pTabs=[
@@ -3515,8 +3553,8 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 
         {tab==='users'&&(
           <div className="fade-up">
-            {isSU2&&<div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:8,padding:'9px 14px',fontSize:12,color:'#f9a84f',marginBottom:14}}>⚡ Superuser: click any field below to change it directly — no approval needed.</div>}
-            <div style={{marginBottom:14}}><SearchBar value={search} onChange={setSearch} placeholder="Search users…"/></div>
+            {isSU2&&<div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:8,padding:'9px 14px',fontSize:12,color:'#f9a84f',marginBottom:14}}>⚡ Superuser: click a user row to expand and change their year or account type directly — no approval needed.</div>}
+            <div style={{marginBottom:14,display:'flex',gap:10,alignItems:'center'}}><SearchBar value={search} onChange={setSearch} placeholder="Search users…"/><Mono color="var(--muted)" size={9}>{allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).length} USERS</Mono></div>
             <div style={{display:'flex',flexDirection:'column',gap:9}}>
               {allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).map((u,i)=>{
                 const isAdm=admins.includes(u.username.toLowerCase());
@@ -4191,6 +4229,7 @@ export default function App(){
   const[loading,setLoading]=useState(false);
   const[syncing,setSyncing]=useState(false);
   const[showWelcome,setShowWelcome]=useState(false);
+  const[announceKey,setAnnounceKey]=useState(0); // bumped on any announcement change
 
   // Page title updates on view change
   usePageTitle(view,active);
@@ -4242,44 +4281,46 @@ export default function App(){
     const coursesCh=supabase.channel('rt-courses')
       .on('postgres_changes',{event:'*',schema:'public',table:'courses'},()=>{
         setSyncing(true);
-        dbLoadCourseIndex().then(data=>{setCourses(data);setSyncing(false);}).catch(()=>setSyncing(false));
+        dbLoadCourseIndex().then(data=>{
+          setCourses(prev=>{
+            const prevSig=prev.map(c=>c.id).sort().join('|');
+            const newSig=data.map(c=>c.id).sort().join('|');
+            return prevSig===newSig&&prev.length===data.length?prev:data;
+          });
+          setSyncing(false);
+        }).catch(()=>setSyncing(false));
       }).subscribe();
 
-    // Announcements channel
+    // Announcements — force GlobalAnnouncementStrip to remount by bumping a counter
     const annCh=supabase.channel('rt-announcements')
       .on('postgres_changes',{event:'*',schema:'public',table:'announcements'},()=>{
-        // Just trigger a re-render signal — GlobalAnnouncementStrip will re-fetch
-        setSyncing(true);setTimeout(()=>setSyncing(false),600);
+        setSyncing(true);
+        setAnnounceKey(k=>k+1); // triggers GlobalAnnouncementStrip to re-fetch
+        setTimeout(()=>setSyncing(false),600);
       }).subscribe();
 
-    // Assignments — push notification on new one if permission granted
+    // Assignments — push + notification badge refresh
     const assignCh=supabase.channel('rt-assignments')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'assignments'},(payload)=>{
         setSyncing(true);setTimeout(()=>setSyncing(false),600);
-        if(payload.new){
-          pushNotification(`📋 New Assignment: ${payload.new.title}`,payload.new.due_date?`Due ${new Date(payload.new.due_date).toLocaleDateString()}`:'Check StudyHub for details');
-        }
+        if(payload.new) pushNotification(`📋 New Assignment: ${payload.new.title}`,payload.new.due_date?`Due ${new Date(payload.new.due_date).toLocaleDateString()}`:'Check StudyHub for details');
       }).subscribe();
 
-    // CAs channel
+    // CAs
     const caCh=supabase.channel('rt-cas')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'course_cas'},(payload)=>{
         setSyncing(true);setTimeout(()=>setSyncing(false),600);
-        if(payload.new){
-          pushNotification(`📝 New ${payload.new.type}: ${payload.new.title}`,payload.new.date?`On ${new Date(payload.new.date).toLocaleDateString()}`:'Check StudyHub for details');
-        }
+        if(payload.new) pushNotification(`📝 New ${payload.new.type}: ${payload.new.title}`,payload.new.date?`On ${new Date(payload.new.date).toLocaleDateString()}`:'Check StudyHub for details');
       }).subscribe();
 
-    // Pending approvals counter (superuser only)
+    // Pending approvals
     const pendingCh=supabase.channel('rt-pending')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'pending_actions'},()=>{
         setSyncing(true);setTimeout(()=>setSyncing(false),600);
-        if(user?.role===ROLE.SUPERUSER){
-          pushNotification('⚡ New Approval Request','An admin has submitted a request for your approval on StudyHub.');
-        }
+        if(user?.role===ROLE.SUPERUSER) pushNotification('⚡ New Approval Request','An admin has submitted a request for your approval on StudyHub.');
       }).subscribe();
 
-    // Status change requests — detect when own request is approved/rejected
+    // Status change requests
     const statusCh=supabase.channel('rt-status-requests')
       .on('postgres_changes',{event:'UPDATE',schema:'public',table:'status_change_requests'},async(payload)=>{
         if(!user||user.isGuest)return;
@@ -4291,8 +4332,21 @@ export default function App(){
           setUser(updated);saveSession(updated);
           pushNotification('✅ Status change approved',`Your account is now "${row.to_type}". Changes are live.`);
         } else if(row.status==='rejected'){
-          pushNotification('❌ Status change rejected',row.note||'Your request was declined. You can submit a new one.');
+          pushNotification('❌ Status change rejected',row.note||'Your request was declined.');
         }
+      }).subscribe();
+
+    // Users table — detect when superuser changes year/account_type for the current user
+    const usersCh=supabase.channel('rt-users')
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'users'},async(payload)=>{
+        if(!user||user.isGuest)return;
+        if(payload.new?.username!==user.username)return;
+        // Our own user row changed — re-resolve role and update session
+        const row=payload.new;
+        const newRole=await resolveRole(user.username);
+        const updated={...user,role:newRole,year:row.year||user.year,accountType:row.account_type||user.accountType};
+        setUser(updated);saveSession(updated);
+        if(newRole!==user.role) pushNotification('✅ Account updated','Your account type has been changed. Changes are live.');
       }).subscribe();
 
     return()=>{
@@ -4302,6 +4356,7 @@ export default function App(){
       supabase.removeChannel(caCh);
       supabase.removeChannel(pendingCh);
       supabase.removeChannel(statusCh);
+      supabase.removeChannel(usersCh);
     };
   },[user?.role]);
 
@@ -4309,14 +4364,20 @@ export default function App(){
   useEffect(()=>{
     if(!online)return;
     const tick=setInterval(async()=>{
-      setSyncing(true);
+      // Fully silent — no toast, no flicker, no interruption
       try{
-        await Promise.all([
-          dbLoadCourseIndex().then(setCourses),
+        const [newCourses] = await Promise.all([
+          dbLoadCourseIndex(),
           loadDepartments(),
           loadUserTypes(),
           ...(user&&!user.isGuest?[dbLoadProgress(user.username).then(setProgress)]:[]),
         ]);
+        // Only update courses state if something actually changed (avoids re-renders)
+        setCourses(prev=>{
+          const prevIds=prev.map(c=>c.id+c.addedAt).join('|');
+          const newIds=newCourses.map(c=>c.id+c.addedAt).join('|');
+          return prevIds===newIds?prev:newCourses;
+        });
         // Re-check role in case a status change was approved
         if(user&&!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)){
           const newRole=await resolveRole(user.username);
@@ -4327,7 +4388,7 @@ export default function App(){
             pushNotification('✅ Account status updated','Your account type has been changed on StudyHub.');
           }
         }
-      }catch{}finally{setSyncing(false);}
+      }catch{}
     },90_000);
     return()=>clearInterval(tick);
   },[online,user?.username,user?.role]);
