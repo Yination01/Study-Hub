@@ -191,6 +191,17 @@ export default async function handler(req, res) {
     if (classifyData?.courseName && !result.courseName) result.courseName = classifyData.courseName;
     if (classifyData) result._classify = classifyData;
 
+    // Normalise array fields so clients never receive null where arrays are expected
+    if (result._type === 'course' || !result._type) {
+      result.keyConcepts = Array.isArray(result.keyConcepts) ? result.keyConcepts : [];
+      result.definitions = Array.isArray(result.definitions) ? result.definitions : [];
+      result.mechanisms  = Array.isArray(result.mechanisms)  ? result.mechanisms  : [];
+      result.algorithms  = Array.isArray(result.algorithms)  ? result.algorithms  : [];
+      result.chapters    = Array.isArray(result.chapters)    ? result.chapters    : [];
+      result.questions   = Array.isArray(result.questions)   ? result.questions   : [];
+      result.chapters    = result.chapters.map(ch => ({...ch, takeaways: Array.isArray(ch.takeaways) ? ch.takeaways : []}));
+    }
+
     return res.status(200).json(result);
   } catch (err) {
     console.error('Generate error:', err);
