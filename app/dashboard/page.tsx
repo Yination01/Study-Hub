@@ -1,4 +1,14 @@
-'use client'
+// TEST - Delete after confirming works
+<div className="p-8 bg-red-500 text-white text-2xl mb-8">
+  ✅ MONETIZATION ACTIVE! 
+  <br/>Tier: {localStorage.getItem('userTier') || 'student'}
+  <br/><Button onClick={() => {
+    localStorage.setItem('userTier', 'pro')
+    alert('✅ Upgraded to PRO!')
+    location.reload()
+  }}>TEST UPGRADE</Button>
+</div>
+  'use client'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
