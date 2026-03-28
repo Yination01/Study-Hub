@@ -1,11 +1,12 @@
-import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY } from '../lib/constants.js';
+import React,{ useState, useEffect, useRef } from 'react';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
+  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS,
+  CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount,
+  TIER_CONFIG, CODE_TO_DEPT, detectMetadata, css } from '../lib/constants.js';
 import * as db from '../lib/db.js';
-import { Tag, Mono, SectionLabel, Field, Avatar, RoleBadge, RolePill, ProgressBar, Logo, ThemeToggle, SearchBar } from './UI.jsx';
-import { useTheme } from '../lib/hooks.js';
+import { Field, Logo, Mono, ThemeToggle } from './UI.jsx';
 
-/* ═══════════════ AUTH SCREEN ═══════════════ */
-function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
+export function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
   const[tab,setTab]=useState('signin');
   const[f,setF]=useState({username:'',password:'',confirm:'',year:3,accountType:'student'});
   const[errs,setErrs]=useState({});const[loading,setLoading]=useState(false);
@@ -148,5 +149,5 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
   );
 }
 
-
-export { AuthScreen };
+/* ═══════════════ UPLOAD MODAL ═══════════════ */
+/* File format definitions */
