@@ -247,3 +247,4 @@ footer{margin-top:30px;border-top:1px solid #ccc;padding-top:10px;font-size:10px
 </body></html>`);
   w.document.close();
   setTimeout(()=>w.print(),400);
+}
