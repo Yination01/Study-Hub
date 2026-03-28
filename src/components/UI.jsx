@@ -1,6 +1,8 @@
-import React from 'react';
-import { ROLE_COLOR, ROLE_BG, ROLE_ICON, USER_TYPES, YEAR_COLORS } from '../lib/constants.js';
+import React,{ useState, useEffect } from 'react';
+import { ROLE, ROLE_COLOR, ROLE_BG, ROLE_ICON, USER_TYPES, YEAR_COLORS,
+  APP_VERSION, COPYRIGHT_YEAR } from '../lib/constants.js';
 
+/* ═══════════════ SMALL UI ATOMS ═══════════════ */
 export const Tag=({children,color='#4f9cf9'})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,background:`${color}18`,color,borderRadius:4,padding:'2px 8px',marginRight:5,display:'inline-block'}}>{children}</span>);
 export const Mono=({children,color='#4f9cf9',size=10})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:size,color,letterSpacing:2,textTransform:'uppercase'}}>{children}</span>);
 export const SectionLabel=({children})=>(<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:3,textTransform:'uppercase',color:'#f9a84f',marginBottom:20,display:'flex',alignItems:'center',gap:10}}>{children}<div style={{flex:1,height:1,background:'var(--border)'}}/></div>);
@@ -15,6 +17,8 @@ export const RolePill=({role,accountType})=>{
   return(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,background:ROLE_BG[role]||ROLE_BG.user,color:col,border:`1px solid ${col}50`,borderRadius:20,padding:'4px 12px',letterSpacing:1,display:'inline-flex',alignItems:'center',gap:5,fontWeight:600}}>{getUserTypeLabel(role,accountType)}</span>);
 };
 export const ProgressBar=({pct,color='#4f9cf9'})=>(<div style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><Mono color="var(--muted)" size={9}>PROGRESS</Mono><Mono color={color} size={9}>{pct}%</Mono></div><div style={{height:3,background:'var(--border)',borderRadius:2}}><div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2,transition:'width .5s ease'}}/></div></div>);
+
+
 
 /* ═══════════════ LOGO ═══════════════ */
 export function Logo({onClick,size='md'}){
@@ -38,6 +42,8 @@ export function Logo({onClick,size='md'}){
   );
 }
 
+
+
 /* ═══════════════ THEME TOGGLE ═══════════════ */
 export function ThemeToggle({dark,toggle}){
   return(
@@ -46,6 +52,8 @@ export function ThemeToggle({dark,toggle}){
     </button>
   );
 }
+
+
 
 /* ═══════════════ OFFLINE BANNER ═══════════════ */
 export function OfflineBanner(){
@@ -56,25 +64,13 @@ export function OfflineBanner(){
   );
 }
 
-/* ═══════════════ PWA INSTALL ═══════════════ */
-/* ═══════════════ INSTALL PROMPT (cross-browser) ═══════════════ */
-export const PWA_KEY      = 'sh-pwa-v2';
-export const SNOOZE_DAYS  = 3;
 
-/* Shared beforeinstallprompt event — captured once, used everywhere */
-let _pwaPromptEvent = null;
-let _pwaListeners   = [];
-if(typeof window !== 'undefined'){
-  window.addEventListener('beforeinstallprompt', e=>{
-    e.preventDefault();
-    _pwaPromptEvent = e;
-    _pwaListeners.forEach(fn=>fn(e));
-  });
-}
-export function usePWAPrompt(){
-  const[p,setP]=useState(_pwaPromptEvent);
-  useEffect(()=>{
-    const fn=e=>setP(e);
-    _pwaListeners.push(fn);
-    return()=>{ _pwaListeners=_pwaListeners.filter(f=>f!==fn); };
-  },[]);
+
+/* ═══════════════ SEARCH BAR ═══════════════ */
+export const SearchBar=({value,onChange,placeholder='Search courses…'})=>(
+  <div style={{position:'relative',flex:1}}>
+    <span style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',fontSize:14,opacity:.5}}>🔍</span>
+    <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+      style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 14px 10px 36px',color:'var(--text)',fontSize:13,fontFamily:"'DM Sans',sans-serif"}}/>
+  </div>
+);
