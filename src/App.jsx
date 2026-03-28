@@ -18,11 +18,12 @@ import { Home } from './components/Home.jsx';
 import { CourseView } from './components/CourseView.jsx';
 import { CourseTabView } from './components/Upload.jsx';
 import { AdminPanel } from './components/Admin.jsx';
-import { WelcomeModal, CopyrightBar, GlobalAnnouncementStrip } from './components/Modals.jsx';
+import { WelcomeModal, CopyrightBar } from './components/Modals.jsx';
 import { OfflineBanner, GuestBanner } from './components/UI.jsx';
 import { loadDepartments, loadUserTypes, dbLoadCourseIndex, dbLoadCourseData,
   dbLoadProgress, dbSaveProgress, resolveRole, loadSubConfig } from './lib/db.jsx';
 
+/* ═══════════════ ERROR BOUNDARY ═══════════════ */
 class ErrorBoundary extends React.Component{
   constructor(p){super(p);this.state={crashed:false,msg:''};}
   static getDerivedStateFromError(e){return{crashed:true,msg:e?.message||'Unknown error'};}
