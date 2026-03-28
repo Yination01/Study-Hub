@@ -1,10 +1,11 @@
-import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, CACHE_KEY, getSubVal, CODE_TO_DEPT, RES_ICONS, AI_MSG_KEY, getAiMsgCount, incAiMsgCount, APP_VERSION, COPYRIGHT_YEAR } from '../lib/constants.js';
+import React,{ useState, useEffect, useRef, useCallback } from 'react';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
+  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS,
+  CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount,
+  TIER_CONFIG, CODE_TO_DEPT, detectMetadata, css } from '../lib/constants.js';
 import * as db from '../lib/db.js';
-import { Tag, Mono, SectionLabel, Field, Avatar, RoleBadge, RolePill, ProgressBar, Logo, ThemeToggle, SearchBar } from './UI.jsx';
+import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo } from './UI.jsx';
 
-/* ═══════════════ UPLOAD MODAL ═══════════════ */
-/* File format definitions */
 const FILE_TYPES = [
   {ext:['docx','doc'],   label:'Word Doc',  icon:'📝', accept:'.doc,.docx',     color:'#4f9cf9'},
   {ext:['txt','md'],     label:'Text / MD', icon:'📃', accept:'.txt,.md',       color:'#7fda96'},
@@ -14,7 +15,7 @@ const FILE_TYPES = [
 
 const ALL_ACCEPT = FILE_TYPES.map(t=>t.accept).join(',');
 
-function getFileType(filename){
+export function getFileType(filename){
   const ext = filename.split('.').pop().toLowerCase();
   return FILE_TYPES.find(t=>t.ext.includes(ext));
 }
@@ -98,7 +99,7 @@ async function toBase64(file){
 }
 
 /* Strip control characters that break JSON.parse (e.g. unescaped tabs, newlines inside strings) */
-function sanitizeJson(raw){
+export function sanitizeJson(raw){
   // Remove BOM if present
   let s=raw.replace(/^\uFEFF/,'');
   // Replace literal control chars (0x00-0x1F except \t \n \r) inside strings with a space
@@ -108,7 +109,7 @@ function sanitizeJson(raw){
   s=s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,' ');
   return s;
 }
-function safeParse(raw){
+export function safeParse(raw){
   try{ return JSON.parse(raw); }catch{
     return JSON.parse(sanitizeJson(raw));
   }
@@ -149,7 +150,7 @@ const FORMAT_INFO = {
 };
 
 /* ═══════════════ AI CONFIRMATION MODAL ═══════════════ */
-function AiConfirmModal({aiResult,courses,defaultYear,defaultSem,defaultDept,onConfirm,onCancel}){
+export function AiConfirmModal({aiResult,courses,defaultYear,defaultSem,defaultDept,onConfirm,onCancel}){
   const[editCourse,setEditCourse]=useState(normalizeCourseCode(aiResult.courseName||''));
   const[editTitle,setEditTitle]=useState(aiResult.chapterTitle||aiResult.title||'');
   const[saveAs,setSaveAs]=useState(aiResult._type==='assignment'?'assignment':aiResult._type==='ca'?'ca':'course');
@@ -321,7 +322,7 @@ function AiConfirmModal({aiResult,courses,defaultYear,defaultSem,defaultDept,onC
 }
 
 /* ═══════════════ COURSE TAB VIEW ═══════════════ */
-function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,bookmarks,toggleBookmark}){
+export function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,bookmarks,toggleBookmark}){
   const chapters=useMemo(()=>courses.filter(c=>normalizeCourseCode(c.courseName)===courseCode),[courses,courseCode]);
   const courseIds=useMemo(()=>chapters.map(c=>c.id),[chapters]);
   const[tabData,setTabData]=useState({assignments:[],cas:[],resources:[],announcements:[]});
@@ -538,5 +539,548 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
   );
 }
 
+export function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]}){
+  const[uploadMode,setUploadMode]=useState('file'); // 'file' | 'paste'
+  const[year,setYear]=useState(1);
+  const[semester,setSemester]=useState(1);
+  const[departments,setDepartments]=useState(['Computer Science']); // multi-select array
+  const[pasteText,setPasteText]=useState('');
+  const[file,setFile]=useState(null);
+  const[status,setStatus]=useState('idle');
+  const[progress,setProgress]=useState('');
+  const[error,setError]=useState('');
+  const[copied,setCopied]=useState(false);
+  const[smartSortMsg,setSmartSortMsg]=useState('');
+  const[activeFilter,setActiveFilter]=useState('All');
+  const[filterInfo,setFilterInfo]=useState(null);
+  const[pendingAiResult,setPendingAiResult]=useState(null); // holds AI result waiting for confirm
+  const fileRef=useRef();
 
-export { UploadModal, AiConfirmModal, CourseTabView, FILE_TYPES, ALL_ACCEPT, FORMAT_INFO, getFileType };
+  const copyPrompt=()=>{navigator.clipboard.writeText(JSON_PROMPT);setCopied(true);setTimeout(()=>setCopied(false),2000);};
+
+  const saveEntry=async(data,autoDetected)=>{
+    if(!data.chapterTitle) throw new Error('Missing chapterTitle in response');
+    // Normalise all array fields so components never call .map() on null
+    data.keyConcepts  = Array.isArray(data.keyConcepts)  ? data.keyConcepts  : [];
+    data.definitions  = Array.isArray(data.definitions)  ? data.definitions  : [];
+    data.mechanisms   = Array.isArray(data.mechanisms)   ? data.mechanisms   : [];
+    data.algorithms   = Array.isArray(data.algorithms)   ? data.algorithms   : [];
+    data.chapters     = Array.isArray(data.chapters)     ? data.chapters     : [];
+    data.questions    = Array.isArray(data.questions)    ? data.questions    : [];
+    // Ensure nested arrays inside chapters are safe
+    data.chapters = data.chapters.map(ch=>({...ch,takeaways:Array.isArray(ch.takeaways)?ch.takeaways:[]}));
+    // Ensure every concept/definition has required string fields
+    data.keyConcepts = data.keyConcepts.map(c=>({title:c.title||'',description:c.description||'',color:c.color||'blue'}));
+    data.definitions = data.definitions.map(d=>({term:d.term||'',definition:d.definition||''}));
+    data.questions   = data.questions.map(q=>({question:q.question||'',answer:q.answer||''}));
+    const finalYear     = autoDetected?.year      || year;
+    const finalSemester = autoDetected?.semester  || semester;
+    // Multi-dept: use detected dept if auto, otherwise use all selected
+    const finalDepts = autoDetected?.department
+      ? [autoDetected.department]
+      : departments.length>0 ? departments : ['Computer Science'];
+
+    if(autoDetected?.year)      setYear(autoDetected.year);
+    if(autoDetected?.semester)  setSemester(autoDetected.semester);
+    if(autoDetected?.department)setDepartments([autoDetected.department]);
+
+    // Save one entry per selected department
+    for(const dept of finalDepts){
+      const id=`c-${Date.now()}-${dept.slice(0,3)}`;
+      const entry={id,year:finalYear,semester:finalSemester,department:dept,
+        courseName:data.courseName||'Course',chapterTitle:data.chapterTitle,
+        conceptCount:data.keyConcepts?.length||0,termCount:data.definitions?.length||0,
+        qCount:data.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+      if(adminMode){
+        await onDone(null,entry,data);
+      } else {
+        await dbSaveCourse(entry,data);
+      }
+    }
+    if(!adminMode){
+      const idx=await dbLoadCourseIndex();
+      setTimeout(()=>onDone(idx),600);
+    }
+    setStatus('done');
+  };
+
+  const processFile=async()=>{
+    if(!file) return;
+    setStatus('processing');setError('');setPendingAiResult(null);
+    try{
+      setProgress(`Reading ${file.name}…`);
+      const text=await extractText(file);
+      if(text.startsWith('__STUDYHUB_JSON__:')){
+        const data=safeParse(text.replace('__STUDYHUB_JSON__:',''));
+        setStatus('idle');setProgress('');
+        setPendingAiResult({...data,_type:'course'});return;
+      }
+      const useVision=text==='__USE_VISION__'||text==='__IMAGE_NEEDED__';
+      setProgress(useVision?'Sending to AI vision model…':'Sending to AI…');
+      let body;
+      if(useVision){const b64=await toBase64(file);body={imageBase64:b64,mimeType:file.type||'image/png'};}
+      else{body={text};}
+      const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`Server error ${res.status}`);}
+      const data=await res.json();
+      // Show confirmation modal instead of auto-saving
+      setStatus('idle');setProgress('');
+      const detected=detectMetadata(data);
+      setPendingAiResult({...data,_detectedYear:detected.year,_detectedSem:detected.semester,_detectedDept:detected.department});
+    }catch(e){
+      const msg=e.message||'Unknown error';
+      const friendly=msg.includes('control character')||msg.includes('JSON')
+        ?'The file contains formatting that could not be parsed. Try saving it as plain .txt or .docx and uploading again.'
+        :msg.includes('413')||msg.includes('too large')
+        ?'File is too large. Try splitting it into smaller sections.'
+        :'Failed: '+msg;
+      setError(friendly);setStatus('idle');setProgress('');
+    }
+  };
+
+  const processPaste=async()=>{
+    setError('');setSmartSortMsg('');
+    try{
+      const data=safeParse(pasteText.replace(/```json|```/g,'').trim());
+      if(!data.chapterTitle) throw new Error('Missing chapterTitle');
+      const detected=detectMetadata(data);
+      setPendingAiResult({...data,_type:'course',_detectedYear:detected.year,_detectedSem:detected.semester,_detectedDept:detected.department});
+    }catch(e){setError('Invalid JSON: '+e.message);setStatus('idle');}
+  };
+
+  const handleConfirm=async(confirmed)=>{
+    setPendingAiResult(null);
+    const saveAs=confirmed._saveAs||'course';
+    setStatus('processing');setProgress('Saving…');
+    try{
+      if(saveAs==='assignment'){
+        setSmartSortMsg('📋 Saved as Assignment');
+        await onDone?.(null,null,null,{type:'assignment',data:confirmed});
+        setStatus('done');return;
+      }
+      if(saveAs==='ca'){
+        setSmartSortMsg('📝 Saved as CA / Test');
+        await onDone?.(null,null,null,{type:'ca',data:confirmed});
+        setStatus('done');return;
+      }
+      if(saveAs==='resource'){
+        setSmartSortMsg('🔗 Saved as Resource');
+        setStatus('done');return;
+      }
+      // Study guide — save with user-confirmed metadata
+      const autoDetected={year:confirmed._year,semester:confirmed._semester,department:confirmed._department};
+      await saveEntry(confirmed,autoDetected);
+      setSmartSortMsg(`✨ Saved: ${confirmed.courseName||''} · Yr ${confirmed._year} · Sem ${confirmed._semester}`);
+    }catch(e){
+      setError('Save failed: '+e.message);setStatus('idle');setProgress('');
+    }
+  };
+
+  const fileType = file ? getFileType(file.name) : null;
+  const canGo = status!=='processing'&&status!=='done'&&departments.length>0&&(uploadMode==='file'?!!file:!!pasteText.trim());
+
+  return(
+    <>
+    {pendingAiResult&&(
+      <AiConfirmModal
+        aiResult={pendingAiResult}
+        courses={courses}
+        defaultYear={year} defaultSem={semester} defaultDept={departments[0]||DEPARTMENTS[0]||'Computer Science'}
+        onConfirm={handleConfirm}
+        onCancel={()=>{setPendingAiResult(null);setStatus('idle');}}
+      />
+    )}
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="scale-in modal-inner upload-modal" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px 32px',maxWidth:560,width:'100%',margin:'auto',boxShadow:'var(--shadow)',maxHeight:'90vh',overflowY:'auto'}}>
+
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
+          <Logo onClick={null} size="sm"/>
+          <div>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>{adminMode?'Request New Course':'Add Course'}</div>
+            {adminMode&&<div style={{fontSize:11,color:'#da7ff0',marginTop:2}}>🛡 Requires superuser approval</div>}
+          </div>
+        </div>
+
+        {/* Mode toggle */}
+        <div style={{display:'flex',background:'var(--input-bg)',borderRadius:10,padding:4,marginBottom:20}}>
+          {[{id:'file',label:'📁 Upload File'},{id:'paste',label:'📋 Paste JSON'}].map(m=>(
+            <button key={m.id} onClick={()=>{setUploadMode(m.id);setError('');setStatus('idle');setProgress('');}} style={{flex:1,padding:'8px 0',borderRadius:7,border:'none',background:uploadMode===m.id?'var(--surface)':'none',color:uploadMode===m.id?'var(--text)':'var(--muted)',cursor:'pointer',fontSize:13,fontWeight:uploadMode===m.id?600:400}}>{m.label}</button>
+          ))}
+        </div>
+
+        {/* Year / Semester / Dept pickers */}
+        <div className="year-picker-grid" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:18}}>
+          <div>
+            <Mono color="var(--muted)" size={10}>YEAR</Mono>
+            <div style={{display:'flex',gap:6,marginTop:6}}>
+              {YEARS.map(y=><button key={y} onClick={()=>setYear(y)} style={{flex:1,padding:'7px 0',borderRadius:7,cursor:'pointer',border:`1px solid ${year===y?YEAR_COLORS[y]+'70':'var(--border)'}`,background:year===y?YEAR_BG[y]:'var(--input-bg)',color:year===y?YEAR_COLORS[y]:'var(--muted)',fontWeight:year===y?700:400,fontSize:12}}>{y}</button>)}
+            </div>
+          </div>
+          <div>
+            <Mono color="var(--muted)" size={10}>SEMESTER</Mono>
+            <div style={{display:'flex',gap:6,marginTop:6}}>
+              {[1,2].map(s=><button key={s} onClick={()=>setSemester(s)} style={{flex:1,padding:'7px 0',borderRadius:7,cursor:'pointer',border:`1px solid ${semester===s?YEAR_COLORS[year]+'70':'var(--border)'}`,background:semester===s?YEAR_BG[year]:'var(--input-bg)',color:semester===s?YEAR_COLORS[year]:'var(--muted)',fontWeight:semester===s?700:400,fontSize:12}}>Sem {s}</button>)}
+            </div>
+          </div>
+        </div>
+        <div style={{marginBottom:18}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+            <Mono color="var(--muted)" size={10}>DEPARTMENT</Mono>
+            {departments.length>1&&(
+              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',letterSpacing:1}}>
+                {departments.length} SELECTED — course added to each
+              </span>
+            )}
+          </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {DEPARTMENTS.map(d=>{
+              const active=departments.includes(d);
+              const col=DEPT_COLOR[d]||'#4f9cf9';
+              return(
+                <button key={d} onClick={()=>setDepartments(prev=>
+                  prev.includes(d) ? prev.filter(x=>x!==d).length===0 ? prev : prev.filter(x=>x!==d) : [...prev,d]
+                )}
+                  style={{padding:'8px 12px',borderRadius:8,cursor:'pointer',
+                    border:`1.5px solid ${active?col:col+'30'}`,
+                    background:active?`${col}14`:'var(--input-bg)',
+                    color:active?col:'var(--muted)',
+                    fontWeight:active?700:400,fontSize:12,
+                    display:'flex',alignItems:'center',gap:7,
+                    transition:'all .15s',position:'relative'}}>
+                  {active&&<span style={{fontSize:10,lineHeight:1}}>✓</span>}
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,
+                    background:active?`${col}25`:'var(--border)',
+                    color:active?col:'var(--muted)',borderRadius:3,padding:'1px 5px'}}>{DEPT_SHORT[d]}</span>
+                  <span style={{fontSize:11}}>{d}</span>
+                </button>
+              );
+            })}
+          </div>
+          {departments.length===0&&(
+            <div style={{fontSize:11,color:'#f05050',marginTop:5}}>Select at least one department</div>
+          )}
+          {departments.length>1&&(
+            <div style={{fontSize:11,color:'#4f9cf9',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
+              <span>ℹ️</span>
+              <span>This course will appear under <strong>{departments.map(d=>DEPT_SHORT[d]||d).join(' and ')}</strong> — one copy per department.</span>
+            </div>
+          )}
+        </div>
+
+        {/* FILE MODE */}
+        {uploadMode==='file'&&(
+          <div className="fade-in">
+
+            {/* ── Gemini-style format chip bar ── */}
+            <div style={{marginBottom:16}}>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
+                {[{label:'All',icon:'📂',color:'#8892a4',filter:null},...FILE_TYPES.map(t=>({...t,filter:t.ext}))].map(t=>{
+                  const active=activeFilter===t.label;
+                  return(
+                    <button key={t.label} onClick={()=>{
+                      setActiveFilter(t.label);
+                      // Show info tooltip
+                      setFilterInfo(t.label==='All'?null:t);
+                    }}
+                      style={{display:'flex',alignItems:'center',gap:5,
+                        background:active?`${t.color}18`:'var(--input-bg)',
+                        border:`1.5px solid ${active?t.color:t.color+'30'}`,
+                        borderRadius:20,padding:'5px 12px',cursor:'pointer',
+                        transition:'all .15s',outline:'none'}}>
+                      <span style={{fontSize:14}}>{t.icon}</span>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,
+                        color:active?t.color:'var(--muted)',fontWeight:active?700:400,
+                        letterSpacing:.5}}>{t.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Format info card — shows when a specific chip is selected */}
+              {filterInfo&&(
+                <div className="fade-in" style={{marginTop:10,background:`${filterInfo.color}08`,
+                  border:`1px solid ${filterInfo.color}25`,borderRadius:10,padding:'11px 14px',
+                  display:'flex',gap:12,alignItems:'flex-start'}}>
+                  <span style={{fontSize:24,flexShrink:0}}>{filterInfo.icon}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:filterInfo.color,marginBottom:3}}>
+                      {filterInfo.label}
+                    </div>
+                    <div style={{fontSize:11,color:'var(--muted)',lineHeight:1.6}}>
+                      {FORMAT_INFO[filterInfo.label]?.desc}
+                    </div>
+                    <div style={{marginTop:6,display:'flex',gap:6,flexWrap:'wrap'}}>
+                      {filterInfo.ext.map(e=>(
+                        <span key={e} style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,
+                          background:`${filterInfo.color}15`,color:filterInfo.color,
+                          borderRadius:4,padding:'2px 7px'}}>
+                          .{e}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{marginTop:6,fontSize:11,color:'var(--muted)',fontStyle:'italic'}}>
+                      {FORMAT_INFO[filterInfo.label]?.how}
+                    </div>
+                  </div>
+                  <button onClick={()=>setFilterInfo(null)}
+                    style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:16,lineHeight:1,flexShrink:0}}>✕</button>
+                </div>
+              )}
+            </div>
+
+            {/* Drop zone */}
+            <div
+              onClick={()=>fileRef.current?.click()}
+              onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor='#4f9cf9';e.currentTarget.style.background='rgba(79,156,249,.05)';}}
+              onDragLeave={e=>{e.currentTarget.style.borderColor='';e.currentTarget.style.background='';}}
+              onDrop={e=>{
+                e.preventDefault();
+                e.currentTarget.style.borderColor='';e.currentTarget.style.background='';
+                const f=e.dataTransfer.files[0];
+                if(f){setFile(f);setError('');
+                  // Auto-select matching chip
+                  const ext=f.name.split('.').pop().toLowerCase();
+                  const match=FILE_TYPES.find(t=>t.ext.includes(ext));
+                  if(match){setActiveFilter(match.label);setFilterInfo(match);}
+                }
+              }}
+              style={{border:`2px dashed ${file?YEAR_COLORS[year]+'80':'var(--border)'}`,
+                borderRadius:12,padding:'28px 20px',textAlign:'center',cursor:'pointer',
+                background:file?YEAR_BG[year]:'var(--input-bg)',
+                transition:'border-color .15s,background .15s',marginBottom:8}}
+            >
+              {file?(
+                <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:12}}>
+                  <div style={{width:44,height:44,borderRadius:10,
+                    background:`${fileType?.color||'#4f9cf9'}15`,
+                    border:`1px solid ${fileType?.color||'#4f9cf9'}30`,
+                    display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0}}>
+                    {fileType?.icon||'📄'}
+                  </div>
+                  <div style={{textAlign:'left',flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'var(--text)',
+                      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</div>
+                    <div style={{fontSize:11,color:'var(--muted)',marginTop:2,display:'flex',gap:8}}>
+                      <span>{(file.size/1024).toFixed(1)} KB</span>
+                      <span style={{color:fileType?.color||'#4f9cf9',fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>{fileType?.label||'File'}</span>
+                    </div>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();setFile(null);setActiveFilter('All');setFilterInfo(null);}}
+                    style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,flexShrink:0}}>✕</button>
+                </div>
+              ):(
+                <>
+                  <div style={{fontSize:36,marginBottom:10}}>
+                    {activeFilter==='All'?'📂':FILE_TYPES.find(t=>t.label===activeFilter)?.icon||'📂'}
+                  </div>
+                  <div style={{fontSize:13,color:'var(--text)',fontWeight:600,marginBottom:4}}>
+                    {activeFilter==='All'?'Click to browse or drag & drop':
+                     `Select a ${activeFilter} file`}
+                  </div>
+                  <div style={{fontSize:11,color:'var(--muted)'}}>
+                    {activeFilter==='All'
+                      ? FILE_TYPES.map(t=>t.ext[0].toUpperCase()).join(' · ')
+                      : FILE_TYPES.find(t=>t.label===activeFilter)?.ext.map(e=>'.'+e).join(', ')}
+                  </div>
+                </>
+              )}
+              <input ref={fileRef} type="file"
+                accept={activeFilter==='All'?ALL_ACCEPT:(FILE_TYPES.find(t=>t.label===activeFilter)?.accept||ALL_ACCEPT)}
+                onChange={e=>{
+                  const f=e.target.files[0];
+                  if(f){
+                    setFile(f);setError('');
+                    const ext=f.name.split('.').pop().toLowerCase();
+                    const match=FILE_TYPES.find(t=>t.ext.includes(ext));
+                    if(match){setActiveFilter(match.label);setFilterInfo(match);}
+                  }
+                }} style={{display:'none'}}/>
+            </div>
+            <div style={{fontSize:11,color:'var(--muted)',textAlign:'center',marginBottom:2}}>
+              AI extracts course content automatically · Tap a format chip above to filter
+            </div>
+          </div>
+        )}
+
+        {/* PASTE MODE */}
+        {uploadMode==='paste'&&(
+          <div className="fade-in">
+            <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:10,padding:'12px 14px',marginBottom:12}}>
+              <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.7}}>
+                Open <strong style={{color:'var(--text)'}}>Claude.ai</strong> or <strong style={{color:'var(--text)'}}>ChatGPT</strong>, upload your file, paste this prompt:
+              </div>
+              <div style={{marginTop:8,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',gap:8,alignItems:'center'}}>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)'}}>Generate a StudyHub JSON study guide…</span>
+                <button onClick={copyPrompt} style={{background:copied?'rgba(127,218,150,.1)':'rgba(79,156,249,.1)',border:`1px solid ${copied?'rgba(127,218,150,.4)':'rgba(79,156,249,.3)'}`,borderRadius:5,color:copied?'#7fda96':'#4f9cf9',cursor:'pointer',padding:'4px 10px',fontSize:11,flexShrink:0}}>{copied?'✓ Copied':'Copy'}</button>
+              </div>
+            </div>
+            <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder={'{\n  "courseName": "COS 341",\n  "chapterTitle": "Memory System",\n  ...\n}'} rows={9} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:12,fontFamily:"'IBM Plex Mono',monospace",resize:'vertical',marginBottom:10}}/>
+          </div>
+        )}
+
+        {/* Status */}
+        {smartSortMsg&&<div style={{background:'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.25)',borderRadius:8,padding:'8px 14px',color:'#a8f94f',fontSize:12,marginBottom:10,display:'flex',alignItems:'center',gap:8}}><span>✨</span>{smartSortMsg.replace('✨ Smart sort: ','')}<span style={{color:'var(--muted)',fontSize:11,marginLeft:4}}>— pickers updated above</span></div>}
+        {error&&<div style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,padding:'9px 14px',color:'#f05050',fontSize:12.5,marginBottom:10}}>{error}</div>}
+        {status==='processing'&&<div style={{background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'10px 14px',color:'#4f9cf9',fontSize:13,marginBottom:10,display:'flex',alignItems:'center',gap:10}}><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>{progress||'Processing…'}</div>}
+        {status==='done'&&<div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'10px 14px',color:'#7fda96',fontSize:13,marginBottom:10}}>{adminMode?'✓ Request submitted — awaiting superuser approval.':`✓ Course added — Year ${year}, Semester ${semester}${departments.length?`, ${departments.map(d=>DEPT_SHORT[d]||d).join(' + ')}`:''}.`}</div>}
+
+        {/* Actions */}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:4}}>
+          <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>Cancel</button>
+          <button
+            onClick={uploadMode==='file'?processFile:processPaste}
+            disabled={!canGo}
+            style={{background:!canGo?'var(--border)':adminMode?'#da7ff0':'#4f9cf9',border:'none',borderRadius:8,color:!canGo?'var(--muted)':'#000',cursor:!canGo?'not-allowed':'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}
+          >
+            {status==='processing'?'Processing…':status==='done'?'Done ✓':adminMode?'Submit for Approval':uploadMode==='file'?'Analyse File':'Review & Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+    </>
+  );
+}
+
+
+/* ═══════════════ PRIORITY STYLES ═══════════════ */
+const PRIORITY={
+  info:    {color:'#4f9cf9',bg:'rgba(79,156,249,.08)',border:'rgba(79,156,249,.2)',icon:'ℹ️'},
+  warning: {color:'#f9a84f',bg:'rgba(249,168,79,.08)',border:'rgba(249,168,79,.2)', icon:'⚠️'},
+  urgent:  {color:'#f05050',bg:'rgba(240,80,80,.08)', border:'rgba(240,80,80,.25)',  icon:'🚨'},
+};
+
+/* ═══════════════ GLOBAL ANNOUNCEMENT STRIP ═══════════════ */
+function GlobalAnnouncementStrip({user}){
+  const[items,setItems]=useState([]);const[idx,setIdx]=useState(0);
+  useEffect(()=>{
+    dbLoadAnnouncements(null).then(d=>{
+      // show pinned first, then urgent, then by date
+      const sorted=[...d].sort((a,b)=>{
+        if(a.pinned&&!b.pinned)return -1;if(!a.pinned&&b.pinned)return 1;
+        if(a.priority==='urgent'&&b.priority!=='urgent')return -1;
+        if(a.priority!=='urgent'&&b.priority==='urgent')return 1;
+        return new Date(b.posted_at)-new Date(a.posted_at);
+      });
+      setItems(sorted);
+    });
+  },[]);
+  if(!items.length)return null;
+  const a=items[idx];
+  const p=PRIORITY[a.priority]||PRIORITY.info;
+  return(
+    <div className="fade-in" style={{background:p.bg,border:`1px solid ${p.border}`,borderRadius:10,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+      <span style={{fontSize:16,flexShrink:0}}>{p.icon}</span>
+      <div style={{flex:1,minWidth:0}}>
+        <span style={{fontSize:13,fontWeight:700,color:p.color,marginRight:8}}>{a.title}</span>
+        {a.body&&<span style={{fontSize:12.5,color:'var(--text)'}}>{a.body}</span>}
+      </div>
+      {a.pinned&&<span style={{fontSize:12}}>📌</span>}
+      {items.length>1&&<div style={{display:'flex',gap:5,flexShrink:0}}>
+        <button onClick={()=>setIdx(i=>(i-1+items.length)%items.length)} style={{background:'none',border:'1px solid var(--border)',borderRadius:5,color:'var(--muted)',cursor:'pointer',padding:'2px 7px',fontSize:11}}>‹</button>
+        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',display:'flex',alignItems:'center'}}>{idx+1}/{items.length}</span>
+        <button onClick={()=>setIdx(i=>(i+1)%items.length)} style={{background:'none',border:'1px solid var(--border)',borderRadius:5,color:'var(--muted)',cursor:'pointer',padding:'2px 7px',fontSize:11}}>›</button>
+      </div>}
+    </div>
+  );
+}
+
+/* ═══════════════ ANNOUNCEMENTS TAB ═══════════════ */
+function AnnouncementsTab({courseId,user,onNew}){
+  const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
+  const[form,setForm]=useState({title:'',body:'',priority:'info',pinned:false,global:false});
+  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
+  const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
+  const isSU2=user.role===ROLE.SUPERUSER;
+  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
+
+  const load=async()=>{const d=await dbLoadAnnouncements(courseId);setItems(d);};
+  useEffect(()=>{load();},[courseId]);
+
+  const save=async()=>{
+    if(!form.title.trim())return;setLoading(true);
+    const a={id:`ann-${Date.now()}`,course_id:form.global?null:courseId,title:form.title,body:form.body,priority:form.priority,pinned:form.pinned,posted_by:user.username,posted_at:new Date().toISOString()};
+    await dbSaveAnnouncement(a);
+    // Push notification if permission granted
+    pushNotification(`📢 ${form.priority==='urgent'?'URGENT: ':''}${form.title}`,form.body||'New announcement on StudyHub');
+    onNew?.();
+    setForm({title:'',body:'',priority:'info',pinned:false,global:false});setShowForm(false);setLoading(false);
+    await load();flash('✓ Announcement posted.');
+  };
+  const del=async id=>{await dbDeleteAnnouncement(id);await load();};
+  const togglePin=async(id,pinned)=>{await dbPinAnnouncement(id,!pinned);await load();};
+
+  return(
+    <div className="fade-up">
+      <SectionLabel>Announcements</SectionLabel>
+      {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:12}}>{msg}</div>}
+      {isPriv&&(
+        <button onClick={()=>setShowForm(s=>!s)} style={{background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.25)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600,marginBottom:14}}>
+          {showForm?'✕ Cancel':'📢 Post Announcement'}
+        </button>
+      )}
+      {showForm&&isPriv&&(
+        <div className="scale-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:16}}>
+          <Field label="TITLE *" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Exam date moved"/>
+          <Field label="MESSAGE (optional)" value={form.body} onChange={e=>setForm(f=>({...f,body:e.target.value}))} placeholder="Full details…"/>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>PRIORITY</div>
+            <div style={{display:'flex',gap:8}}>
+              {Object.entries(PRIORITY).map(([k,v])=>(
+                <button key={k} onClick={()=>setForm(f=>({...f,priority:k}))} style={{flex:1,padding:'8px 0',borderRadius:7,border:`1px solid ${form.priority===k?v.color+'70':'var(--border)'}`,background:form.priority===k?v.bg:'var(--input-bg)',color:form.priority===k?v.color:'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:form.priority===k?700:400,display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
+                  {v.icon} {k.charAt(0).toUpperCase()+k.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:16,marginBottom:14}}>
+            <label style={{display:'flex',alignItems:'center',gap:7,cursor:'pointer',fontSize:13,color:'var(--text)'}}>
+              <input type="checkbox" checked={form.pinned} onChange={e=>setForm(f=>({...f,pinned:e.target.checked}))} style={{width:15,height:15}}/>
+              📌 Pin to top
+            </label>
+            {isSU2&&(
+              <label style={{display:'flex',alignItems:'center',gap:7,cursor:'pointer',fontSize:13,color:'var(--text)'}}>
+                <input type="checkbox" checked={form.global} onChange={e=>setForm(f=>({...f,global:e.target.checked}))} style={{width:15,height:15}}/>
+                🌐 Post globally (all courses)
+              </label>
+            )}
+          </div>
+          <button onClick={save} disabled={loading||!form.title.trim()} style={{background:PRIORITY[form.priority].color,border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>
+            {loading?'Posting…':'Post Announcement'}
+          </button>
+        </div>
+      )}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {items.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No announcements yet.</div>}
+        {items.map((a,i)=>{
+          const p=PRIORITY[a.priority]||PRIORITY.info;
+          return(
+            <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:p.bg,border:`1px solid ${p.border}`,borderRadius:10,padding:'14px 17px',borderLeft:`3px solid ${p.color}`,position:'relative'}}>
+              {a.pinned&&<span style={{position:'absolute',top:10,right:isPriv?40:12,fontSize:14}}>📌</span>}
+              {!a.course_id&&<span style={{position:'absolute',top:10,right:isPriv?62:34,fontSize:11,fontFamily:"'IBM Plex Mono',monospace",color:'var(--muted)'}}>GLOBAL</span>}
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10}}>
+                <div style={{flex:1}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                    <span style={{fontSize:14}}>{p.icon}</span>
+                    <span style={{fontSize:14,fontWeight:700,color:p.color}}>{a.title}</span>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${p.color}18`,color:p.color,borderRadius:4,padding:'2px 7px',textTransform:'uppercase'}}>{a.priority}</span>
+                  </div>
+                  {a.body&&<p style={{fontSize:13,color:'var(--text)',lineHeight:1.7,margin:'0 0 6px'}}>{a.body}</p>}
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>@{a.posted_by} · {new Date(a.posted_at).toLocaleString()}</div>
+                </div>
+                {isPriv&&(
+                  <div style={{display:'flex',gap:6,flexShrink:0}}>
+                    <button onClick={()=>togglePin(a.id,a.pinned)} title={a.pinned?'Unpin':'Pin'} style={{background:'none',border:'none',color:a.pinned?'#f9a84f':'var(--muted)',cursor:'pointer',fontSize:14}}>📌</button>
+                    <button onClick={()=>del(a.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13}}>✕</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ NOTIFICATION BELL ═══════════════ */
