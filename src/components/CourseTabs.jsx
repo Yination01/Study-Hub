@@ -1,11 +1,15 @@
 import React,{ useState, useEffect, useRef, useCallback } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
-  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS,
-  CACHE_KEY, APP_VERSION, getSubVal, getAiMsgCount, incAiMsgCount, TIER_CONFIG } from '../lib/constants.js';
-import * as db from '../lib/db.js';
-import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo, SearchBar } from './UI.jsx';
-import { useNotificationPermission, pushNotification } from '../lib/hooks.js';
+import { supabase, ROLE, PRIORITY, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS, CACHE_KEY, APP_VERSION, getSubVal, getAiMsgCount, incAiMsgCount, TIER_CONFIG } from '../lib/constants.js';
+import * as db from '../lib/db.jsx';
+import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo } from './UI.jsx';
+import { useNotificationPermission, pushNotification } from '../lib/hooks.jsx';
 
+/* ═══════════════ PRIORITY STYLES ═══════════════ */
+
+
+
+
+/* ═══════════════ ANNOUNCEMENTS TAB ═══════════════ */
 export function AnnouncementsTab({courseId,user,onNew}){
   const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',body:'',priority:'info',pinned:false,global:false});
@@ -103,8 +107,9 @@ export function AnnouncementsTab({courseId,user,onNew}){
   );
 }
 
-/* ═══════════════ NOTIFICATION BELL ═══════════════ */
 
+
+/* ═══════════════ NOTIFICATION BELL ═══════════════ */
 export function NotificationBell({user,courses,onNavigate}){
   const[open,setOpen]=useState(false);
   const[notifs,setNotifs]=useState({items:[],unseenCount:0,seen:new Set()});
@@ -350,8 +355,9 @@ export function NotificationBell({user,courses,onNavigate}){
   );
 }
 
-/* ═══════════════ ASSIGNMENTS TAB ═══════════════ */
 
+
+/* ═══════════════ ASSIGNMENTS TAB ═══════════════ */
 export function AssignmentsTab({courseId,user}){
   const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',description:'',due_date:'',marks:'',file_url:''});
@@ -448,10 +454,11 @@ export function AssignmentsTab({courseId,user}){
   );
 }
 
+
+
 /* ═══════════════ CA / TESTS TAB ═══════════════ */
 const CA_TYPES=['CA','Test','Quiz','Lab','Other'];
 const CA_COLORS={CA:'#da7ff0',Test:'#f05050',Quiz:'#4f9cf9',Lab:'#7fda96',Other:'#f9a84f'};
-
 
 export function CATab({courseId,user}){
   const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
@@ -534,8 +541,9 @@ export function CATab({courseId,user}){
   );
 }
 
-/* ═══════════════ COMMUNITY BOARD ═══════════════ */
 
+
+/* ═══════════════ COMMUNITY BOARD ═══════════════ */
 export function CommunityBoard({courseId,user}){
   const[posts,setPosts]=useState([]);const[myVotes,setMyVotes]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',url:'',description:''});const[loading,setLoading]=useState(false);
@@ -614,8 +622,9 @@ export function CommunityBoard({courseId,user}){
   );
 }
 
-/* ═══════════════ RESOURCES TAB ═══════════════ */
 
+
+/* ═══════════════ RESOURCES TAB ═══════════════ */
 export function ResourcesTab({courseId,user}){
   const[resources,setResources]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',url:'',type:'link'});const[loading,setLoading]=useState(false);
@@ -690,6 +699,3 @@ export function ResourcesTab({courseId,user}){
     </div>
   );
 }
-
-/* ═══════════════ COURSE VIEW ═══════════════ */
-/* Definition row with copy-to-clipboard */
