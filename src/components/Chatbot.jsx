@@ -1,11 +1,9 @@
 import React,{ useState, useEffect, useRef, useCallback } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
-  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS,
-  CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount,
-  TIER_CONFIG, CODE_TO_DEPT, detectMetadata, css } from '../lib/constants.js';
-import * as db from '../lib/db.js';
-import { Mono, Tag, SearchBar } from './UI.jsx';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, ROLE_ICON, COLOR_MAP, CARD_ACCENTS, PRIORITY, RES_ICONS, CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, CODE_TO_DEPT, detectMetadata, getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY, TIER_CONFIG, css } from '../lib/constants.js';
+import * as db from '../lib/db.jsx';
+import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, RoleBadge, ProgressBar, Logo, ThemeToggle, OfflineBanner, SearchBar } from './UI.jsx';
 
+/* ═══════════════ CHATBOT (persistent) ═══════════════ */
 const QUICK_PROMPTS=['Explain this topic simply','Give me 5 extra practice questions','What are the most important concepts?','Summarise this in bullet points','What might come up in an exam?'];
 const SEARCH_PREFIXES=['find ','search ','what is ','what are ','how do i ','how does ','explain ','show me ','list ','define ','describe '];
 const isSearchQuery=t=>SEARCH_PREFIXES.some(p=>t.toLowerCase().startsWith(p))||t.endsWith('?');
@@ -182,5 +180,3 @@ export function Chatbot({context,courses,user}){
     </div>
   );
 }
-
-/* ═══════════════ AUTH SCREEN ═══════════════ */
