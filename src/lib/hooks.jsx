@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import React from 'react';
+import React,{ useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, ROLE } from './constants.js';
 import { resolveRole, dbLoadProgress } from './db.jsx';
 
+/* ═══════════════ HOOKS ═══════════════ */
 export function useTheme(){
   const [dark,setDark]=useState(()=>localStorage.getItem('sh-theme')!=='light');
   useEffect(()=>{
@@ -55,9 +55,10 @@ export function pushNotification(title,body,icon='/icon-192.png'){
   try{new Notification(title,{body,icon,badge:'/icon-192.png'});}catch{}
 }
 
-/* ═══════════════ DATABASE ═══════════════ */
 
-export const SESSION_KEY = 'sh-session';
+
+/* ═══════════════ ROOT APP ═══════════════ */
+const SESSION_KEY = 'sh-session';
 
 export function saveSession(u){
   try{localStorage.setItem(SESSION_KEY,JSON.stringify({...u,savedAt:Date.now()}));}catch{}
@@ -73,6 +74,7 @@ export function loadSession(){
   }catch{return null;}
 }
 export function clearSession(){try{localStorage.removeItem(SESSION_KEY);}catch{}}
+
 
 
 /* ═══════════════ GLOBAL ERROR TOAST ═══════════════ */
@@ -101,6 +103,8 @@ export function ErrorToast({message,onDismiss}){
   );
 }
 
+
+
 /* ═══════════════ CONFIRM MODAL ═══════════════ */
 // Usage: const confirmed = await confirm({title, message, danger})
 let _confirmResolve=null;
@@ -126,6 +130,8 @@ export function useConfirm(){
   return[confirm,ConfirmModal];
 }
 
+
+
 /* ═══════════════ PAGE TITLE HOOK ═══════════════ */
 export function usePageTitle(view,active){
   useEffect(()=>{
@@ -136,6 +142,8 @@ export function usePageTitle(view,active){
     else document.title=base;
   },[view,active?.data?.chapterTitle]);
 }
+
+
 
 /* ═══════════════ KEYBOARD SHORTCUTS ═══════════════ */
 export function useKeyboardShortcuts({onSearch,onEscape}){
@@ -162,6 +170,8 @@ export function SyncToast({visible}){
     </div>
   );
 }
+
+
 
 /* ═══════════════ ERROR BOUNDARY ═══════════════ */
 export class ErrorBoundary extends React.Component{
@@ -191,5 +201,3 @@ export class ErrorBoundary extends React.Component{
     return this.props.children;
   }
 }
-
-export default function App(){
