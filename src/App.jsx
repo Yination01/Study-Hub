@@ -7,10 +7,10 @@
 
 import React,{ useState, useEffect, useRef, useCallback } from 'react';
 import { supabase, ROLE, CACHE_KEY, css } from './lib/constants.js';
-import * as db from './lib/db.js';
+import * as db from './lib/db.jsx';
 import { useTheme, useBookmarks, useOnline, useErrorToast, ErrorToast,
   useConfirm, useKeyboardShortcuts, SyncToast,
-  saveSession, loadSession, clearSession, pushNotification } from './lib/hooks.js';
+  saveSession, loadSession, clearSession, pushNotification } from './lib/hooks.jsx';
 import { InstallPrompt } from './components/PWA.jsx';
 import { AuthScreen } from './components/Auth.jsx';
 import { Chatbot } from './components/Chatbot.jsx';
@@ -21,7 +21,7 @@ import { AdminPanel } from './components/Admin.jsx';
 import { WelcomeModal, CopyrightBar, GlobalAnnouncementStrip } from './components/Modals.jsx';
 import { OfflineBanner, GuestBanner } from './components/UI.jsx';
 import { loadDepartments, loadUserTypes, dbLoadCourseIndex, dbLoadCourseData,
-  dbLoadProgress, dbSaveProgress, resolveRole, loadSubConfig } from './lib/db.js';
+  dbLoadProgress, dbSaveProgress, resolveRole, loadSubConfig } from './lib/db.jsx';
 
 class ErrorBoundary extends React.Component{
   constructor(p){super(p);this.state={crashed:false,msg:''};}
