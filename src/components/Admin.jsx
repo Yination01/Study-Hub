@@ -1,13 +1,13 @@
-import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, CACHE_KEY, getSubVal, CODE_TO_DEPT, RES_ICONS, AI_MSG_KEY, getAiMsgCount, incAiMsgCount, APP_VERSION, COPYRIGHT_YEAR } from '../lib/constants.js';
+import React,{ useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
+  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, TIER_CONFIG,
+  APP_VERSION, getSubVal } from '../lib/constants.js';
 import * as db from '../lib/db.js';
-import { Tag, Mono, SectionLabel, Field, Avatar, RoleBadge, RolePill, ProgressBar, Logo, ThemeToggle, SearchBar } from './UI.jsx';
-import { useNotificationPermission, pushNotification } from '../lib/hooks.js';
+import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo } from './UI.jsx';
+import { useConfirm, pushNotification } from '../lib/hooks.js';
 import { UploadModal } from './Upload.jsx';
-import { useConfirm } from '../lib/hooks.js';
 
-/* ═══════════════ ANALYTICS TAB ═══════════════ */
-function AnalyticsTab({courses}){
+export function AnalyticsTab({courses}){
   const[allProgress,setAllProgress]=useState([]);const[loading,setLoading]=useState(true);
   useEffect(()=>{dbLoadAllProgress().then(p=>{setAllProgress(p);setLoading(false);});},[]);
 
@@ -78,6 +78,7 @@ function AnalyticsTab({courses}){
 }
 
 /* ═══════════════ APPROVALS TAB ═══════════════ */
+
 const ACTION_LABELS={
   add_course:   {icon:'📚',label:'Add Course',    color:'#4f9cf9'},
   delete_course:{icon:'🗑',label:'Delete Course', color:'#f05050'},
@@ -85,8 +86,9 @@ const ACTION_LABELS={
   delete_resource:{icon:'🗑',label:'Delete Resource',color:'#f9a84f'},
 };
 
-function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
-  const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');const[bulkBusy,setBulkBusy]=useState('');
+
+export function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
+  const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');
 
   const load=async()=>{setLoading(true);const[p,h]=await Promise.all([dbLoadPending('pending'),dbLoadAllPending()]);setPending(p);setHistory(h.filter(a=>a.status!=='pending'));setLoading(false);};
   useEffect(()=>{load();},[]);
@@ -94,37 +96,25 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
   const approve=async(action)=>{
     setBusy(action.id);
     try{
-      if(action.action_type==='add_course'){const{entry,courseData}=action.payload;await dbSaveCourse(entry,courseData);const idx=await dbLoadCourseIndex();onCourseChange(idx);}
-      if(action.action_type==='delete_course'){await dbDeleteCourse(action.payload.id);const idx=await dbLoadCourseIndex();onCourseChange(idx);}
-      if(action.action_type==='add_resource'){await supabase.from('resources').insert(action.payload);}
-      if(action.action_type==='delete_resource'){await dbDeleteResource(action.payload.id);}
+      // Execute the actual action
+      if(action.action_type==='add_course'){
+        const{entry,courseData}=action.payload;
+        await dbSaveCourse(entry,courseData);
+        const idx=await dbLoadCourseIndex();onCourseChange(idx);
+      }
+      if(action.action_type==='delete_course'){
+        await dbDeleteCourse(action.payload.id);
+        const idx=await dbLoadCourseIndex();onCourseChange(idx);
+      }
+      if(action.action_type==='add_resource'){
+        await supabase.from('resources').insert(action.payload);
+      }
+      if(action.action_type==='delete_resource'){
+        await dbDeleteResource(action.payload.id);
+      }
       await dbReviewPending(action.id,'approved',reviewerUsername);
     }catch(e){console.error(e);}
     setBusy('');await load();
-  };
-
-  const approveAll=async()=>{
-    if(!pending.length)return;
-    setBulkBusy('approving');
-    for(const action of pending){
-      try{
-        if(action.action_type==='add_course'){const{entry,courseData}=action.payload;await dbSaveCourse(entry,courseData);}
-        if(action.action_type==='delete_course'){await dbDeleteCourse(action.payload.id);}
-        if(action.action_type==='add_resource'){await supabase.from('resources').insert(action.payload);}
-        if(action.action_type==='delete_resource'){await dbDeleteResource(action.payload.id);}
-        await dbReviewPending(action.id,'approved',reviewerUsername);
-      }catch(e){console.error(e);}
-    }
-    const idx=await dbLoadCourseIndex();onCourseChange(idx);
-    setBulkBusy('');await load();
-  };
-
-  const rejectAll=async()=>{
-    if(!pending.length)return;
-    const note='Bulk rejected by superuser.';
-    setBulkBusy('rejecting');
-    await Promise.all(pending.map(a=>dbReviewPending(a.id,'rejected',reviewerUsername,note)));
-    setBulkBusy('');await load();
   };
 
   const reject=async()=>{
@@ -135,6 +125,7 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
   };
 
   const list=tab==='pending'?pending:history;
+
   if(loading)return<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>Loading approvals…</div>;
 
   return(
@@ -144,7 +135,7 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setRejectModal(null)}>
           <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'26px 28px',maxWidth:420,width:'100%',boxShadow:'var(--shadow)'}}>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:19,color:'var(--text)',marginBottom:4}}>Reject Request</div>
-            <p style={{fontSize:13,color:'var(--muted)',marginBottom:16}}>Optionally add a note explaining why this was rejected.</p>
+            <p style={{fontSize:13,color:'var(--muted)',marginBottom:16}}>Optionally add a note explaining why this was rejected. The admin will see this.</p>
             <textarea value={rejectNote} onChange={e=>setRejectNote(e.target.value)} placeholder="Reason for rejection (optional)…" rows={3} style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px',color:'var(--text)',fontSize:13,fontFamily:"'DM Sans',sans-serif",resize:'none',marginBottom:16}}/>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
               <button onClick={()=>setRejectModal(null)} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13}}>Cancel</button>
@@ -154,35 +145,27 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
         </div>
       )}
 
-      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',gap:10,alignItems:'center'}}>
+      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',marginBottom:20,display:'flex',gap:10,alignItems:'center'}}>
         <span style={{fontSize:20}}>⚡</span>
-        <div><div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Superuser Approval Queue</div>
-        <div style={{color:'var(--muted)',fontSize:12}}>All admin actions require your approval.</div></div>
+        <div>
+          <div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Superuser Approval Queue</div>
+          <div style={{color:'var(--muted)',fontSize:12}}>All admin actions require your approval before taking effect. You can approve or reject with a note.</div>
+        </div>
       </div>
 
-      {/* Sub-tabs + bulk actions */}
-      <div style={{display:'flex',alignItems:'center',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18,flexWrap:'wrap'}}>
+      {/* Sub-tabs */}
+      <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18}}>
         {[{id:'pending',label:`Pending${pending.length>0?` (${pending.length})`:''}`,color:pending.length>0?'#f9a84f':undefined},{id:'history',label:'History'}].map(t=>(
           <button key={t.id} onClick={()=>setTab(t.id)} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
         ))}
-        {/* Bulk actions — only shown on Pending tab when there are items */}
-        {tab==='pending'&&pending.length>1&&(
-          <div style={{marginLeft:'auto',display:'flex',gap:8,paddingBottom:4}}>
-            <button onClick={approveAll} disabled={bulkBusy!==''} style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'6px 14px',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:5}}>
-              {bulkBusy==='approving'?'Approving…':'✓ Approve All'}
-            </button>
-            <button onClick={rejectAll} disabled={bulkBusy!==''} style={{background:'rgba(240,80,80,.08)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'6px 14px',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:5}}>
-              {bulkBusy==='rejecting'?'Rejecting…':'✕ Reject All'}
-            </button>
-          </div>
-        )}
       </div>
 
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
         {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?'✅ No pending requests — all clear.':'No history yet.'}</div>}
         {list.map((a,i)=>{
           const meta=ACTION_LABELS[a.action_type]||{icon:'❓',label:a.action_type,color:'#8892a4'};
-          const isPending=a.status==='pending';const isApproved=a.status==='approved';
+          const isPending=a.status==='pending';
+          const isApproved=a.status==='approved';
           return(
             <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${isPending?`${meta.color}30`:isApproved?'rgba(127,218,150,.2)':'rgba(240,80,80,.2)'}`,borderRadius:12,padding:'16px 18px'}}>
               <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
@@ -194,7 +177,10 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
                       <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${meta.color}15`,color:meta.color,borderRadius:4,padding:'2px 7px',letterSpacing:1}}>{a.action_type}</span>
                       {!isPending&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:isApproved?'rgba(127,218,150,.15)':'rgba(240,80,80,.15)',color:isApproved?'#7fda96':'#f05050',borderRadius:4,padding:'2px 7px',letterSpacing:1}}>{a.status.toUpperCase()}</span>}
                     </div>
-                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)',letterSpacing:1}}>@{a.requested_by} · {new Date(a.requested_at).toLocaleString()}</div>
+                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)',letterSpacing:1}}>
+                      Requested by <span style={{color:'var(--text)',fontWeight:600}}>@{a.requested_by}</span> · {new Date(a.requested_at).toLocaleString()}
+                    </div>
+                    {/* Payload summary */}
                     {a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.entry.chapterTitle}</span> — Yr {a.payload.entry.year} · Sem {a.payload.entry.semester||1} · {DEPT_SHORT[a.payload.entry.department]||'CS'}</div>}
                     {a.payload?.chapterTitle&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.chapterTitle}</span></div>}
                     {a.payload?.title&&!a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Resource: <span style={{color:'var(--text)'}}>{a.payload.title}</span></div>}
@@ -203,8 +189,10 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
                 </div>
                 {isPending&&(
                   <div style={{display:'flex',gap:8,flexShrink:0}}>
-                    <button onClick={()=>approve(a)} disabled={busy===a.id||bulkBusy!==''} style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:700}}>{busy===a.id?'…':'✓ Approve'}</button>
-                    <button onClick={()=>setRejectModal(a)} disabled={busy===a.id||bulkBusy!==''} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:700}}>✕ Reject</button>
+                    <button onClick={()=>approve(a)} disabled={busy===a.id} style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:700}}>
+                      {busy===a.id?'…':'✓ Approve'}
+                    </button>
+                    <button onClick={()=>setRejectModal(a)} disabled={busy===a.id} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:700}}>✕ Reject</button>
                   </div>
                 )}
               </div>
@@ -217,7 +205,8 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
 }
 
 /* ═══════════════ MANAGE ADMINS ═══════════════ */
-function ManageAdminsTab(){
+
+export function ManageAdminsTab(){
   const[users,setUsers]=useState([]);const[admins,setAdmins]=useState([]);const[search,setSearch]=useState('');const[busy,setBusy]=useState('');const[msg,setMsg]=useState('');
   useEffect(()=>{Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setUsers(u);setAdmins(a);});},[]);
   const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),2500);};
@@ -249,12 +238,12 @@ function ManageAdminsTab(){
 }
 
 /* ═══════════════ SETTINGS TAB (superuser only) ═══════════════ */
-function SettingsTab({onReload,superuser}){
+
+export function SettingsTab({onReload}){
   const[depts,setDepts]=useState([]);const[types,setTypes]=useState([]);
   const[deptForm,setDeptForm]=useState({name:'',short_code:'',color:'#4f9cf9'});
   const[typeForm,setTypeForm]=useState({label:'',short_code:'',role_key:'user',color:'#4f9cf9',description:''});
   const[msg,setMsg]=useState('');const[section,setSection]=useState('depts');
-  const[subCfg,setSubCfg]=useState({});const[subEdits,setSubEdits]=useState({});const[subBusy,setSubBusy]=useState(false);
   const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
 
   const loadAll=async()=>{
@@ -263,7 +252,6 @@ function SettingsTab({onReload,superuser}){
       supabase.from('user_types').select('*').order('created_at')
     ]);
     setDepts(d||[]);setTypes(t||[]);
-    const cfg=await dbLoadSubConfig();setSubCfg(cfg);setSubEdits(cfg);
   };
   useEffect(()=>{loadAll();},[]);
 
@@ -309,7 +297,7 @@ function SettingsTab({onReload,superuser}){
 
       {/* Sub-tabs */}
       <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:20}}>
-        {[{id:'depts',label:'🏫 Departments'},{id:'types',label:'👥 User Types'},{id:'subscription',label:'💳 Subscription'}].map(t=>(
+        {[{id:'depts',label:'🏫 Departments'},{id:'types',label:'👥 User Types'}].map(t=>(
           <button key={t.id} onClick={()=>setSection(t.id)} style={{background:'none',border:'none',borderBottom:section===t.id?'2px solid #f9a84f':'2px solid transparent',color:section===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:section===t.id?600:400}}>{t.label}</button>
         ))}
       </div>
@@ -397,69 +385,13 @@ function SettingsTab({onReload,superuser}){
           </div>
         </div>
       )}
-
-      {/* SUBSCRIPTION CONFIG */}
-      {section==='subscription'&&(
-        <div className="fade-in">
-          <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'11px 15px',marginBottom:18}}>
-            <div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>💳 Subscription & Payment Settings</div>
-            <div style={{color:'var(--muted)',fontSize:12}}>Only you (superuser) can change these. All values update live — students see changes immediately.</div>
-          </div>
-          {[
-            {key:'free_ai_messages_per_day', label:'Free tier AI messages / day', type:'number', hint:'Number of AI chat messages a free user can send per day'},
-            {key:'pro_price_monthly',        label:'Pro price — monthly (₦)',      type:'number', hint:'What students pay per month for Pro'},
-            {key:'pro_price_yearly',         label:'Pro price — yearly (₦)',       type:'number', hint:'What students pay per year (show a saving vs monthly)'},
-            {key:'payment_account_name',     label:'OPay account name',            type:'text',   hint:'Name shown on the payment card'},
-            {key:'payment_account_number',   label:'OPay account number',          type:'text',   hint:'Account number students copy to pay'},
-            {key:'payment_bank',             label:'Bank name',                    type:'text',   hint:'e.g. OPay'},
-            {key:'payment_whatsapp',         label:'WhatsApp verification link',   type:'text',   hint:'Full wa.me link — e.g. https://wa.me/2348012345678'},
-          ].map(f=>(
-            <div key={f.key} style={{marginBottom:14}}>
-              <div style={{fontSize:11,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{f.label.toUpperCase()}</div>
-              <div style={{display:'flex',gap:10,alignItems:'center'}}>
-                <input type={f.type} value={subEdits[f.key]??subCfg[f.key]??''} onChange={e=>setSubEdits(prev=>({...prev,[f.key]:e.target.value}))}
-                  style={{flex:1,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 13px',color:'var(--text)',fontSize:13,fontFamily:f.type==='number'?"'IBM Plex Mono',monospace":'inherit'}}/>
-              </div>
-              {f.hint&&<div style={{fontSize:10,color:'var(--muted)',marginTop:3}}>{f.hint}</div>}
-            </div>
-          ))}
-          {/* Feature flags */}
-          <div style={{marginBottom:18}}>
-            <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>FREE TIER FEATURE FLAGS</div>
-            {[
-              {key:'free_community_posting', label:'Allow community posting on Free tier'},
-              {key:'free_all_years',         label:'Free tier sees all years (no year gating)'},
-            ].map(f=>{
-              const val=(subEdits[f.key]??subCfg[f.key]??'false')==='true';
-              return(
-                <div key={f.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',background:'var(--surface)',borderRadius:8,marginBottom:8}}>
-                  <span style={{fontSize:13,color:'var(--text)'}}>{f.label}</span>
-                  <button onClick={()=>setSubEdits(prev=>({...prev,[f.key]:val?'false':'true'}))}
-                    style={{background:val?'rgba(127,218,150,.15)':'var(--input-bg)',border:`1px solid ${val?'rgba(127,218,150,.4)':'var(--border)'}`,borderRadius:20,color:val?'#7fda96':'var(--muted)',cursor:'pointer',padding:'4px 14px',fontSize:12,fontWeight:600,minWidth:56}}>
-                    {val?'ON':'OFF'}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          <button onClick={async()=>{
-            setSubBusy(true);
-            await Promise.all(Object.entries(subEdits).map(([k,v])=>dbSaveSubConfig(k,v,superuser)));
-            await loadSubConfig(); // refresh global cache
-            await loadAll();
-            flash('✓ Subscription settings saved.');
-            setSubBusy(false);
-          }} disabled={subBusy} style={{background:'#f9a84f',border:'none',borderRadius:8,color:'#000',cursor:'pointer',padding:'10px 22px',fontSize:13,fontWeight:700}}>
-            {subBusy?'Saving…':'Save All Changes'}
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
 /* ═══════════════ USER ROW ═══════════════ */
-function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
+
+export function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
   const[expanded,setExpanded]=useState(false);
   const[busy,setBusy]=useState('');
   const[localYear,setLocalYear]=useState(u.year||1);
@@ -560,35 +492,6 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
             </div>
           )}
 
-          {/* Subscription tier — superuser only */}
-          {isSU2&&(
-            <div>
-              <div style={{fontSize:11,color:'var(--muted)',marginBottom:7,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>SUBSCRIPTION TIER</div>
-              <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
-                {[{k:'free',label:'Free',color:'#8892a4'},{k:'pro',label:'⭐ Pro',color:'#f9a84f'}].map(t=>{
-                  const active=(u.subscription_tier||'free')===t.k;
-                  return(
-                    <button key={t.k} onClick={async()=>{
-                      setBusy('tier');
-                      await dbSetUserTier(u.username,t.k,u.username);
-                      setBusy('');
-                    }} disabled={busy==='tier'}
-                      style={{padding:'7px 16px',borderRadius:8,cursor:'pointer',
-                        border:`1.5px solid ${active?t.color:t.color+'30'}`,
-                        background:active?`${t.color}14`:'var(--input-bg)',
-                        color:active?t.color:'var(--muted)',fontWeight:active?700:400,fontSize:12}}>
-                      {t.label}
-                    </button>
-                  );
-                })}
-                {busy==='tier'&&<Mono color="var(--muted)" size={9}>Saving…</Mono>}
-              </div>
-              <div style={{fontSize:10,color:'var(--muted)',marginTop:4}}>
-                Current: <span style={{color:TIER_CONFIG[u.subscription_tier||'free']?.color||'#8892a4',fontWeight:600}}>{TIER_CONFIG[u.subscription_tier||'free']?.label||'Free'}</span>
-              </div>
-            </div>
-          )}
-
           {/* Status requests for this user */}
           <div style={{paddingTop:4,borderTop:'1px solid var(--border)'}}>
             <UserStatusHistory username={u.username}/>
@@ -600,7 +503,8 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
 }
 
 /* Mini component: shows pending/recent status request for a specific user */
-function UserStatusHistory({username}){
+
+export function UserStatusHistory({username}){
   const[req,setReq]=useState(null);const[loaded,setLoaded]=useState(false);
   useEffect(()=>{
     dbGetPendingStatusRequest(username).then(r=>{setReq(r);setLoaded(true);});
@@ -620,7 +524,8 @@ function UserStatusHistory({username}){
 }
 
 /* ═══════════════ ADMIN PANEL ═══════════════ */
-function AdminPanel({user,courses,onClose,onCoursesChange}){
+
+export function AdminPanel({user,courses,onClose,onCoursesChange}){
   const isSU2=user.role===ROLE.SUPERUSER;
   const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[statusPendingCount,setStatusPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
 
@@ -786,7 +691,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         {tab==='status'&&<StatusChangesTab reviewerUsername={user.username}/>}
         {tab==='approvals'&&isSU2&&<ApprovalsTab onCourseChange={onCoursesChange} courses={courses} reviewerUsername={user.username}/>}
         {tab==='admins'&&isSU2&&<ManageAdminsTab/>}
-        {tab==='settings'&&isSU2&&<SettingsTab onReload={()=>onCoursesChange([...courses])} superuser={user.username}/>}
+        {tab==='settings'&&isSU2&&<SettingsTab onReload={()=>onCoursesChange([...courses])}/>}
       </div>
       {showUpload&&(
         isSU2
@@ -801,7 +706,8 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 }
 
 /* ═══════════════ STATUS CHANGE MODAL ═══════════════ */
-function StatusChangeModal({user,onClose,onSubmitted}){
+
+export function StatusChangeModal({user,onClose,onSubmitted}){
   const[reason,setReason]=useState('');
   const[targetType,setTargetType]=useState('');
   const[loading,setLoading]=useState(false);
@@ -919,7 +825,8 @@ function StatusChangeModal({user,onClose,onSubmitted}){
 }
 
 /* ═══════════════ STATUS CHANGES TAB (admin/superuser) ═══════════════ */
-function StatusChangesTab({reviewerUsername}){
+
+export function StatusChangesTab({reviewerUsername}){
   const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);
   const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);
   const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);
@@ -1026,5 +933,3 @@ function StatusChangesTab({reviewerUsername}){
 }
 
 /* ═══════════════ COURSE CARD (memoised) ═══════════════ */
-
-export { AnalyticsTab, ApprovalsTab, ManageAdminsTab, SettingsTab, UserRow, UserStatusHistory, AdminPanel, StatusChangeModal, StatusChangesTab, ACTION_LABELS };
