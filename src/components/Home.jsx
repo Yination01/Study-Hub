@@ -1,16 +1,17 @@
 import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, CACHE_KEY, getSubVal, CODE_TO_DEPT, RES_ICONS, AI_MSG_KEY, getAiMsgCount, incAiMsgCount, APP_VERSION, COPYRIGHT_YEAR } from '../lib/constants.js';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
+  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, TIER_CONFIG,
+  APP_VERSION, getSubVal } from '../lib/constants.js';
 import * as db from '../lib/db.js';
-import { Tag, Mono, SectionLabel, Field, Avatar, RoleBadge, RolePill, ProgressBar, Logo, ThemeToggle, SearchBar } from './UI.jsx';
-import { useNotificationPermission, pushNotification } from '../lib/hooks.js';
+import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo } from './UI.jsx';
+import { useTheme, useBookmarks, pushNotification } from '../lib/hooks.js';
 import { NotificationBell } from './CourseTabs.jsx';
 import { StatusChangeModal } from './Admin.jsx';
 import { SubscriptionBadge, PaymentPortal } from './Subscription.jsx';
 import { usePWAPrompt } from './PWA.jsx';
-import { CopyrightBar, GlobalAnnouncementStrip } from './Modals.jsx';
+import { GlobalAnnouncementStrip } from './Modals.jsx';
 
-/* ═══════════════ COURSE CARD (memoised) ═══════════════ */
-const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect}){
+export const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect}){
   const accent=YEAR_COLORS[c.year]||CARD_ACCENTS[i%CARD_ACCENTS.length];
   return(
     <div className={`stagger-${Math.min(i%4+1,4)}`}
@@ -41,7 +42,7 @@ const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarke
 });
 
 /* ═══════════════ HOME ═══════════════ */
-function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab}){
+export function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab}){
   const isExternal=user.role===ROLE.EXTERNAL;
   const[activeYear,setActiveYear]=useState(isExternal?'all':(user.year||1));
   const[activeSemester,setActiveSemester]=useState(1);
@@ -50,7 +51,6 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[search,setSearch]=useState('');
   const[showBookmarks,setShowBookmarks]=useState(false);
   const[showStatusModal,setShowStatusModal]=useState(false);
-  const[showPayment,setShowPayment]=useState(false);
   const[showPWADebug,setShowPWADebug]=useState(false);
   const[browseMode,setBrowseMode]=useState('year'); // 'year' | 'course'
   const nativePrompt=usePWAPrompt();
@@ -116,7 +116,6 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
               <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3,flexWrap:'wrap'}}>
                 <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
-                {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'}/>}
                 {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Yr {user.year} · @{user.username}</Mono>}
                 {isExternal&&<Mono color="#a8f94f" size={9}>@{user.username} · External</Mono>}
                 {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
@@ -145,17 +144,6 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           {/* Bookmarks */}
           {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:13,display:'flex',alignItems:'center',gap:5}}>🔖<span className="hide-xs">{bookmarks.length}</span></button>}
 
-          {/* Upgrade to Pro — shown for free-tier students/external, not guests/admins */}
-          {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(user.subscription_tier||'free')==='free'&&(
-            <button onClick={()=>setShowPayment(true)}
-              style={{background:'linear-gradient(135deg,rgba(249,168,79,.18),rgba(249,168,79,.08))',
-                border:'1px solid rgba(249,168,79,.4)',borderRadius:8,
-                color:'#f9a84f',cursor:'pointer',padding:'8px 12px',fontSize:12,fontWeight:700,
-                display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}>
-              ⭐ <span className="hide-xs">Upgrade</span>
-            </button>
-          )}
-
           {/* Change Status */}
           {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(
             <button onClick={()=>setShowStatusModal(true)} title="Request account status change" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
@@ -177,7 +165,6 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       </div>
 
       {/* PWA Diagnostic panel */}
-      {showPayment&&<PaymentPortal user={user} onClose={()=>setShowPayment(false)}/> }
       {showPWADebug&&<PWADiagnosticPanel onClose={()=>setShowPWADebug(false)}/>}
 
       {/* Status change modal */}
@@ -359,5 +346,4 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   );
 }
 
-
-export { Home, CourseCard };
+/* ═══════════════ ROOT APP ═══════════════ */
