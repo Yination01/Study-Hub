@@ -5,99 +5,93 @@ export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY
 );
 
-const APP_VERSION    = '4.1.0';
-const COPYRIGHT_YEAR = '2025';
+export const APP_VERSION    = '4.1.0';
+export const COPYRIGHT_YEAR = '2025';
 
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+export const ROLE  = { SUPERUSER:'superuser', ADMIN:'admin', USER:'user', EXTERNAL:'external' };
+export const YEARS = [1,2,3,4];
 
-/* ═══════════════ CONSTANTS ═══════════════ */
-const ROLE  = { SUPERUSER:'superuser', ADMIN:'admin', USER:'user', EXTERNAL:'external' };
-const YEARS       = [1,2,3,4];
-// These are seeded defaults — overridden at runtime by loadDepartments()
-let DEPARTMENTS = ['Computer Science','Computer with Statistics'];
-let DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
-let DEPT_COLOR  = {'Computer Science':'#4f9cf9','Computer with Statistics':'#7fda96'};
-// Dynamic user types — overridden at runtime by loadUserTypes()
-let USER_TYPES  = [
+export let DEPARTMENTS = ['Computer Science','Computer with Statistics'];
+export let DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
+export let DEPT_COLOR  = {'Computer Science':'#4f9cf9','Computer with Statistics':'#7fda96'};
+
+export let USER_TYPES = [
   {id:'ut-student', label:'Enrolled Student',  shortCode:'Student',  roleKey:'user',     color:'#4f9cf9', description:'Currently enrolled students'},
   {id:'ut-external',label:'External / Visitor',shortCode:'External', roleKey:'external', color:'#a8f94f', description:'Non-enrolled users'},
 ];
-const YEAR_COLORS = {1:'#4f9cf9',2:'#7fda96',3:'#f9a84f',4:'#da7ff0'};
-const YEAR_BG     = {1:'rgba(79,156,249,0.1)',2:'rgba(127,218,150,0.1)',3:'rgba(249,168,79,0.1)',4:'rgba(218,127,240,0.1)'};
-const ROLE_COLOR  = {superuser:'#f9a84f',admin:'#da7ff0',user:'#4f9cf9',external:'#a8f94f'};
-const ROLE_BG     = {superuser:'rgba(249,168,79,0.12)',admin:'rgba(218,127,240,0.12)',user:'rgba(79,156,249,0.12)',external:'rgba(168,249,79,0.12)'};
-const ROLE_ICON   = {superuser:'⚡',admin:'🛡',user:'🎓',external:'🌐',guest:'👀'};
-const COLOR_MAP   = {blue:{bar:'#4f9cf9'},orange:{bar:'#f9a84f'},green:{bar:'#7fda96'},purple:{bar:'#da7ff0'}};
-const CARD_ACCENTS= ['#4f9cf9','#f9a84f','#7fda96','#da7ff0','#f97b7b','#a8f94f','#4ff9e4','#f94fcc'];
 
-/* ═══════════════ SMART SORT ═══════════════ */
-// Course code → department
-const CODE_TO_DEPT={
+export const YEAR_COLORS = {1:'#4f9cf9',2:'#7fda96',3:'#f9a84f',4:'#da7ff0'};
+export const YEAR_BG     = {1:'rgba(79,156,249,0.1)',2:'rgba(127,218,150,0.1)',3:'rgba(249,168,79,0.1)',4:'rgba(218,127,240,0.1)'};
+export const ROLE_COLOR  = {superuser:'#f9a84f',admin:'#da7ff0',user:'#4f9cf9',external:'#a8f94f'};
+export const ROLE_BG     = {superuser:'rgba(249,168,79,0.12)',admin:'rgba(218,127,240,0.12)',user:'rgba(79,156,249,0.12)',external:'rgba(168,249,79,0.12)'};
+export const ROLE_ICON   = {superuser:'⚡',admin:'🛡',user:'🎓',external:'🌐',guest:'👀'};
+export const COLOR_MAP   = {blue:{bar:'#4f9cf9'},orange:{bar:'#f9a84f'},green:{bar:'#7fda96'},purple:{bar:'#da7ff0'}};
+export const CARD_ACCENTS= ['#4f9cf9','#f9a84f','#7fda96','#da7ff0','#f97b7b','#a8f94f','#4ff9e4','#f94fcc'];
+
+export const PRIORITY = {
+  info:   { icon:'ℹ️',  color:'#4f9cf9', label:'Info'    },
+  warning:{ icon:'⚠️', color:'#f9a84f', label:'Warning' },
+  urgent: { icon:'🚨', color:'#f05050', label:'Urgent'  },
+};
+export const RES_ICONS = {link:'🔗',video:'▶️',pdf:'📄',doc:'📝'};
+export const CACHE_KEY = id => `sh-course-cache-${id}`;
+
+/* Smart sort */
+export const CODE_TO_DEPT={
   COS:'Computer Science',CSC:'Computer Science',CS:'Computer Science',
   STA:'Computer with Statistics',STT:'Computer with Statistics',MAT:'Computer with Statistics',
 };
-function detectYearFromCode(code){
-  const m=code.match(/(\d+)/);if(!m)return null;
-  const n=parseInt(m[1]);
-  if(n>=100&&n<200)return 1;if(n>=200&&n<300)return 2;
-  if(n>=300&&n<400)return 3;if(n>=400&&n<500)return 4;
-  return null;
-}
-function detectDeptFromCode(code){
-  const p=code.replace(/[^a-zA-Z]/g,'').toUpperCase();
-  for(const k of Object.keys(CODE_TO_DEPT).sort((a,b)=>b.length-a.length))
-    {if(p.startsWith(k))return CODE_TO_DEPT[k];}
-  return null;
-}
-function detectMetadata(data){
-  const name=(data.courseName||'').trim();
-  const title=(data.chapterTitle||'').toLowerCase();
-  const result={year:null,semester:null,department:null};
-  if(name){result.year=detectYearFromCode(name);result.department=detectDeptFromCode(name);}
-  if(!result.semester){
-    const s1=['introduction','intro','foundations','basics','fundamentals','first'];
-    const s2=['advanced','continuation','second','further','design','implementation'];
-    if(s1.some(w=>title.includes(w)))result.semester=1;
-    else if(s2.some(w=>title.includes(w)))result.semester=2;
+export function detectYearFromCode(code){
+    const m=code.match(/(\d+)/);if(!m)return null;
+    const n=parseInt(m[1]);
+    if(n>=100&&n<200)return 1;if(n>=200&&n<300)return 2;
+    if(n>=300&&n<400)return 3;if(n>=400&&n<500)return 4;
+    return null;
   }
-  return result;
 }
-const RES_ICONS   = {link:'🔗',video:'▶️',pdf:'📄',doc:'📝'};
-const CACHE_KEY   = id => `sh-course-cache-${id}`;
-
-
-/* ═══════════════ HELPERS ═══════════════ */
-function hashStr(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return(h>>>0).toString(16);}
-
-// Superuser auth is server-side only — no username check in browser
-async function checkSuperuser(username, password){
-  try{
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({username, password})
-    });
-    const data = await res.json();
-    return data.ok === true ? data : null;
-  }catch{ return null; }
+export function detectDeptFromCode(code){
+    const p=code.replace(/[^a-zA-Z]/g,'').toUpperCase();
+    for(const k of Object.keys(CODE_TO_DEPT).sort((a,b)=>b.length-a.length))
+      {if(p.startsWith(k))return CODE_TO_DEPT[k];}
+    return null;
+  }
+}
+export function detectMetadata(data){
+    const name=(data.courseName||'').trim();
+    const title=(data.chapterTitle||'').toLowerCase();
+    const result={year:null,semester:null,department:null};
+    if(name){result.year=detectYearFromCode(name);result.department=detectDeptFromCode(name);}
+    if(!result.semester){
+      const s1=['introduction','intro','foundations','basics','fundamentals','first'];
+      const s2=['advanced','continuation','second','further','design','implementation'];
+      if(s1.some(w=>title.includes(w)))result.semester=1;
+      else if(s2.some(w=>title.includes(w)))result.semester=2;
+    }
+    return result;
+  }
 }
 
-const AI_MSG_KEY='sh-ai-msgs';
-function getAiMsgCount(){
+/* Subscription config */
+export let _subConfig = {};
+export function getSubVal(key, fallback='') { return _subConfig[key] ?? fallback; }
+export function setSubConfigCache(cfg) { Object.assign(_subConfig, cfg); }
+
+/* AI rate limit */
+export const AI_MSG_KEY='sh-ai-msgs';
+export function getAiMsgCount(){
   try{const s=JSON.parse(localStorage.getItem(AI_MSG_KEY)||'{}');const today=new Date().toDateString();if(s.date!==today)return 0;return s.count||0;}catch{return 0;}
 }
-function incAiMsgCount(){
+export function incAiMsgCount(){
   try{const today=new Date().toDateString();const s=JSON.parse(localStorage.getItem(AI_MSG_KEY)||'{}');const count=(s.date===today?s.count||0:0)+1;localStorage.setItem(AI_MSG_KEY,JSON.stringify({date:today,count}));return count;}catch{return 0;}
 }
-let _subConfig={};
-async function loadSubConfig(){_subConfig=await dbLoadSubConfig();return _subConfig;}
-function getSubVal(key,fallback=''){return _subConfig[key]??fallback;}
 
+/* Tier config */
+export const TIER_CONFIG={
+  free:    {label:'Free',       color:'#8892a4',icon:'🎓',badge:'Free'},
+  pro:     {label:'Student Pro',color:'#f9a84f',icon:'⭐',badge:'Pro' },
+  external:{label:'External',   color:'#a8f94f',icon:'🌐',badge:'Pro' },
+};
 
-/* ═══════════════ GLOBAL CSS ═══════════════ */
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@300;400;500;600&display=swap');
 
@@ -251,19 +245,3 @@ const css = `
     z-index:2500;padding:20px;overflow-y:auto
   }
 `;
-
-// Subscription config cache (populated at startup by loadSubConfig)
-export let _subConfig = {};
-export function getSubVal(key, fallback='') { return _subConfig[key] ?? fallback; }
-export function setSubConfig(cfg) { Object.assign(_subConfig, cfg); }
-
-export const PRIORITY = {
-  info:   { icon:'ℹ️',  color:'#4f9cf9', label:'Info'    },
-  warning:{ icon:'⚠️', color:'#f9a84f', label:'Warning' },
-  urgent: { icon:'🚨', color:'#f05050', label:'Urgent'  },
-};
-
-export const RES_ICONS = {link:'🔗',video:'▶️',pdf:'📄',doc:'📝'};
-export const CACHE_KEY = id => `sh-course-cache-${id}`;
-
-export const JSON_PROMPT = `Generate a StudyHub JSON study guide for this document.`;
