@@ -1,9 +1,7 @@
-import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY } from '../lib/constants.js';
-import { Tag, Mono, SectionLabel, Field, Avatar, RoleBadge, RolePill, ProgressBar, Logo, ThemeToggle, SearchBar } from './UI.jsx';
+import React,{ useState, useEffect, useRef, useCallback } from 'react';
+import { Mono } from './UI.jsx';
+import { APP_VERSION, css } from '../lib/constants.js';
 
-/* ═══════════════ PWA INSTALL ═══════════════ */
-/* ═══════════════ INSTALL PROMPT (cross-browser) ═══════════════ */
 const PWA_KEY      = 'sh-pwa-v2';
 const SNOOZE_DAYS  = 3;
 
@@ -17,7 +15,7 @@ if(typeof window !== 'undefined'){
     _pwaListeners.forEach(fn=>fn(e));
   });
 }
-function usePWAPrompt(){
+export function usePWAPrompt(){
   const[p,setP]=useState(_pwaPromptEvent);
   useEffect(()=>{
     const fn=e=>setP(e);
@@ -27,7 +25,7 @@ function usePWAPrompt(){
   return p;
 }
 
-function useBrowserInfo(){
+export function useBrowserInfo(){
   const ua = navigator.userAgent;
   const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
   const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS|OPiOS|SamsungBrowser/.test(ua);
@@ -40,21 +38,21 @@ function useBrowserInfo(){
   return { isIOS, isSafari, isFirefox, isAndroid, isStandalone, isBrave };
 }
 
-function pwaState(){
+export function pwaState(){
   try { return JSON.parse(localStorage.getItem(PWA_KEY)||'{}'); } catch { return {}; }
 }
-function savePwaState(patch){
+export function savePwaState(patch){
   try { localStorage.setItem(PWA_KEY, JSON.stringify({...pwaState(),...patch})); } catch {}
 }
 
-function shouldShowPrompt(){
+export function shouldShowPrompt(){
   const s = pwaState();
   if(s.neverShow) return false;              // user clicked ✕
   if(!s.snoozeUntil) return true;            // never seen before
   return Date.now() > s.snoozeUntil;         // snooze expired
 }
 
-function InstallPrompt(){
+export function InstallPrompt(){
   const nativePrompt = usePWAPrompt();
   const [show,   setShow]   = useState(false);
   const [status, setStatus] = useState(null);
@@ -150,35 +148,30 @@ function InstallPrompt(){
   if(browser.isIOS && !nativePrompt){
     return(<>
       {StatusToast}
-      {/* Full-screen backdrop */}
-      <div onClick={snooze} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',backdropFilter:'blur(2px)',zIndex:9899}}/>
-      <div className="no-print" style={{
-        position:'fixed',bottom:0,left:0,right:0,
+      <div className="no-print" style={{position:'fixed',bottom:0,left:0,right:0,
         background:'var(--card)',borderTop:'1px solid var(--border)',
-        borderRadius:'20px 20px 0 0',
-        padding:'16px 20px max(24px,env(safe-area-inset-bottom))',
+        borderRadius:'18px 18px 0 0',padding:'20px 20px 36px',
         zIndex:9900,boxShadow:'0 -8px 40px rgba(0,0,0,.5)',
-        maxHeight:'85vh',overflowY:'auto',
         animation:'slideUp .35s cubic-bezier(.4,0,.2,1) both'}}>
         {/* Handle bar */}
         <div style={{width:36,height:4,borderRadius:2,background:'var(--border)',margin:'0 auto 16px'}}/>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <div style={{width:40,height:40,borderRadius:10,background:'linear-gradient(135deg,#1a2a4a,#0d1929)',
-              border:'1px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,flexShrink:0}}>📚</div>
+              border:'1px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>📚</div>
             <div>
               <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>Install StudyHub</div>
               <div style={{fontSize:11,color:'var(--muted)'}}>Works offline · Loads faster</div>
             </div>
           </div>
-          <button onClick={never} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,padding:'4px',lineHeight:1,flexShrink:0}}>✕</button>
+          <button onClick={never} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,padding:'4px',lineHeight:1}}>✕</button>
         </div>
         <div style={{display:'flex',flexDirection:'column',gap:9,marginBottom:16}}>
           {[
-            {n:1, html:<>Tap the <strong style={{color:'#4f9cf9'}}>Share ⬆️</strong> button at the bottom of Safari</>},
-            {n:2, html:<>Scroll down and tap <strong style={{color:'#4f9cf9'}}>Add to Home Screen</strong></>},
-            {n:3, html:<>Tap <strong style={{color:'#4f9cf9'}}>Add</strong> — done!</>},
-          ].map(({n,html})=>(
+            {n:1, icon:'⬆️', html:<>Tap the <strong style={{color:'#4f9cf9'}}>Share</strong> button at the bottom of your screen</>},
+            {n:2, icon:'➕', html:<>Scroll down and tap <strong style={{color:'#4f9cf9'}}>Add to Home Screen</strong></>},
+            {n:3, icon:'✅', html:<>Tap <strong style={{color:'#4f9cf9'}}>Add</strong> — done!</>},
+          ].map(({n,icon,html})=>(
             <div key={n} style={{display:'flex',alignItems:'center',gap:12,
               background:'var(--surface)',borderRadius:10,padding:'11px 14px'}}>
               <span style={{width:26,height:26,borderRadius:'50%',background:'rgba(79,156,249,.12)',
@@ -190,7 +183,7 @@ function InstallPrompt(){
         </div>
         <button onClick={snooze} style={{width:'100%',background:'none',border:'1px solid var(--border)',
           borderRadius:10,color:'var(--muted)',cursor:'pointer',padding:'12px 0',fontSize:13}}>
-          Remind me later
+          Remind me in {SNOOZE_DAYS} days
         </button>
       </div>
     </>);
@@ -255,112 +248,38 @@ function InstallPrompt(){
   </>);
 }
 
-/* ═══════════════ SUBSCRIPTION / PAYMENT ═══════════════ */
-const TIER_CONFIG={
-  free:{label:'Free',color:'#8892a4',icon:'🎓',badge:'Free'},
-  pro: {label:'Student Pro',color:'#f9a84f',icon:'⭐',badge:'Pro'},
-  external:{label:'External Pro',color:'#a8f94f',icon:'🌐',badge:'Pro'},
-};
+/* ═══════════════ WELCOME MODAL (first sign-up) ═══════════════ */
+export function PWADiagnosticPanel({onClose}){
+  const[results,setResults]=useState(null);
+  const browser=useBrowserInfo();
+  const prompt=usePWAPrompt();
 
-function SubscriptionBadge({tier}){
-  const t=TIER_CONFIG[tier]||TIER_CONFIG.free;
-  return(
-    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:`${t.color}20`,
-      color:t.color,border:`1px solid ${t.color}40`,borderRadius:4,padding:'1px 6px',letterSpacing:1,fontWeight:700}}>
-      {t.icon} {t.badge}
-    </span>
-  );
-}
+  useEffect(()=>{
+    async function run(){
+      const checks=[];
 
-function PaymentPortal({user,onClose}){
-  const monthly=getSubVal('pro_price_monthly','500');
-  const yearly=getSubVal('pro_price_yearly','5000');
-  const acctName=getSubVal('payment_account_name','StudyHUB');
-  const acctNum=getSubVal('payment_account_number','0123456789');
-  const bank=getSubVal('payment_bank','OPay');
-  const wa=getSubVal('payment_whatsapp','');
-  const dailyLimit=parseInt(getSubVal('free_ai_messages_per_day','5'));
-  const[copied,setCopied]=useState(false);
-  const copyAcct=()=>{navigator.clipboard.writeText(acctNum).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});};
+      // ── Brave Shields (most likely cause) ──────────────────────────
+      if(browser.isBrave){
+        // Try fetching sw.js — Shields often blocks it with a network error
+        let shieldsBlocking=false;
+        try{
+          const r=await fetch('/sw.js',{cache:'no-store'});
+          shieldsBlocking=!r.ok;
+        }catch{
+          shieldsBlocking=true; // network error = Shields blocked it
+        }
+        checks.push({
+          label:'Brave Shields',
+          ok:!shieldsBlocking,
+          detail:shieldsBlocking
+            ?`⚠️ Brave Shields is blocking the service worker.\n\nFIX: Tap the Brave lion icon in the address bar → toggle "Shields" OFF for this site, then refresh.\n\nThis is the most common reason Brave can't install PWAs.`
+            :'Shields not blocking service worker ✓',
+        });
+      }
 
-  return(
-    <div className="modal-overlay" style={{zIndex:9960}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="scale-in" style={{
-        background:'linear-gradient(160deg,#07119a,#0e8f94)',
-        border:'1px solid rgba(255,255,255,.12)',
-        borderRadius:20,padding:'32px 28px',
-        maxWidth:420,width:'calc(100% - 24px)',margin:'auto',
-        boxShadow:'0 20px 60px rgba(0,0,0,.5)',
-        position:'relative',overflow:'hidden',maxHeight:'90vh',overflowY:'auto',
-      }}>
-        <div style={{position:'absolute',top:-60,right:-60,width:200,height:200,borderRadius:'50%',background:'rgba(17,163,168,.3)',filter:'blur(60px)',pointerEvents:'none'}}/>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24}}>
-          <div>
-            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'#fff',marginBottom:2}}>StudyHub Pro</div>
-            <div style={{fontSize:12,color:'rgba(255,255,255,.6)'}}>Unlock everything — one payment</div>
-          </div>
-          <button onClick={onClose} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:'50%',color:'#fff',cursor:'pointer',width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>✕</button>
-        </div>
-        {/* Tier comparison */}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:20}}>
-          {[
-            {tier:'Free',color:'#8892a4',features:[`Year ${user?.year||1} courses only`,`${dailyLimit} AI messages/day`,'No community posting']},
-            {tier:'Pro ⭐',color:'#f9a84f',features:['All years & departments','Unlimited AI chat','Community posting + support']},
-          ].map((t,i)=>(
-            <div key={i} style={{background:`rgba(255,255,255,${i===1?.12:.06})`,border:`1px solid ${t.color}40`,borderRadius:14,padding:'14px 12px'}}>
-              <div style={{fontSize:11,fontWeight:700,color:t.color,marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{t.tier}</div>
-              {t.features.map((f,j)=>(
-                <div key={j} style={{fontSize:11,color:i===1?'rgba(255,255,255,.9)':'rgba(255,255,255,.5)',marginBottom:4,display:'flex',alignItems:'flex-start',gap:5,lineHeight:1.4}}>
-                  <span style={{color:i===1?'#7fda96':'#555',fontSize:10,flexShrink:0,marginTop:1}}>{i===1?'✓':'·'}</span>{f}
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-        {/* Pricing */}
-        <div style={{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.15)',borderRadius:14,padding:'14px 16px',marginBottom:18}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-            <span style={{fontSize:13,color:'rgba(255,255,255,.8)'}}>Monthly</span>
-            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:18,color:'#f9a84f',fontWeight:700}}>₦{monthly}</span>
-          </div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,borderTop:'1px solid rgba(255,255,255,.1)'}}>
-            <span style={{fontSize:13,color:'rgba(255,255,255,.8)'}}>Yearly <span style={{fontSize:10,color:'#7fda96'}}>(save {Math.round((1-yearly/(monthly*12))*100)}%)</span></span>
-            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:18,color:'#f9a84f',fontWeight:700}}>₦{yearly}</span>
-          </div>
-        </div>
-        {/* Payment details */}
-        <div style={{background:'rgba(0,0,0,.3)',border:'1px solid rgba(255,255,255,.1)',borderRadius:14,padding:'14px 16px',marginBottom:18}}>
-          <div style={{fontSize:9,color:'rgba(255,255,255,.45)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:10}}>PAYMENT DETAILS</div>
-          <div style={{fontSize:13,color:'#fff',fontWeight:600,marginBottom:6}}>{acctName}</div>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
-            <div>
-              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:22,color:'#fff',letterSpacing:2,fontWeight:700}}>{acctNum}</div>
-              <div style={{fontSize:11,color:'rgba(7,243,7,.9)',fontWeight:600,marginTop:2}}>{bank}</div>
-            </div>
-            <button onClick={copyAcct} style={{background:copied?'rgba(127,218,150,.2)':'rgba(255,255,255,.12)',border:`1px solid ${copied?'rgba(127,218,150,.5)':'rgba(255,255,255,.2)'}`,borderRadius:8,color:copied?'#7fda96':'#fff',cursor:'pointer',padding:'8px 14px',fontSize:11,fontWeight:600,flexShrink:0,transition:'all .2s'}}>
-              {copied?'✓ Copied':'Copy'}
-            </button>
-          </div>
-        </div>
-        {/* WhatsApp CTA */}
-        <div style={{textAlign:'center',marginBottom:14}}>
-          <div style={{fontSize:11,color:'rgba(255,255,255,.6)',marginBottom:10,lineHeight:1.5}}>After payment, verify on WhatsApp to activate Pro</div>
-          {wa?(
-            <a href={wa} target="_blank" rel="noopener noreferrer"
-              style={{display:'inline-flex',alignItems:'center',gap:8,background:'#1fff02',color:'#000',padding:'12px 28px',borderRadius:12,fontSize:14,fontWeight:700,textDecoration:'none',boxShadow:'0 4px 20px rgba(31,255,2,.3)'}}>
-              💬 Verify on WhatsApp
-            </a>
-          ):(
-            <div style={{fontSize:11,color:'rgba(255,255,255,.35)',fontStyle:'italic'}}>WhatsApp link not configured — contact the admin</div>
-          )}
-        </div>
-        <div style={{fontSize:10,color:'rgba(255,255,255,.3)',textAlign:'center',lineHeight:1.6}}>
-          Pro access is activated within 24 hrs of verification by the superuser.
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-export { InstallPrompt, PWADiagnosticPanel, usePWAPrompt, useBrowserInfo };
+      // ── HTTPS ──────────────────────────────────────────────────────
+      checks.push({
+        label:'HTTPS',
+        ok:location.protocol==='https:'||location.hostname==='localhost',
+        detail:location.protocol==='https:'?'Served over HTTPS ✓':'Not HTTPS — install requires a secure connection',
+      });
