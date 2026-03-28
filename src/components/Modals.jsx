@@ -1,13 +1,10 @@
 import React,{ useState, useEffect, useRef } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
-  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, ROLE_ICON, COLOR_MAP, CARD_ACCENTS,
-  PRIORITY, RES_ICONS, CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR,
-  getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY,
-  TIER_CONFIG, CODE_TO_DEPT, detectMetadata, css } from '../lib/constants.js';
-import * as db from '../lib/db.js';
-import { Mono, Logo, Tag } from './UI.jsx';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, ROLE_ICON, COLOR_MAP, CARD_ACCENTS, PRIORITY, RES_ICONS, CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, CODE_TO_DEPT, detectMetadata, getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY, TIER_CONFIG, css } from '../lib/constants.js';
+import * as db from '../lib/db.jsx';
+import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, RoleBadge, ProgressBar, Logo, ThemeToggle, OfflineBanner, SearchBar } from './UI.jsx';
 import { usePWAPrompt } from './PWA.jsx';
 
+/* ═══════════════ WELCOME MODAL (first sign-up) ═══════════════ */
 export function WelcomeModal({user,onClose}){
   const[step,setStep]=useState(0);
   const isExternal=user.role===ROLE.EXTERNAL||user.accountType==='external';
@@ -89,8 +86,9 @@ export function WelcomeModal({user,onClose}){
   );
 }
 
-/* ═══════════════ GUEST BANNER ═══════════════ */
 
+
+/* ═══════════════ GUEST BANNER ═══════════════ */
 export function GuestBanner({onSignUp}){
   const[dismissed,setDismissed]=useState(false);
   if(dismissed)return null;
@@ -111,8 +109,9 @@ export function GuestBanner({onSignUp}){
   );
 }
 
-/* ═══════════════ COPYRIGHT BAR ═══════════════ */
 
+
+/* ═══════════════ COPYRIGHT BAR ═══════════════ */
 export const CopyrightBar=()=>{
   const[showDiag,setShowDiag]=useState(false);
   return(<>
@@ -134,8 +133,9 @@ export const CopyrightBar=()=>{
   </>);
 };
 
-/* ═══════════════ SEARCH BAR ═══════════════ */
 
+
+/* ═══════════════ GLOBAL ANNOUNCEMENT STRIP ═══════════════ */
 export function GlobalAnnouncementStrip({user}){
   const[items,setItems]=useState([]);const[idx,setIdx]=useState(0);
   useEffect(()=>{
@@ -169,5 +169,3 @@ export function GlobalAnnouncementStrip({user}){
     </div>
   );
 }
-
-/* ═══════════════ ANNOUNCEMENTS TAB ═══════════════ */
