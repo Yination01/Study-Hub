@@ -1,5 +1,25 @@
-import { supabase, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, setSubConfigCache, _subConfig } from './constants.js';
+import { supabase, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
+  _subConfig, setSubConfigCache, APP_VERSION, COPYRIGHT_YEAR } from './constants.js';
 
+/* ═══════════════ HELPERS ═══════════════ */
+export function hashStr(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return(h>>>0).toString(16);}
+
+// Superuser auth is server-side only — no username check in browser
+async function checkSuperuser(username, password){
+  try{
+    const res = await fetch('/api/auth', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    const data = await res.json();
+    return data.ok === true ? data : null;
+  }catch{ return null; }
+}
+
+
+
+/* ═══════════════ DATABASE ═══════════════ */
 export async function dbLoadUsers(){const{data}=await supabase.from('users').select('*');return data||[];}
 export async function dbSaveUser(u){await supabase.from('users').upsert(u,{onConflict:'username'});}
 export async function dbLoadAdmins(){const{data}=await supabase.from('admins').select('username');return(data||[]).map(r=>r.username.toLowerCase());}
@@ -162,6 +182,8 @@ export async function dbUpvote(username,postId){
 export async function dbGetMyVotes(username){try{const{data}=await supabase.from('community_votes').select('post_id').eq('username',username);return(data||[]).map(r=>r.post_id);}catch{return[];}}
 export async function dbDeletePost(id){try{await supabase.from('community_posts').delete().eq('id',id);}catch{}}
 
+
+
 /* ═══════════════ COURSE CODE HELPERS ═══════════════ */
 export function normalizeCourseCode(raw=''){
   const s=(raw||'').trim().toUpperCase().replace(/\s+/g,' ');
@@ -188,6 +210,8 @@ export async function dbLoadCourseTabData(courseIds){
   }catch{return{assignments:[],cas:[],resources:[],announcements:[]};}
 }
 
+
+
 /* ═══════════════ PENDING ACTIONS ═══════════════ */
 export async function dbSubmitPending(action_type,requested_by,payload,note=''){
   await supabase.from('pending_actions').insert({id:`pa-${Date.now()}`,action_type,requested_by,requested_at:new Date().toISOString(),status:'pending',payload,note});
@@ -211,12 +235,16 @@ export async function dbCountPending(){
 // Analytics helpers
 export async function dbLoadAllProgress(){try{const{data}=await supabase.from('progress').select('*');return data||[];}catch{return[];}}
 
+
+
 /* ═══════════════ AI (chat via Groq) ═══════════════ */
 export async function sendChatMessage(messages,context){
   const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages,context})});
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`Error ${res.status}`);}
   return(await res.json()).reply;
 }
+
+
 
 /* ═══════════════ PDF EXPORT ═══════════════ */
 export function exportCoursePDF(d,chapterTitle){
