@@ -1,12 +1,12 @@
 import React,{ useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
-  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, TIER_CONFIG,
-  APP_VERSION, getSubVal } from '../lib/constants.js';
-import * as db from '../lib/db.js';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS, CACHE_KEY, APP_VERSION, getSubVal, getAiMsgCount, incAiMsgCount, TIER_CONFIG } from '../lib/constants.js';
+import * as db from '../lib/db.jsx';
 import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo } from './UI.jsx';
-import { useConfirm, pushNotification } from '../lib/hooks.js';
+import { useNotificationPermission, pushNotification } from '../lib/hooks.jsx';
+import { useConfirm } from '../lib/hooks.jsx';
 import { UploadModal } from './Upload.jsx';
 
+/* ═══════════════ ANALYTICS TAB ═══════════════ */
 export function AnalyticsTab({courses}){
   const[allProgress,setAllProgress]=useState([]);const[loading,setLoading]=useState(true);
   useEffect(()=>{dbLoadAllProgress().then(p=>{setAllProgress(p);setLoading(false);});},[]);
@@ -77,15 +77,15 @@ export function AnalyticsTab({courses}){
   );
 }
 
-/* ═══════════════ APPROVALS TAB ═══════════════ */
 
-const ACTION_LABELS={
+
+/* ═══════════════ APPROVALS TAB ═══════════════ */
+export const ACTION_LABELS={
   add_course:   {icon:'📚',label:'Add Course',    color:'#4f9cf9'},
   delete_course:{icon:'🗑',label:'Delete Course', color:'#f05050'},
   add_resource: {icon:'🔗',label:'Add Resource',  color:'#7fda96'},
   delete_resource:{icon:'🗑',label:'Delete Resource',color:'#f9a84f'},
 };
-
 
 export function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
   const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');
@@ -204,8 +204,9 @@ export function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
   );
 }
 
-/* ═══════════════ MANAGE ADMINS ═══════════════ */
 
+
+/* ═══════════════ MANAGE ADMINS ═══════════════ */
 export function ManageAdminsTab(){
   const[users,setUsers]=useState([]);const[admins,setAdmins]=useState([]);const[search,setSearch]=useState('');const[busy,setBusy]=useState('');const[msg,setMsg]=useState('');
   useEffect(()=>{Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setUsers(u);setAdmins(a);});},[]);
@@ -237,8 +238,9 @@ export function ManageAdminsTab(){
   );
 }
 
-/* ═══════════════ SETTINGS TAB (superuser only) ═══════════════ */
 
+
+/* ═══════════════ SETTINGS TAB (superuser only) ═══════════════ */
 export function SettingsTab({onReload}){
   const[depts,setDepts]=useState([]);const[types,setTypes]=useState([]);
   const[deptForm,setDeptForm]=useState({name:'',short_code:'',color:'#4f9cf9'});
@@ -389,8 +391,9 @@ export function SettingsTab({onReload}){
   );
 }
 
-/* ═══════════════ USER ROW ═══════════════ */
 
+
+/* ═══════════════ USER ROW ═══════════════ */
 export function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
   const[expanded,setExpanded]=useState(false);
   const[busy,setBusy]=useState('');
@@ -503,7 +506,6 @@ export function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearCha
 }
 
 /* Mini component: shows pending/recent status request for a specific user */
-
 export function UserStatusHistory({username}){
   const[req,setReq]=useState(null);const[loaded,setLoaded]=useState(false);
   useEffect(()=>{
@@ -523,8 +525,9 @@ export function UserStatusHistory({username}){
   );
 }
 
-/* ═══════════════ ADMIN PANEL ═══════════════ */
 
+
+/* ═══════════════ ADMIN PANEL ═══════════════ */
 export function AdminPanel({user,courses,onClose,onCoursesChange}){
   const isSU2=user.role===ROLE.SUPERUSER;
   const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[statusPendingCount,setStatusPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
@@ -705,8 +708,9 @@ export function AdminPanel({user,courses,onClose,onCoursesChange}){
   );
 }
 
-/* ═══════════════ STATUS CHANGE MODAL ═══════════════ */
 
+
+/* ═══════════════ STATUS CHANGE MODAL ═══════════════ */
 export function StatusChangeModal({user,onClose,onSubmitted}){
   const[reason,setReason]=useState('');
   const[targetType,setTargetType]=useState('');
@@ -824,8 +828,9 @@ export function StatusChangeModal({user,onClose,onSubmitted}){
   );
 }
 
-/* ═══════════════ STATUS CHANGES TAB (admin/superuser) ═══════════════ */
 
+
+/* ═══════════════ STATUS CHANGES TAB (admin/superuser) ═══════════════ */
 export function StatusChangesTab({reviewerUsername}){
   const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);
   const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);
@@ -931,5 +936,3 @@ export function StatusChangesTab({reviewerUsername}){
     </div>
   );
 }
-
-/* ═══════════════ COURSE CARD (memoised) ═══════════════ */
