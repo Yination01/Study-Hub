@@ -42,33 +42,30 @@ export const CODE_TO_DEPT={
   STA:'Computer with Statistics',STT:'Computer with Statistics',MAT:'Computer with Statistics',
 };
 export function detectYearFromCode(code){
-    const m=code.match(/(\d+)/);if(!m)return null;
-    const n=parseInt(m[1]);
-    if(n>=100&&n<200)return 1;if(n>=200&&n<300)return 2;
-    if(n>=300&&n<400)return 3;if(n>=400&&n<500)return 4;
-    return null;
-  }
+  const m=code.match(/(\d+)/);if(!m)return null;
+  const n=parseInt(m[1]);
+  if(n>=100&&n<200)return 1;if(n>=200&&n<300)return 2;
+  if(n>=300&&n<400)return 3;if(n>=400&&n<500)return 4;
+  return null;
 }
 export function detectDeptFromCode(code){
-    const p=code.replace(/[^a-zA-Z]/g,'').toUpperCase();
-    for(const k of Object.keys(CODE_TO_DEPT).sort((a,b)=>b.length-a.length))
-      {if(p.startsWith(k))return CODE_TO_DEPT[k];}
-    return null;
-  }
+  const p=code.replace(/[^a-zA-Z]/g,'').toUpperCase();
+  for(const k of Object.keys(CODE_TO_DEPT).sort((a,b)=>b.length-a.length))
+    {if(p.startsWith(k))return CODE_TO_DEPT[k];}
+  return null;
 }
 export function detectMetadata(data){
-    const name=(data.courseName||'').trim();
-    const title=(data.chapterTitle||'').toLowerCase();
-    const result={year:null,semester:null,department:null};
-    if(name){result.year=detectYearFromCode(name);result.department=detectDeptFromCode(name);}
-    if(!result.semester){
-      const s1=['introduction','intro','foundations','basics','fundamentals','first'];
-      const s2=['advanced','continuation','second','further','design','implementation'];
-      if(s1.some(w=>title.includes(w)))result.semester=1;
-      else if(s2.some(w=>title.includes(w)))result.semester=2;
-    }
-    return result;
+  const name=(data.courseName||'').trim();
+  const title=(data.chapterTitle||'').toLowerCase();
+  const result={year:null,semester:null,department:null};
+  if(name){result.year=detectYearFromCode(name);result.department=detectDeptFromCode(name);}
+  if(!result.semester){
+    const s1=['introduction','intro','foundations','basics','fundamentals','first'];
+    const s2=['advanced','continuation','second','further','design','implementation'];
+    if(s1.some(w=>title.includes(w)))result.semester=1;
+    else if(s2.some(w=>title.includes(w)))result.semester=2;
   }
+  return result;
 }
 
 /* Subscription config */
