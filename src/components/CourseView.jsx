@@ -1,13 +1,13 @@
-import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, CACHE_KEY, getSubVal, CODE_TO_DEPT, RES_ICONS, AI_MSG_KEY, getAiMsgCount, incAiMsgCount, APP_VERSION, COPYRIGHT_YEAR } from '../lib/constants.js';
+import React,{ useState, useEffect, useCallback } from 'react';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
+  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS,
+  CACHE_KEY, APP_VERSION, getSubVal, getAiMsgCount, incAiMsgCount, TIER_CONFIG } from '../lib/constants.js';
 import * as db from '../lib/db.js';
-import { Tag, Mono, SectionLabel, Field, Avatar, RoleBadge, RolePill, ProgressBar, Logo, ThemeToggle, SearchBar } from './UI.jsx';
-import { AnnouncementsTab, NotificationBell, AssignmentsTab, CATab, CommunityBoard, ResourcesTab, DefinitionRow, ALL_TABS } from './CourseTabs.jsx';
+import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo, SearchBar } from './UI.jsx';
+import { AnnouncementsTab, NotificationBell, AssignmentsTab, CATab, CommunityBoard, ResourcesTab } from './CourseTabs.jsx';
 import { Chatbot } from './Chatbot.jsx';
 
-/* ═══════════════ COURSE VIEW ═══════════════ */
-/* Definition row with copy-to-clipboard */
-function DefinitionRow({def,isLast}){
+export function DefinitionRow({def,isLast}){
   const[copied,setCopied]=useState(false);
   const copy=()=>{
     navigator.clipboard.writeText(`${def.term}: ${def.definition}`);
@@ -24,9 +24,11 @@ function DefinitionRow({def,isLast}){
   );
 }
 
+
 const ALL_TABS=[{id:'announcements',label:'📢 Announcements'},{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
 
-function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses}){
+
+export function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses}){
   const[tab,setTab]=useState(course.initialTab||'announcements');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
   const d=course.data;const cp=progress[course.id]||{viewed:false,openedQs:[]};const isPriv=user.role!==ROLE.USER;
   const isBookmarked=bookmarks.includes(course.id);
@@ -128,5 +130,4 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   );
 }
 
-
-export { CourseView };
+/* ═══════════════ ANALYTICS TAB ═══════════════ */
