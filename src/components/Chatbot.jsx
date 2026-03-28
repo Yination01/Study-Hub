@@ -1,15 +1,16 @@
-import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY } from '../lib/constants.js';
+import React,{ useState, useEffect, useRef, useCallback } from 'react';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
+  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS,
+  CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount,
+  TIER_CONFIG, CODE_TO_DEPT, detectMetadata, css } from '../lib/constants.js';
 import * as db from '../lib/db.js';
-import { Tag, Mono, SectionLabel, Field, Avatar, RoleBadge, RolePill, ProgressBar, Logo, ThemeToggle, SearchBar } from './UI.jsx';
-import { ROLE } from '../lib/constants.js';
+import { Mono, Tag, SearchBar } from './UI.jsx';
 
-/* ═══════════════ CHATBOT (persistent) ═══════════════ */
 const QUICK_PROMPTS=['Explain this topic simply','Give me 5 extra practice questions','What are the most important concepts?','Summarise this in bullet points','What might come up in an exam?'];
 const SEARCH_PREFIXES=['find ','search ','what is ','what are ','how do i ','how does ','explain ','show me ','list ','define ','describe '];
 const isSearchQuery=t=>SEARCH_PREFIXES.some(p=>t.toLowerCase().startsWith(p))||t.endsWith('?');
 
-function Chatbot({context,courses,user}){
+export function Chatbot({context,courses,user}){
   // Persist open state — remember how the user left it, never force-open
   const[open,setOpen]=useState(()=>{
     try{return localStorage.getItem('sh-bot-open')==='1';}catch{return false;}
@@ -68,24 +69,6 @@ function Chatbot({context,courses,user}){
   const send=async text=>{
     const msg=text||input.trim();
     if(!msg||loading)return;
-
-    // Rate limit check for free-tier users (not admins/superusers)
-    const isFree=(user?.subscription_tier||'free')==='free';
-    const isPrivUser=user?.role===ROLE.SUPERUSER||user?.role===ROLE.ADMIN;
-    if(isFree&&!isPrivUser&&!assignmentCtx){
-      const limit=parseInt(getSubVal('free_ai_messages_per_day','5')||'5');
-      const used=getAiMsgCount();
-      if(used>=limit){
-        setMessages(m=>[...m,
-          {role:'user',content:msg},
-          {role:'assistant',content:`⚠️ You've used all ${limit} AI messages for today on the Free plan.\n\nUpgrade to Pro for unlimited AI chat — tap ⭐ Upgrade in the top bar.`}
-        ]);
-        setInput('');
-        return;
-      }
-      incAiMsgCount();
-    }
-
     setInput('');
 
     // If it looks like a search query, also show search results
@@ -200,5 +183,4 @@ function Chatbot({context,courses,user}){
   );
 }
 
-
-export { Chatbot };
+/* ═══════════════ AUTH SCREEN ═══════════════ */
