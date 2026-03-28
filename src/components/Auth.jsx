@@ -1,11 +1,9 @@
 import React,{ useState, useEffect, useRef } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
-  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS,
-  CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount,
-  TIER_CONFIG, CODE_TO_DEPT, detectMetadata, css } from '../lib/constants.js';
-import * as db from '../lib/db.js';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, ROLE_ICON, COLOR_MAP, CARD_ACCENTS, PRIORITY, RES_ICONS, CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, CODE_TO_DEPT, detectMetadata, getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY, TIER_CONFIG, css } from '../lib/constants.js';
+import * as db from '../lib/db.jsx';
 import { Field, Logo, Mono, ThemeToggle } from './UI.jsx';
 
+/* ═══════════════ AUTH SCREEN ═══════════════ */
 export function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
   const[tab,setTab]=useState('signin');
   const[f,setF]=useState({username:'',password:'',confirm:'',year:3,accountType:'student'});
@@ -148,6 +146,3 @@ export function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
     </div>
   );
 }
-
-/* ═══════════════ UPLOAD MODAL ═══════════════ */
-/* File format definitions */
