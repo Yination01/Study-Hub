@@ -1,16 +1,15 @@
 import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
-  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, TIER_CONFIG,
-  APP_VERSION, getSubVal } from '../lib/constants.js';
-import * as db from '../lib/db.js';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS, CACHE_KEY, APP_VERSION, getSubVal, getAiMsgCount, incAiMsgCount, TIER_CONFIG } from '../lib/constants.js';
+import * as db from '../lib/db.jsx';
 import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo } from './UI.jsx';
-import { useTheme, useBookmarks, pushNotification } from '../lib/hooks.js';
+import { useTheme, useBookmarks } from '../lib/hooks.jsx';
 import { NotificationBell } from './CourseTabs.jsx';
 import { StatusChangeModal } from './Admin.jsx';
 import { SubscriptionBadge, PaymentPortal } from './Subscription.jsx';
 import { usePWAPrompt } from './PWA.jsx';
 import { GlobalAnnouncementStrip } from './Modals.jsx';
 
+/* ═══════════════ COURSE CARD (memoised) ═══════════════ */
 export const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect}){
   const accent=YEAR_COLORS[c.year]||CARD_ACCENTS[i%CARD_ACCENTS.length];
   return(
@@ -40,6 +39,8 @@ export const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bo
     </div>
   );
 });
+
+
 
 /* ═══════════════ HOME ═══════════════ */
 export function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab}){
@@ -345,5 +346,3 @@ export function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,
     </div>
   );
 }
-
-/* ═══════════════ ROOT APP ═══════════════ */
