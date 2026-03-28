@@ -1,19 +1,18 @@
-import React,{ useState, useEffect, useRef, useCallback } from 'react';
-import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
-  YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS,
-  CACHE_KEY, APP_VERSION, COPYRIGHT_YEAR, getSubVal, getAiMsgCount, incAiMsgCount,
-  TIER_CONFIG, CODE_TO_DEPT, detectMetadata, css } from '../lib/constants.js';
-import * as db from '../lib/db.js';
+import React,{ useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { supabase, ROLE, YEARS, DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES, YEAR_COLORS, YEAR_BG, ROLE_COLOR, ROLE_BG, CARD_ACCENTS, PRIORITY, RES_ICONS, CACHE_KEY, APP_VERSION, getSubVal, getAiMsgCount, incAiMsgCount, TIER_CONFIG } from '../lib/constants.js';
+import * as db from '../lib/db.jsx';
 import { Tag, Mono, SectionLabel, Field, Avatar, RolePill, ProgressBar, Logo } from './UI.jsx';
 
-const FILE_TYPES = [
+/* ═══════════════ UPLOAD MODAL ═══════════════ */
+/* File format definitions */
+export const FILE_TYPES = [
   {ext:['docx','doc'],   label:'Word Doc',  icon:'📝', accept:'.doc,.docx',     color:'#4f9cf9'},
   {ext:['txt','md'],     label:'Text / MD', icon:'📃', accept:'.txt,.md',       color:'#7fda96'},
   {ext:['png','jpg','jpeg','webp'], label:'Image', icon:'🖼', accept:'.png,.jpg,.jpeg,.webp', color:'#da7ff0'},
   {ext:['csv'],          label:'CSV',       icon:'📋', accept:'.csv',           color:'#4ff9e4'},
 ];
 
-const ALL_ACCEPT = FILE_TYPES.map(t=>t.accept).join(',');
+export const ALL_ACCEPT = FILE_TYPES.map(t=>t.accept).join(',');
 
 export function getFileType(filename){
   const ext = filename.split('.').pop().toLowerCase();
@@ -130,7 +129,7 @@ Return ONLY valid JSON with this exact structure:
 Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none, chapters 4-8 with EXACTLY 3 takeaways each, questions EXACTLY 25 exam-style with full worked answers. Return ONLY the JSON.`;
 
 /* Format descriptions shown in the info card when a chip is selected */
-const FORMAT_INFO = {
+export const FORMAT_INFO = {
   'Word Doc': {
     desc: 'Microsoft Word documents (.docx). Great for notes, assignments, and handouts from Word or Google Docs.',
     how:  'From Google Docs: File → Download → .docx. From Word: File → Save As → .docx.',
@@ -148,6 +147,8 @@ const FORMAT_INFO = {
     how:  'From Excel or Google Sheets: File → Download → .csv.',
   },
 };
+
+
 
 /* ═══════════════ AI CONFIRMATION MODAL ═══════════════ */
 export function AiConfirmModal({aiResult,courses,defaultYear,defaultSem,defaultDept,onConfirm,onCancel}){
@@ -320,6 +321,8 @@ export function AiConfirmModal({aiResult,courses,defaultYear,defaultSem,defaultD
     </div>
   );
 }
+
+
 
 /* ═══════════════ COURSE TAB VIEW ═══════════════ */
 export function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,bookmarks,toggleBookmark}){
@@ -941,146 +944,3 @@ export function UploadModal({onClose,onDone,adminMode=false,requestedBy='',cours
     </>
   );
 }
-
-
-/* ═══════════════ PRIORITY STYLES ═══════════════ */
-const PRIORITY={
-  info:    {color:'#4f9cf9',bg:'rgba(79,156,249,.08)',border:'rgba(79,156,249,.2)',icon:'ℹ️'},
-  warning: {color:'#f9a84f',bg:'rgba(249,168,79,.08)',border:'rgba(249,168,79,.2)', icon:'⚠️'},
-  urgent:  {color:'#f05050',bg:'rgba(240,80,80,.08)', border:'rgba(240,80,80,.25)',  icon:'🚨'},
-};
-
-/* ═══════════════ GLOBAL ANNOUNCEMENT STRIP ═══════════════ */
-function GlobalAnnouncementStrip({user}){
-  const[items,setItems]=useState([]);const[idx,setIdx]=useState(0);
-  useEffect(()=>{
-    dbLoadAnnouncements(null).then(d=>{
-      // show pinned first, then urgent, then by date
-      const sorted=[...d].sort((a,b)=>{
-        if(a.pinned&&!b.pinned)return -1;if(!a.pinned&&b.pinned)return 1;
-        if(a.priority==='urgent'&&b.priority!=='urgent')return -1;
-        if(a.priority!=='urgent'&&b.priority==='urgent')return 1;
-        return new Date(b.posted_at)-new Date(a.posted_at);
-      });
-      setItems(sorted);
-    });
-  },[]);
-  if(!items.length)return null;
-  const a=items[idx];
-  const p=PRIORITY[a.priority]||PRIORITY.info;
-  return(
-    <div className="fade-in" style={{background:p.bg,border:`1px solid ${p.border}`,borderRadius:10,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-      <span style={{fontSize:16,flexShrink:0}}>{p.icon}</span>
-      <div style={{flex:1,minWidth:0}}>
-        <span style={{fontSize:13,fontWeight:700,color:p.color,marginRight:8}}>{a.title}</span>
-        {a.body&&<span style={{fontSize:12.5,color:'var(--text)'}}>{a.body}</span>}
-      </div>
-      {a.pinned&&<span style={{fontSize:12}}>📌</span>}
-      {items.length>1&&<div style={{display:'flex',gap:5,flexShrink:0}}>
-        <button onClick={()=>setIdx(i=>(i-1+items.length)%items.length)} style={{background:'none',border:'1px solid var(--border)',borderRadius:5,color:'var(--muted)',cursor:'pointer',padding:'2px 7px',fontSize:11}}>‹</button>
-        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',display:'flex',alignItems:'center'}}>{idx+1}/{items.length}</span>
-        <button onClick={()=>setIdx(i=>(i+1)%items.length)} style={{background:'none',border:'1px solid var(--border)',borderRadius:5,color:'var(--muted)',cursor:'pointer',padding:'2px 7px',fontSize:11}}>›</button>
-      </div>}
-    </div>
-  );
-}
-
-/* ═══════════════ ANNOUNCEMENTS TAB ═══════════════ */
-function AnnouncementsTab({courseId,user,onNew}){
-  const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
-  const[form,setForm]=useState({title:'',body:'',priority:'info',pinned:false,global:false});
-  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
-  const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
-  const isSU2=user.role===ROLE.SUPERUSER;
-  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
-
-  const load=async()=>{const d=await dbLoadAnnouncements(courseId);setItems(d);};
-  useEffect(()=>{load();},[courseId]);
-
-  const save=async()=>{
-    if(!form.title.trim())return;setLoading(true);
-    const a={id:`ann-${Date.now()}`,course_id:form.global?null:courseId,title:form.title,body:form.body,priority:form.priority,pinned:form.pinned,posted_by:user.username,posted_at:new Date().toISOString()};
-    await dbSaveAnnouncement(a);
-    // Push notification if permission granted
-    pushNotification(`📢 ${form.priority==='urgent'?'URGENT: ':''}${form.title}`,form.body||'New announcement on StudyHub');
-    onNew?.();
-    setForm({title:'',body:'',priority:'info',pinned:false,global:false});setShowForm(false);setLoading(false);
-    await load();flash('✓ Announcement posted.');
-  };
-  const del=async id=>{await dbDeleteAnnouncement(id);await load();};
-  const togglePin=async(id,pinned)=>{await dbPinAnnouncement(id,!pinned);await load();};
-
-  return(
-    <div className="fade-up">
-      <SectionLabel>Announcements</SectionLabel>
-      {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:12}}>{msg}</div>}
-      {isPriv&&(
-        <button onClick={()=>setShowForm(s=>!s)} style={{background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.25)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600,marginBottom:14}}>
-          {showForm?'✕ Cancel':'📢 Post Announcement'}
-        </button>
-      )}
-      {showForm&&isPriv&&(
-        <div className="scale-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:16}}>
-          <Field label="TITLE *" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Exam date moved"/>
-          <Field label="MESSAGE (optional)" value={form.body} onChange={e=>setForm(f=>({...f,body:e.target.value}))} placeholder="Full details…"/>
-          <div style={{marginBottom:12}}>
-            <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>PRIORITY</div>
-            <div style={{display:'flex',gap:8}}>
-              {Object.entries(PRIORITY).map(([k,v])=>(
-                <button key={k} onClick={()=>setForm(f=>({...f,priority:k}))} style={{flex:1,padding:'8px 0',borderRadius:7,border:`1px solid ${form.priority===k?v.color+'70':'var(--border)'}`,background:form.priority===k?v.bg:'var(--input-bg)',color:form.priority===k?v.color:'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:form.priority===k?700:400,display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
-                  {v.icon} {k.charAt(0).toUpperCase()+k.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div style={{display:'flex',gap:16,marginBottom:14}}>
-            <label style={{display:'flex',alignItems:'center',gap:7,cursor:'pointer',fontSize:13,color:'var(--text)'}}>
-              <input type="checkbox" checked={form.pinned} onChange={e=>setForm(f=>({...f,pinned:e.target.checked}))} style={{width:15,height:15}}/>
-              📌 Pin to top
-            </label>
-            {isSU2&&(
-              <label style={{display:'flex',alignItems:'center',gap:7,cursor:'pointer',fontSize:13,color:'var(--text)'}}>
-                <input type="checkbox" checked={form.global} onChange={e=>setForm(f=>({...f,global:e.target.checked}))} style={{width:15,height:15}}/>
-                🌐 Post globally (all courses)
-              </label>
-            )}
-          </div>
-          <button onClick={save} disabled={loading||!form.title.trim()} style={{background:PRIORITY[form.priority].color,border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>
-            {loading?'Posting…':'Post Announcement'}
-          </button>
-        </div>
-      )}
-      <div style={{display:'flex',flexDirection:'column',gap:10}}>
-        {items.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No announcements yet.</div>}
-        {items.map((a,i)=>{
-          const p=PRIORITY[a.priority]||PRIORITY.info;
-          return(
-            <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:p.bg,border:`1px solid ${p.border}`,borderRadius:10,padding:'14px 17px',borderLeft:`3px solid ${p.color}`,position:'relative'}}>
-              {a.pinned&&<span style={{position:'absolute',top:10,right:isPriv?40:12,fontSize:14}}>📌</span>}
-              {!a.course_id&&<span style={{position:'absolute',top:10,right:isPriv?62:34,fontSize:11,fontFamily:"'IBM Plex Mono',monospace",color:'var(--muted)'}}>GLOBAL</span>}
-              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10}}>
-                <div style={{flex:1}}>
-                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
-                    <span style={{fontSize:14}}>{p.icon}</span>
-                    <span style={{fontSize:14,fontWeight:700,color:p.color}}>{a.title}</span>
-                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${p.color}18`,color:p.color,borderRadius:4,padding:'2px 7px',textTransform:'uppercase'}}>{a.priority}</span>
-                  </div>
-                  {a.body&&<p style={{fontSize:13,color:'var(--text)',lineHeight:1.7,margin:'0 0 6px'}}>{a.body}</p>}
-                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>@{a.posted_by} · {new Date(a.posted_at).toLocaleString()}</div>
-                </div>
-                {isPriv&&(
-                  <div style={{display:'flex',gap:6,flexShrink:0}}>
-                    <button onClick={()=>togglePin(a.id,a.pinned)} title={a.pinned?'Unpin':'Pin'} style={{background:'none',border:'none',color:a.pinned?'#f9a84f':'var(--muted)',cursor:'pointer',fontSize:14}}>📌</button>
-                    <button onClick={()=>del(a.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13}}>✕</button>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════ NOTIFICATION BELL ═══════════════ */
