@@ -12,7 +12,6 @@ export const supabase = createClient(
 const APP_VERSION    = '4.1.0';
 const COPYRIGHT_YEAR = '2025';
 
-
 /* ═══════════════ CONSTANTS ═══════════════ */
 export const ROLE  = { SUPERUSER:'superuser', ADMIN:'admin', USER:'user', EXTERNAL:'external' };
 export const YEARS       = [1,2,3,4];
