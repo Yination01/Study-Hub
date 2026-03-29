@@ -8,6 +8,27 @@
 
 import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { supabase } from './db.js';
+import * as db from './db.js';
+import { DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
+  getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY,
+  loadDepartments, loadUserTypes, loadSubConfig,
+  resolveRole, dbLoadUsers, dbSaveUser, dbLoadAdmins, dbSetAdmins,
+  dbLoadCourseIndex, dbLoadCourseData, dbSaveCourse, dbDeleteCourse,
+  dbLoadProgress, dbSaveProgress, dbLoadResources, dbAddResource, dbDeleteResource,
+  dbLoadAnnouncements, dbLoadAllAnnouncements, dbSaveAnnouncement,
+  dbDeleteAnnouncement, dbPinAnnouncement, dbMarkSeen, dbLoadSeen, dbLoadNotifications,
+  dbLoadAssignments, dbSaveAssignment, dbDeleteAssignment,
+  dbLoadCAs, dbSaveCA, dbDeleteCA,
+  dbSubmitStatusRequest, dbLoadStatusRequests, dbLoadAllStatusRequests,
+  dbReviewStatusRequest, dbGetPendingStatusRequest, dbApplyStatusChange,
+  dbCountPendingStatusRequests, loadDepartments as _loadDepts,
+  dbAddDepartment, dbDeleteDepartment, dbAddUserType, dbDeleteUserType,
+  getUserTypeLabel, dbLoadCommunity, dbSubmitPost, dbUpvote, dbGetMyVotes, dbDeletePost,
+  normalizeCourseCode, uniqueCourseCodes, dbLoadCourseTabData,
+  dbSubmitPending, dbLoadPending, dbLoadAllPending, dbReviewPending, dbCountPending,
+  dbLoadAllProgress, sendChatMessage, exportCoursePDF,
+  dbLoadSubConfig, dbSaveSubConfig, dbSetUserTier, dbGetUserTier } from './db.js';
 
 /* ═══════════════ CONFIG ═══════════════ */
 // NOTE: No superuser credentials stored here.
@@ -16,23 +37,10 @@ import { createClient } from '@supabase/supabase-js';
 const APP_VERSION    = '4.1.0';
 const COPYRIGHT_YEAR = '2025';
 
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
 
 /* ═══════════════ CONSTANTS ═══════════════ */
 const ROLE  = { SUPERUSER:'superuser', ADMIN:'admin', USER:'user', EXTERNAL:'external' };
 const YEARS       = [1,2,3,4];
-// These are seeded defaults — overridden at runtime by loadDepartments()
-let DEPARTMENTS = ['Computer Science','Computer with Statistics'];
-let DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
-let DEPT_COLOR  = {'Computer Science':'#4f9cf9','Computer with Statistics':'#7fda96'};
-// Dynamic user types — overridden at runtime by loadUserTypes()
-let USER_TYPES  = [
-  {id:'ut-student', label:'Enrolled Student',  shortCode:'Student',  roleKey:'user',     color:'#4f9cf9', description:'Currently enrolled students'},
-  {id:'ut-external',label:'External / Visitor',shortCode:'External', roleKey:'external', color:'#a8f94f', description:'Non-enrolled users'},
-];
 const YEAR_COLORS = {1:'#4f9cf9',2:'#7fda96',3:'#f9a84f',4:'#da7ff0'};
 const YEAR_BG     = {1:'rgba(79,156,249,0.1)',2:'rgba(127,218,150,0.1)',3:'rgba(249,168,79,0.1)',4:'rgba(218,127,240,0.1)'};
 const ROLE_COLOR  = {superuser:'#f9a84f',admin:'#da7ff0',user:'#4f9cf9',external:'#a8f94f'};
@@ -77,159 +85,7 @@ const RES_ICONS   = {link:'🔗',video:'▶️',pdf:'📄',doc:'📝'};
 const CACHE_KEY   = id => `sh-course-cache-${id}`;
 
 /* ═══════════════ GLOBAL CSS ═══════════════ */
-const css = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@300;400;500;600&display=swap');
-
-  :root {
-    --bg:#0d0f14; --surface:#13161d; --card:#1a1e27; --border:#252a36;
-    --text:#e2e6f0; --muted:#8892a4; --input-bg:#0d0f14;
-    --shadow:0 8px 32px rgba(0,0,0,.5);
-    --radius:12px; --transition:all .22s cubic-bezier(.4,0,.2,1);
-  }
-  .light {
-    --bg:#f0f4fc; --surface:#ffffff; --card:#ffffff; --border:#dde3f0;
-    --text:#1a1e2f; --muted:#5a6478; --input-bg:#f5f7ff;
-    --shadow:0 8px 32px rgba(0,0,0,.1);
-  }
-
-  *{box-sizing:border-box;margin:0;padding:0}
-  html{scroll-behavior:smooth}
-  body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh;transition:background .3s,color .3s}
-  ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:var(--surface)}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-
-  /* Animations */
-  @keyframes spin    {to{transform:rotate(360deg)}}
-  @keyframes fadeUp  {from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-  @keyframes fadeIn  {from{opacity:0}to{opacity:1}}
-  @keyframes scaleIn {from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
-  @keyframes slideDown{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
-  @keyframes stagger {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-  @keyframes pulse   {0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
-  @keyframes blink   {0%,100%{opacity:1}50%{opacity:0}}
-  @keyframes shake   {0%,100%{transform:translateX(0)}25%,75%{transform:translateX(-5px)}50%{transform:translateX(5px)}}
-  @keyframes shimmer {0%{opacity:.6}50%{opacity:1}100%{opacity:.6}}
-
-  .fade-up   {animation:fadeUp .28s cubic-bezier(.4,0,.2,1) both}
-  .fade-in   {animation:fadeIn .2s ease both}
-  .scale-in  {animation:scaleIn .26s cubic-bezier(.4,0,.2,1) both}
-  .slide-down{animation:slideDown .22s ease both}
-  .shake     {animation:shake .3s ease}
-  .stagger-1 {animation:stagger .3s .05s both}
-  .stagger-2 {animation:stagger .3s .1s both}
-  .stagger-3 {animation:stagger .3s .15s both}
-  .stagger-4 {animation:stagger .3s .2s both}
-
-  input:focus,textarea:focus,select:focus{outline:2px solid rgba(79,156,249,.4)!important;outline-offset:0}
-  button{transition:var(--transition)}
-  button:active{transform:scale(.97)}
-
-  /* Mobile touch targets */
-  /* Hide text labels on very small screens */
-  @media(max-width:400px){
-    .hide-xs{display:none!important}
-  }
-
-  /* GPU-accelerate animations */
-  .fade-in,.fade-up,.scale-in,.slide-down,.slide-up{will-change:transform,opacity}
-  /* Remove will-change after animation to free memory */
-  .fade-in,.fade-up,.scale-in{animation-fill-mode:both}
-
-  /* Contain layout shifts in course grid */
-  .course-grid>*{contain:layout style}
-  @media(max-width:640px){
-    /* Touch targets */
-    button{min-height:44px}
-    .tab-btn{padding:10px 10px!important;font-size:11px!important;min-height:40px}
-
-    /* Layout */
-    .topbar{flex-wrap:wrap;gap:8px}
-    .course-grid{grid-template-columns:1fr!important}
-    .year-tabs{gap:6px!important;overflow-x:auto;flex-wrap:nowrap!important;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-    .year-tabs::-webkit-scrollbar{display:none}
-    .year-tab{padding:9px 14px!important;flex-shrink:0}
-
-    /* Course view tabs — horizontal scroll */
-    .course-tabs-row{overflow-x:auto;flex-wrap:nowrap!important;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
-    .course-tabs-row::-webkit-scrollbar{display:none}
-
-    /* Auth card — full width */
-    .auth-card{padding:22px 18px!important;border-radius:12px!important}
-
-    /* Home padding */
-    .home-page{padding:20px 14px 100px!important}
-
-    /* Course view padding */
-    .course-page{padding:16px 14px 110px!important}
-
-    /* Admin panel */
-    .admin-page{padding:20px 12px 80px!important}
-
-    /* Definitions table — stack on mobile */
-    .def-grid{grid-template-columns:1fr!important}
-    .def-term{border-bottom:none!important;border-right:none!important;padding-bottom:4px!important}
-
-    /* Chatbot — full width at bottom */
-    .chatbot-panel{right:0!important;left:0!important;width:100%!important;bottom:52px!important;border-radius:14px 14px 0 0!important;max-height:60vh!important}
-    .chatbot-btn{right:12px!important;bottom:60px!important}
-
-    /* Notification dropdown handled by position:fixed inline */
-
-    /* Cards */
-    .modal-inner{padding:20px 16px!important;border-radius:14px!important}
-
-    /* Hide keyboard shortcut hint on mobile */
-    .kbd-hint{display:none!important}
-
-    /* Upload modal full height */
-    .upload-modal{max-height:95vh!important}
-
-    /* Year/semester pickers — 2 columns on mobile */
-    .year-picker-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  }
-
-  /* ── Tablet: 641–900px ── */
-  @media(min-width:641px) and (max-width:900px){
-    .course-grid{grid-template-columns:repeat(2,1fr)!important}
-    .year-tabs{flex-wrap:wrap;gap:8px}
-  }
-
-  /* ── Safe area for notched phones ── */
-  @supports(padding:max(0px)){
-    .copyright-bar{padding-bottom:max(7px,env(safe-area-inset-bottom))!important}
-    .course-page,.home-page{padding-bottom:max(88px,calc(52px + env(safe-area-inset-bottom)))!important}
-  }
-
-  @keyframes slideUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-  @keyframes slideDown {from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
-  .slide-up{animation:slideUp .28s cubic-bezier(.4,0,.2,1) both}
-  .slide-down{animation:slideDown .28s cubic-bezier(.4,0,.2,1) both}
-
-  /* Focus visible — keyboard nav */
-  :focus-visible{outline:2px solid rgba(79,156,249,.6)!important;outline-offset:2px}
-
-  /* Text selection colour */
-  ::selection{background:rgba(79,156,249,.25);color:var(--text)}
-
-  /* Smooth transitions on theme switch */
-  *{transition:background-color .25s,border-color .25s,color .15s}
-  button,input,textarea,select{transition:background-color .25s,border-color .25s,color .15s,transform .1s,box-shadow .15s}
-  @media print{
-    .no-print{display:none!important}
-    body{background:#fff!important;color:#000!important}
-    .print-content{padding:20px}
-    h1,h2,h3{color:#000!important}
-    .course-card-print{page-break-inside:avoid;margin-bottom:16px;border:1px solid #ccc;padding:12px;border-radius:8px}
-    .q-print{page-break-inside:avoid;margin-bottom:12px;border-bottom:1px solid #eee;padding-bottom:12px}
-  }
-
-  /* Blur backdrop for modals */
-  .modal-overlay{
-    position:fixed;inset:0;background:rgba(0,0,0,.72);
-    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-    display:flex;align-items:center;justify-content:center;
-    z-index:2500;padding:20px;overflow-y:auto
-  }
-`;
+import css from './styles.js';
 
 /* ═══════════════ HELPERS ═══════════════ */
 function hashStr(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return(h>>>0).toString(16);}
@@ -298,256 +154,6 @@ function useNotificationPermission(){
 function pushNotification(title,body,icon='/icon-192.png'){
   if(Notification.permission!=='granted') return;
   try{new Notification(title,{body,icon,badge:'/icon-192.png'});}catch{}
-}
-
-/* ═══════════════ DATABASE ═══════════════ */
-async function dbLoadUsers(){const{data}=await supabase.from('users').select('*');return data||[];}
-async function dbSaveUser(u){await supabase.from('users').upsert(u,{onConflict:'username'});}
-async function dbLoadAdmins(){const{data}=await supabase.from('admins').select('username');return(data||[]).map(r=>r.username.toLowerCase());}
-async function dbSetAdmins(list){await supabase.from('admins').delete().neq('username','__none__');if(list.length>0)await supabase.from('admins').insert(list.map(u=>({username:u.toLowerCase()})));}
-async function dbLoadCourseIndex(){
-  const{data}=await supabase.from('courses').select('id,year,semester,department,course_name,chapter_title,concept_count,term_count,q_count,added_at').order('added_at',{ascending:false});
-  return(data||[]).map(r=>({id:r.id,year:r.year,semester:r.semester||1,department:r.department||'Computer Science',courseName:r.course_name,chapterTitle:r.chapter_title,conceptCount:r.concept_count,termCount:r.term_count,qCount:r.q_count,addedAt:r.added_at}));
-}
-async function dbLoadCourseData(id){
-  const{data}=await supabase.from('courses').select('data').eq('id',id).single();
-  return data?.data||null;
-}
-async function dbSaveCourse(entry,courseData){
-  await supabase.from('courses').upsert({id:entry.id,year:entry.year,semester:entry.semester||1,department:entry.department||'Computer Science',course_name:entry.courseName,chapter_title:entry.chapterTitle,concept_count:entry.conceptCount,term_count:entry.termCount,q_count:entry.qCount,added_at:entry.addedAt,data:courseData},{onConflict:'id'});
-}
-async function dbDeleteCourse(id){await supabase.from('courses').delete().eq('id',id);}
-async function dbLoadProgress(username){const{data}=await supabase.from('progress').select('*').eq('username',username);const out={};(data||[]).forEach(r=>{out[r.course_id]={viewed:r.viewed,openedQs:r.opened_qs||[]};});return out;}
-async function dbSaveProgress(username,progress){const rows=Object.entries(progress).map(([cid,p])=>({username,course_id:cid,viewed:p.viewed,opened_qs:p.openedQs}));if(rows.length>0)await supabase.from('progress').upsert(rows,{onConflict:'username,course_id'});}
-async function resolveRole(username){
-  const admins=await dbLoadAdmins();
-  if(admins.includes(username.toLowerCase())) return ROLE.ADMIN;
-  try{
-    const{data}=await supabase.from('users').select('account_type').eq('username',username).single();
-    if(data?.account_type==='external') return ROLE.EXTERNAL;
-  }catch{}
-  return ROLE.USER;
-}
-
-// Resources
-async function dbLoadResources(courseId){try{const{data}=await supabase.from('resources').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
-async function dbAddResource(r){try{await supabase.from('resources').insert(r);}catch(e){console.error(e);}}
-async function dbDeleteResource(id){try{await supabase.from('resources').delete().eq('id',id);}catch{}}
-
-// Announcements
-async function dbLoadAnnouncements(courseId){
-  try{
-    let q=supabase.from('announcements').select('*').order('pinned',{ascending:false}).order('posted_at',{ascending:false});
-    if(courseId) q=q.or(`course_id.eq.${courseId},course_id.is.null`);
-    else q=q.is('course_id',null);
-    const{data}=await q;return data||[];
-  }catch{return[];}
-}
-async function dbLoadAllAnnouncements(){
-  try{const{data}=await supabase.from('announcements').select('*').order('posted_at',{ascending:false});return data||[];}catch{return[];}
-}
-async function dbSaveAnnouncement(a){try{await supabase.from('announcements').insert(a);}catch(e){console.error(e);}}
-async function dbDeleteAnnouncement(id){try{await supabase.from('announcements').delete().eq('id',id);}catch{}}
-async function dbPinAnnouncement(id,pinned){try{await supabase.from('announcements').update({pinned}).eq('id',id);}catch{}}
-
-// Notification log
-async function dbMarkSeen(username,itemId,itemType){
-  try{await supabase.from('notification_log').upsert({username,item_id:itemId,item_type:itemType,seen_at:new Date().toISOString()},{onConflict:'username,item_id'});}catch{}
-}
-async function dbLoadSeen(username){
-  try{const{data}=await supabase.from('notification_log').select('item_id').eq('username',username);return new Set((data||[]).map(r=>r.item_id));}catch{return new Set();}
-}
-
-// Fetch all recent notifiable items for a user
-async function dbLoadNotifications(username){
-  try{
-    const[assignments,cas,announcements]=await Promise.all([
-      supabase.from('assignments').select('id,title,course_id,added_at,due_date').order('added_at',{ascending:false}).limit(30),
-      supabase.from('course_cas').select('id,title,course_id,type,added_at,date').order('added_at',{ascending:false}).limit(30),
-      supabase.from('announcements').select('*').order('posted_at',{ascending:false}).limit(30),
-    ]);
-    const seen=await dbLoadSeen(username);
-    const items=[
-      ...(announcements.data||[]).map(a=>({id:a.id,type:'announcement',title:a.title,body:a.body,priority:a.priority,time:a.posted_at,courseId:a.course_id,pinned:a.pinned})),
-      ...(assignments.data||[]).map(a=>({id:a.id,type:'assignment',title:`Assignment: ${a.title}`,body:a.due_date?`Due ${new Date(a.due_date).toLocaleDateString()}`:'',priority:'info',time:a.added_at,courseId:a.course_id})),
-      ...(cas.data||[]).map(a=>({id:a.id,type:'ca',title:`${a.type}: ${a.title}`,body:a.date?`On ${new Date(a.date).toLocaleDateString()}`:'',priority:'info',time:a.added_at,courseId:a.course_id})),
-    ].sort((a,b)=>new Date(b.time)-new Date(a.time));
-    return{items,unseenCount:items.filter(i=>!seen.has(i.id)&&(i.pinned||true)).length,seen};
-  }catch{return{items:[],unseenCount:0,seen:new Set()};}
-}
-async function dbLoadAssignments(courseId){try{const{data}=await supabase.from('assignments').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
-async function dbSaveAssignment(a){try{await supabase.from('assignments').insert(a);}catch(e){console.error(e);}}
-async function dbDeleteAssignment(id){try{await supabase.from('assignments').delete().eq('id',id);}catch{}}
-
-// CAs / Tests
-async function dbLoadCAs(courseId){try{const{data}=await supabase.from('course_cas').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
-async function dbSaveCA(a){try{await supabase.from('course_cas').insert(a);}catch(e){console.error(e);}}
-async function dbDeleteCA(id){try{await supabase.from('course_cas').delete().eq('id',id);}catch{}}
-
-// Status change requests
-async function dbSubmitStatusRequest(r){
-  try{await supabase.from('status_change_requests').insert(r);}catch(e){console.error(e);}
-}
-async function dbLoadStatusRequests(status='pending'){
-  try{const{data}=await supabase.from('status_change_requests').select('*').eq('status',status).order('requested_at',{ascending:false});return data||[];}catch{return[];}
-}
-async function dbLoadAllStatusRequests(){
-  try{const{data}=await supabase.from('status_change_requests').select('*').order('requested_at',{ascending:false});return data||[];}catch{return[];}
-}
-async function dbReviewStatusRequest(id,status,reviewedBy,note=''){
-  try{await supabase.from('status_change_requests').update({status,reviewed_by:reviewedBy,reviewed_at:new Date().toISOString(),note}).eq('id',id);}catch(e){console.error(e);}
-}
-async function dbGetPendingStatusRequest(username){
-  try{const{data}=await supabase.from('status_change_requests').select('*').eq('username',username).eq('status','pending').single();return data||null;}catch{return null;}
-}
-async function dbApplyStatusChange(username,newType){
-  try{await supabase.from('users').update({account_type:newType}).eq('username',username);}catch(e){console.error(e);}
-}
-async function dbCountPendingStatusRequests(){
-  try{const{count}=await supabase.from('status_change_requests').select('*',{count:'exact',head:true}).eq('status','pending');return count||0;}catch{return 0;}
-}
-
-// Dynamic departments
-async function loadDepartments(){
-  try{
-    const{data}=await supabase.from('departments').select('*').order('name');
-    if(data?.length){
-      DEPARTMENTS=data.map(d=>d.name);
-      DEPT_SHORT=Object.fromEntries(data.map(d=>[d.name,d.short_code]));
-      DEPT_COLOR=Object.fromEntries(data.map(d=>[d.name,d.color||'#4f9cf9']));
-    }
-  }catch{}
-}
-async function dbAddDepartment(dept){await supabase.from('departments').insert(dept);}
-async function dbDeleteDepartment(id){await supabase.from('departments').delete().eq('id',id);}
-
-// Dynamic user types
-async function loadUserTypes(){
-  try{
-    const{data}=await supabase.from('user_types').select('*').order('created_at');
-    if(data?.length) USER_TYPES=data.map(d=>({id:d.id,label:d.label,shortCode:d.short_code,roleKey:d.role_key,color:d.color||'#4f9cf9',description:d.description||''}));
-  }catch{}
-}
-async function dbAddUserType(ut){await supabase.from('user_types').insert(ut);}
-async function dbDeleteUserType(id){await supabase.from('user_types').delete().eq('id',id);}
-
-// Helper — get display label for a user based on role + account_type
-function getUserTypeLabel(role,accountType){
-  if(role===ROLE.SUPERUSER) return '⚡ Superuser';
-  if(role===ROLE.ADMIN)     return '🛡 Admin';
-  if(role===ROLE.EXTERNAL||accountType==='external'){
-    const ut=USER_TYPES.find(u=>u.roleKey==='external');
-    return `🌐 ${ut?.shortCode||'External'}`;
-  }
-  const ut=USER_TYPES.find(u=>u.roleKey==='user');
-  return `🎓 ${ut?.shortCode||'Student'}`;
-}
-
-// Community
-async function dbLoadCommunity(courseId){try{const{data}=await supabase.from('community_posts').select('*').eq('course_id',courseId).order('upvote_count',{ascending:false});return data||[];}catch{return[];}}
-async function dbSubmitPost(post){try{await supabase.from('community_posts').insert(post);}catch(e){console.error(e);}}
-async function dbUpvote(username,postId){
-  try{
-    const{data:existing}=await supabase.from('community_votes').select('*').eq('username',username).eq('post_id',postId);
-    if(existing?.length>0){
-      await supabase.from('community_votes').delete().eq('username',username).eq('post_id',postId);
-      await supabase.from('community_posts').update({upvote_count:supabase.rpc('decrement',{x:1})}).eq('id',postId);
-      // simple approach: just reload
-    } else {
-      await supabase.from('community_votes').insert({username,post_id:postId});
-      const{data:post}=await supabase.from('community_posts').select('upvote_count').eq('id',postId).single();
-      await supabase.from('community_posts').update({upvote_count:(post?.upvote_count||0)+1}).eq('id',postId);
-    }
-  }catch(e){console.error(e);}
-}
-async function dbGetMyVotes(username){try{const{data}=await supabase.from('community_votes').select('post_id').eq('username',username);return(data||[]).map(r=>r.post_id);}catch{return[];}}
-async function dbDeletePost(id){try{await supabase.from('community_posts').delete().eq('id',id);}catch{}}
-
-/* ═══════════════ COURSE CODE HELPERS ═══════════════ */
-function normalizeCourseCode(raw=''){
-  const s=(raw||'').trim().toUpperCase().replace(/\s+/g,' ');
-  if(/^[A-Z]{2,4}\s\d{3,4}/.test(s)) return s;
-  const m=s.match(/^([A-Z]{2,4})(\d{3,4})/);
-  if(m) return `${m[1]} ${m[2]}`;
-  return s||'Other';
-}
-function uniqueCourseCodes(courses){
-  const seen=new Set();const out=[];
-  for(const c of courses){const code=normalizeCourseCode(c.courseName);if(code&&!seen.has(code)){seen.add(code);out.push(code);}}
-  return out.sort();
-}
-async function dbLoadCourseTabData(courseIds){
-  if(!courseIds.length) return{assignments:[],cas:[],resources:[],announcements:[]};
-  try{
-    const[a,ca,res,ann]=await Promise.all([
-      supabase.from('assignments').select('*').in('course_id',courseIds).order('added_at',{ascending:false}),
-      supabase.from('course_cas').select('*').in('course_id',courseIds).order('added_at',{ascending:false}),
-      supabase.from('resources').select('*').in('course_id',courseIds).order('added_at',{ascending:false}),
-      supabase.from('announcements').select('*').in('course_id',courseIds).order('posted_at',{ascending:false}),
-    ]);
-    return{assignments:a.data||[],cas:ca.data||[],resources:res.data||[],announcements:ann.data||[]};
-  }catch{return{assignments:[],cas:[],resources:[],announcements:[]};}
-}
-
-/* ═══════════════ PENDING ACTIONS ═══════════════ */
-async function dbSubmitPending(action_type,requested_by,payload,note=''){
-  await supabase.from('pending_actions').insert({id:`pa-${Date.now()}`,action_type,requested_by,requested_at:new Date().toISOString(),status:'pending',payload,note});
-}
-async function dbLoadPending(status='pending'){
-  const{data}=await supabase.from('pending_actions').select('*').eq('status',status).order('requested_at',{ascending:false});
-  return data||[];
-}
-async function dbLoadAllPending(){
-  const{data}=await supabase.from('pending_actions').select('*').order('requested_at',{ascending:false});
-  return data||[];
-}
-async function dbReviewPending(id,status,reviewed_by,note=''){
-  await supabase.from('pending_actions').update({status,reviewed_by,reviewed_at:new Date().toISOString(),note}).eq('id',id);
-}
-async function dbCountPending(){
-  const{count}=await supabase.from('pending_actions').select('*',{count:'exact',head:true}).eq('status','pending');
-  return count||0;
-}
-
-// Analytics helpers
-async function dbLoadAllProgress(){try{const{data}=await supabase.from('progress').select('*');return data||[];}catch{return[];}}
-
-/* ═══════════════ AI (chat via Groq) ═══════════════ */
-async function sendChatMessage(messages,context){
-  const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages,context})});
-  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`Error ${res.status}`);}
-  return(await res.json()).reply;
-}
-
-/* ═══════════════ PDF EXPORT ═══════════════ */
-function exportCoursePDF(d,chapterTitle){
-  const w=window.open('','_blank');
-  if(!w)return;
-  const styles=`body{font-family:Georgia,serif;max-width:800px;margin:0 auto;padding:30px;color:#000}
-h1{font-size:26px;margin-bottom:4px}h2{font-size:18px;margin:20px 0 8px;border-bottom:2px solid #333;padding-bottom:4px}
-h3{font-size:14px;margin:14px 0 4px;font-family:monospace}
-p,li{font-size:13px;line-height:1.7;margin-bottom:6px}
-.tag{background:#eee;padding:2px 8px;border-radius:4px;font-size:11px;margin-right:4px}
-.q{background:#f9f9f9;border-left:3px solid #333;padding:10px 14px;margin-bottom:12px;page-break-inside:avoid}
-.ans{margin-top:6px;padding:8px;background:#fff;border:1px solid #ddd;font-size:12px}
-.meta{color:#666;font-size:11px;font-family:monospace}
-footer{margin-top:30px;border-top:1px solid #ccc;padding-top:10px;font-size:10px;color:#999;text-align:center}`;
-  const concepts=(d.keyConcepts||[]).map(c=>`<li><strong>${c.title}</strong> — ${c.description}</li>`).join('');
-  const defs=(d.definitions||[]).map(def=>`<tr><td style="padding:4px 8px;font-weight:bold;font-family:monospace;font-size:12px;border:1px solid #ccc">${def.term}</td><td style="padding:4px 8px;font-size:12px;border:1px solid #ccc">${def.definition}</td></tr>`).join('');
-  const qs=(d.questions||[]).map((q,i)=>`<div class="q"><strong>Q${i+1}.</strong> ${q.question}<div class="ans"><strong>Answer:</strong> ${q.answer}</div></div>`).join('');
-  const mechs=(d.mechanisms||[]).map(m=>`<h3>${m.title}</h3><p style="white-space:pre-line">${m.body}</p>`).join('');
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${chapterTitle} — StudyHub</title><style>${styles}</style></head><body>
-<p class="meta">StudyHub Export · ${new Date().toLocaleDateString()} · © ${COPYRIGHT_YEAR} Yination & Excalibur</p>
-<h1>${d.courseName} — ${chapterTitle}</h1>
-<div style="margin-bottom:12px"><span class="tag">${d.keyConcepts?.length||0} concepts</span><span class="tag">${d.definitions?.length||0} terms</span><span class="tag">${d.questions?.length||0} questions</span></div>
-<h2>Key Concepts</h2><ul>${concepts}</ul>
-<h2>Terms & Definitions</h2><table style="border-collapse:collapse;width:100%">${defs}</table>
-<h2>Mechanisms</h2>${mechs}
-<h2>Practice Questions (${d.questions?.length||0})</h2>${qs}
-<footer>© ${COPYRIGHT_YEAR} Yination & Excalibur · StudyHub v${APP_VERSION} · All rights reserved · Unauthorised distribution prohibited</footer>
-</body></html>`);
-  w.document.close();
-  setTimeout(()=>w.print(),400);
 }
 
 /* ═══════════════ SMALL UI ATOMS ═══════════════ */
