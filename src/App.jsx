@@ -360,30 +360,33 @@ function InstallPrompt(){
   if(browser.isIOS && !nativePrompt){
     return(<>
       {StatusToast}
+      <div onClick={snooze} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',backdropFilter:'blur(2px)',zIndex:9899}}/>
       <div className="no-print" style={{position:'fixed',bottom:0,left:0,right:0,
         background:'var(--card)',borderTop:'1px solid var(--border)',
-        borderRadius:'18px 18px 0 0',padding:'20px 20px 36px',
+        borderRadius:'20px 20px 0 0',
+        padding:'16px 20px max(28px,env(safe-area-inset-bottom))',
         zIndex:9900,boxShadow:'0 -8px 40px rgba(0,0,0,.5)',
+        maxHeight:'80vh',overflowY:'auto',
         animation:'slideUp .35s cubic-bezier(.4,0,.2,1) both'}}>
         {/* Handle bar */}
-        <div style={{width:36,height:4,borderRadius:2,background:'var(--border)',margin:'0 auto 16px'}}/>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+        <div style={{width:36,height:4,borderRadius:2,background:'var(--border)',margin:'0 auto 14px'}}/>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <div style={{width:40,height:40,borderRadius:10,background:'linear-gradient(135deg,#1a2a4a,#0d1929)',
-              border:'1px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>📚</div>
+              border:'1px solid rgba(79,156,249,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,flexShrink:0}}>📚</div>
             <div>
               <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>Install StudyHub</div>
               <div style={{fontSize:11,color:'var(--muted)'}}>Works offline · Loads faster</div>
             </div>
           </div>
-          <button onClick={never} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,padding:'4px',lineHeight:1}}>✕</button>
+          <button onClick={never} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,padding:'4px',lineHeight:1,flexShrink:0}}>✕</button>
         </div>
-        <div style={{display:'flex',flexDirection:'column',gap:9,marginBottom:16}}>
+        <div style={{display:'flex',flexDirection:'column',gap:9,marginBottom:14}}>
           {[
-            {n:1, icon:'⬆️', html:<>Tap the <strong style={{color:'#4f9cf9'}}>Share</strong> button at the bottom of your screen</>},
-            {n:2, icon:'➕', html:<>Scroll down and tap <strong style={{color:'#4f9cf9'}}>Add to Home Screen</strong></>},
-            {n:3, icon:'✅', html:<>Tap <strong style={{color:'#4f9cf9'}}>Add</strong> — done!</>},
-          ].map(({n,icon,html})=>(
+            {n:1, html:<>Tap the <strong style={{color:'#4f9cf9'}}>Share ⬆️</strong> button at the bottom of Safari</>},
+            {n:2, html:<>Scroll down and tap <strong style={{color:'#4f9cf9'}}>Add to Home Screen</strong></>},
+            {n:3, html:<>Tap <strong style={{color:'#4f9cf9'}}>Add</strong> — done!</>},
+          ].map(({n,html})=>(
             <div key={n} style={{display:'flex',alignItems:'center',gap:12,
               background:'var(--surface)',borderRadius:10,padding:'11px 14px'}}>
               <span style={{width:26,height:26,borderRadius:'50%',background:'rgba(79,156,249,.12)',
@@ -395,7 +398,7 @@ function InstallPrompt(){
         </div>
         <button onClick={snooze} style={{width:'100%',background:'none',border:'1px solid var(--border)',
           borderRadius:10,color:'var(--muted)',cursor:'pointer',padding:'12px 0',fontSize:13}}>
-          Remind me in {SNOOZE_DAYS} days
+          Remind me later
         </button>
       </div>
     </>);
@@ -841,7 +844,7 @@ const QUICK_PROMPTS=['Explain this topic simply','Give me 5 extra practice quest
 const SEARCH_PREFIXES=['find ','search ','what is ','what are ','how do i ','how does ','explain ','show me ','list ','define ','describe '];
 const isSearchQuery=t=>SEARCH_PREFIXES.some(p=>t.toLowerCase().startsWith(p))||t.endsWith('?');
 
-function Chatbot({context,courses,user}){
+function Chatbot({context,courses,user,subCfg={}}){
   // Persist open state — remember how the user left it, never force-open
   const[open,setOpen]=useState(()=>{
     try{return localStorage.getItem('sh-bot-open')==='1';}catch{return false;}
@@ -900,6 +903,22 @@ function Chatbot({context,courses,user}){
   const send=async text=>{
     const msg=text||input.trim();
     if(!msg||loading)return;
+
+    // Rate limit free users (not admins/superusers, not assignment mode)
+    const isFree=!user?.isGuest&&(user?.subscription_tier||'free')==='free'&&user?.role!==ROLE.SUPERUSER&&user?.role!==ROLE.ADMIN;
+    if(isFree&&!assignmentCtx){
+      const limit=parseInt(subCfg?.free_ai_messages_per_day||'5');
+      const getCount=()=>{try{const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const today=new Date().toDateString();return s.date===today?s.count||0:0;}catch{return 0;}};
+      const incCount=()=>{try{const today=new Date().toDateString();const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const count=(s.date===today?s.count||0:0)+1;localStorage.setItem('sh-ai-msgs',JSON.stringify({date:today,count}));}catch{}};
+      const used=getCount();
+      if(used>=limit){
+        setMessages(m=>[...m,{role:'user',content:msg},{role:'assistant',content:`⚠️ You've used all ${limit} free AI messages for today.\n\nUpgrade to Pro for unlimited AI chat — tap ⭐ Upgrade in the top bar.`}]);
+        setInput('');
+        return;
+      }
+      incCount();
+    }
+
     setInput('');
 
     // If it looks like a search query, also show search results
@@ -3023,7 +3042,7 @@ const ACTION_LABELS={
 };
 
 function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
-  const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');
+  const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[bulkBusy,setBulkBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');
 
   const load=async()=>{setLoading(true);const[p,h]=await Promise.all([dbLoadPending('pending'),dbLoadAllPending()]);setPending(p);setHistory(h.filter(a=>a.status!=='pending'));setLoading(false);};
   useEffect(()=>{load();},[]);
@@ -3050,6 +3069,29 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
       await dbReviewPending(action.id,'approved',reviewerUsername);
     }catch(e){console.error(e);}
     setBusy('');await load();
+  };
+
+  const approveAll=async()=>{
+    if(!pending.length)return;
+    setBulkBusy('approving');
+    for(const action of pending){
+      try{
+        if(action.action_type==='add_course'){const{entry,courseData}=action.payload;await dbSaveCourse(entry,courseData);}
+        if(action.action_type==='delete_course'){await dbDeleteCourse(action.payload.id);}
+        if(action.action_type==='add_resource'){await supabase.from('resources').insert(action.payload);}
+        if(action.action_type==='delete_resource'){await dbDeleteResource(action.payload.id);}
+        await dbReviewPending(action.id,'approved',reviewerUsername);
+      }catch(e){console.error(e);}
+    }
+    const idx=await dbLoadCourseIndex();onCourseChange(idx);
+    setBulkBusy('');await load();
+  };
+
+  const rejectAll=async()=>{
+    if(!pending.length)return;
+    setBulkBusy('rejecting');
+    await Promise.all(pending.map(a=>dbReviewPending(a.id,'rejected',reviewerUsername,'Bulk rejected by superuser.')));
+    setBulkBusy('');await load();
   };
 
   const reject=async()=>{
@@ -3080,19 +3122,29 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
         </div>
       )}
 
-      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',marginBottom:20,display:'flex',gap:10,alignItems:'center'}}>
+      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',gap:10,alignItems:'center'}}>
         <span style={{fontSize:20}}>⚡</span>
         <div>
           <div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Superuser Approval Queue</div>
-          <div style={{color:'var(--muted)',fontSize:12}}>All admin actions require your approval before taking effect. You can approve or reject with a note.</div>
+          <div style={{color:'var(--muted)',fontSize:12}}>All admin actions require your approval before taking effect.</div>
         </div>
       </div>
 
-      {/* Sub-tabs */}
-      <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18}}>
+      {/* Sub-tabs + bulk actions */}
+      <div style={{display:'flex',alignItems:'center',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18,flexWrap:'wrap'}}>
         {[{id:'pending',label:`Pending${pending.length>0?` (${pending.length})`:''}`,color:pending.length>0?'#f9a84f':undefined},{id:'history',label:'History'}].map(t=>(
           <button key={t.id} onClick={()=>setTab(t.id)} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
         ))}
+        {tab==='pending'&&pending.length>1&&(
+          <div style={{marginLeft:'auto',display:'flex',gap:8,paddingBottom:4}}>
+            <button onClick={approveAll} disabled={bulkBusy!==''} style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'6px 14px',fontSize:12,fontWeight:700}}>
+              {bulkBusy==='approving'?'Approving…':'✓ Approve All'}
+            </button>
+            <button onClick={rejectAll} disabled={bulkBusy!==''} style={{background:'rgba(240,80,80,.08)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'6px 14px',fontSize:12,fontWeight:700}}>
+              {bulkBusy==='rejecting'?'Rejecting…':'✕ Reject All'}
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -3172,19 +3224,130 @@ function ManageAdminsTab(){
 }
 
 /* ═══════════════ SETTINGS TAB (superuser only) ═══════════════ */
-function SettingsTab({onReload}){
+/* ═══════════════ SUBSCRIPTION / PAYMENT ═══════════════ */
+const TIER_CONFIG={
+  free:    {label:'Free',       color:'#8892a4',icon:'🎓',badge:'Free'},
+  pro:     {label:'Student Pro',color:'#f9a84f',icon:'⭐',badge:'Pro' },
+  external:{label:'External',   color:'#a8f94f',icon:'🌐',badge:'Pro' },
+};
+
+function SubscriptionBadge({tier}){
+  const t=TIER_CONFIG[tier]||TIER_CONFIG.free;
+  return(
+    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:`${t.color}20`,color:t.color,border:`1px solid ${t.color}40`,borderRadius:4,padding:'1px 6px',letterSpacing:1,fontWeight:700}}>
+      {t.icon} {t.badge}
+    </span>
+  );
+}
+
+function PaymentPortal({user,subCfg,onClose}){
+  const monthly  = subCfg?.pro_price_monthly||'500';
+  const yearly   = subCfg?.pro_price_yearly||'5000';
+  const acctName = subCfg?.payment_account_name||'StudyHUB';
+  const acctNum  = subCfg?.payment_account_number||'0123456789';
+  const bank     = subCfg?.payment_bank||'OPay';
+  const wa       = subCfg?.payment_whatsapp||'';
+  const freeLimit= subCfg?.free_ai_messages_per_day||'5';
+  const[copied,setCopied]=useState(false);
+  const copyAcct=()=>{navigator.clipboard.writeText(acctNum).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});};
+
+  return(
+    <div className="modal-overlay" style={{zIndex:9960}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="scale-in" style={{
+        background:'linear-gradient(160deg,#07119a,#0e8f94)',
+        border:'1px solid rgba(255,255,255,.12)',
+        borderRadius:20,padding:'28px 24px',
+        maxWidth:420,width:'calc(100% - 24px)',margin:'auto',
+        boxShadow:'0 20px 60px rgba(0,0,0,.5)',
+        position:'relative',overflow:'hidden',
+        maxHeight:'90vh',overflowY:'auto',
+      }}>
+        <div style={{position:'absolute',top:-60,right:-60,width:200,height:200,borderRadius:'50%',background:'rgba(17,163,168,.3)',filter:'blur(60px)',pointerEvents:'none'}}/>
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+          <div>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'#fff',marginBottom:2}}>StudyHub Pro</div>
+            <div style={{fontSize:12,color:'rgba(255,255,255,.6)'}}>Unlock everything — one payment</div>
+          </div>
+          <button onClick={onClose} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:'50%',color:'#fff',cursor:'pointer',width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>✕</button>
+        </div>
+        {/* Tier comparison */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:18}}>
+          {[
+            {tier:'Free',color:'#8892a4',features:[`Year ${user?.year||1} only`,`${freeLimit} AI msgs/day`,'No community posting']},
+            {tier:'Pro ⭐',color:'#f9a84f',features:['All years & depts','Unlimited AI chat','Community + support']},
+          ].map((t,i)=>(
+            <div key={i} style={{background:`rgba(255,255,255,${i===1?.12:.06})`,border:`1px solid ${t.color}40`,borderRadius:14,padding:'13px 12px'}}>
+              <div style={{fontSize:11,fontWeight:700,color:t.color,marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{t.tier}</div>
+              {t.features.map((f,j)=>(
+                <div key={j} style={{fontSize:11,color:i===1?'rgba(255,255,255,.9)':'rgba(255,255,255,.5)',marginBottom:4,display:'flex',alignItems:'flex-start',gap:5,lineHeight:1.4}}>
+                  <span style={{color:i===1?'#7fda96':'#555',fontSize:10,flexShrink:0,marginTop:1}}>{i===1?'✓':'·'}</span>{f}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        {/* Pricing */}
+        <div style={{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.15)',borderRadius:14,padding:'13px 15px',marginBottom:16}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <span style={{fontSize:13,color:'rgba(255,255,255,.8)'}}>Monthly</span>
+            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:18,color:'#f9a84f',fontWeight:700}}>₦{monthly}</span>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,borderTop:'1px solid rgba(255,255,255,.1)'}}>
+            <span style={{fontSize:13,color:'rgba(255,255,255,.8)'}}>Yearly <span style={{fontSize:10,color:'#7fda96'}}>(save {Math.max(0,Math.round((1-yearly/(monthly*12))*100))}%)</span></span>
+            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:18,color:'#f9a84f',fontWeight:700}}>₦{yearly}</span>
+          </div>
+        </div>
+        {/* Payment details */}
+        <div style={{background:'rgba(0,0,0,.3)',border:'1px solid rgba(255,255,255,.1)',borderRadius:14,padding:'13px 15px',marginBottom:16}}>
+          <div style={{fontSize:9,color:'rgba(255,255,255,.45)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:10}}>PAYMENT DETAILS</div>
+          <div style={{fontSize:13,color:'#fff',fontWeight:600,marginBottom:6}}>{acctName}</div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+            <div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:20,color:'#fff',letterSpacing:2,fontWeight:700}}>{acctNum}</div>
+              <div style={{fontSize:11,color:'rgba(7,243,7,.9)',fontWeight:600,marginTop:2}}>{bank}</div>
+            </div>
+            <button onClick={copyAcct} style={{background:copied?'rgba(127,218,150,.2)':'rgba(255,255,255,.12)',border:`1px solid ${copied?'rgba(127,218,150,.5)':'rgba(255,255,255,.2)'}`,borderRadius:8,color:copied?'#7fda96':'#fff',cursor:'pointer',padding:'8px 14px',fontSize:11,fontWeight:600,flexShrink:0,transition:'all .2s'}}>
+              {copied?'✓ Copied':'Copy'}
+            </button>
+          </div>
+        </div>
+        {/* WhatsApp CTA */}
+        <div style={{textAlign:'center',marginBottom:12}}>
+          <div style={{fontSize:11,color:'rgba(255,255,255,.6)',marginBottom:10,lineHeight:1.5}}>After payment, verify on WhatsApp to activate Pro</div>
+          {wa?(
+            <a href={wa} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:8,background:'#1fff02',color:'#000',padding:'11px 26px',borderRadius:12,fontSize:14,fontWeight:700,textDecoration:'none',boxShadow:'0 4px 20px rgba(31,255,2,.3)'}}>
+              💬 Verify on WhatsApp
+            </a>
+          ):(
+            <div style={{fontSize:11,color:'rgba(255,255,255,.35)',fontStyle:'italic'}}>WhatsApp link not configured — contact admin</div>
+          )}
+        </div>
+        <div style={{fontSize:10,color:'rgba(255,255,255,.3)',textAlign:'center',lineHeight:1.6}}>
+          Pro access activated within 24 hrs of WhatsApp verification.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsTab({onReload,superuserName}){
   const[depts,setDepts]=useState([]);const[types,setTypes]=useState([]);
   const[deptForm,setDeptForm]=useState({name:'',short_code:'',color:'#4f9cf9'});
   const[typeForm,setTypeForm]=useState({label:'',short_code:'',role_key:'user',color:'#4f9cf9',description:''});
   const[msg,setMsg]=useState('');const[section,setSection]=useState('depts');
+  const[subCfg,setSubCfg]=useState({});const[subEdits,setSubEdits]=useState({});const[subSaving,setSubSaving]=useState(false);
   const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
 
   const loadAll=async()=>{
-    const[{data:d},{data:t}]=await Promise.all([
+    const[{data:d},{data:t},{data:sc}]=await Promise.all([
       supabase.from('departments').select('*').order('name'),
-      supabase.from('user_types').select('*').order('created_at')
+      supabase.from('user_types').select('*').order('created_at'),
+      supabase.from('subscription_config').select('*'),
     ]);
     setDepts(d||[]);setTypes(t||[]);
+    const cfg={};(sc||[]).forEach(r=>{cfg[r.key]=r.value;});
+    setSubCfg(cfg);setSubEdits(cfg);
   };
   useEffect(()=>{loadAll();},[]);
 
@@ -3230,7 +3393,7 @@ function SettingsTab({onReload}){
 
       {/* Sub-tabs */}
       <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:20}}>
-        {[{id:'depts',label:'🏫 Departments'},{id:'types',label:'👥 User Types'}].map(t=>(
+        {[{id:'depts',label:'🏫 Departments'},{id:'types',label:'👥 User Types'},{id:'subscription',label:'💳 Subscription'}].map(t=>(
           <button key={t.id} onClick={()=>setSection(t.id)} style={{background:'none',border:'none',borderBottom:section===t.id?'2px solid #f9a84f':'2px solid transparent',color:section===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:section===t.id?600:400}}>{t.label}</button>
         ))}
       </div>
@@ -3316,6 +3479,62 @@ function SettingsTab({onReload}){
             ))}
             {types.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:20,border:'1px dashed var(--border)',borderRadius:8,fontSize:13}}>No user types yet.</div>}
           </div>
+        </div>
+      )}
+
+      {/* SUBSCRIPTION CONFIG */}
+      {section==='subscription'&&(
+        <div className="fade-in">
+          <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'11px 15px',marginBottom:18}}>
+            <div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>💳 Subscription & Payment Settings</div>
+            <div style={{color:'var(--muted)',fontSize:12}}>Only you can change these. Students see updates immediately.</div>
+          </div>
+          {[
+            {key:'free_ai_messages_per_day',label:'Free tier AI messages / day',type:'number',hint:'How many AI chat messages a free user can send per day'},
+            {key:'pro_price_monthly',        label:'Pro price — monthly (₦)',     type:'number',hint:'What students pay per month for Pro'},
+            {key:'pro_price_yearly',         label:'Pro price — yearly (₦)',      type:'number',hint:'Yearly price (show saving vs monthly)'},
+            {key:'payment_account_name',     label:'OPay account name',           type:'text',  hint:'Name shown on the payment card'},
+            {key:'payment_account_number',   label:'OPay account number',         type:'text',  hint:'Account number students copy to pay'},
+            {key:'payment_bank',             label:'Bank name',                   type:'text',  hint:'e.g. OPay'},
+            {key:'payment_whatsapp',         label:'WhatsApp verification link',  type:'text',  hint:'Full wa.me link e.g. https://wa.me/2348012345678'},
+          ].map(f=>(
+            <div key={f.key} style={{marginBottom:14}}>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{f.label.toUpperCase()}</div>
+              <input type={f.type} value={subEdits[f.key]??''} onChange={e=>setSubEdits(prev=>({...prev,[f.key]:e.target.value}))}
+                style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 13px',color:'var(--text)',fontSize:13}}/>
+              {f.hint&&<div style={{fontSize:10,color:'var(--muted)',marginTop:3}}>{f.hint}</div>}
+            </div>
+          ))}
+          {/* Feature flags */}
+          <div style={{marginBottom:18}}>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>FREE TIER FEATURE FLAGS</div>
+            {[
+              {key:'free_community_posting',label:'Allow community posting on Free tier'},
+              {key:'free_all_years',        label:'Free tier sees all years (no year gating)'},
+            ].map(f=>{
+              const val=(subEdits[f.key]??subCfg[f.key]??'false')==='true';
+              return(
+                <div key={f.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',background:'var(--surface)',borderRadius:8,marginBottom:8}}>
+                  <span style={{fontSize:13,color:'var(--text)'}}>{f.label}</span>
+                  <button onClick={()=>setSubEdits(prev=>({...prev,[f.key]:val?'false':'true'}))}
+                    style={{background:val?'rgba(127,218,150,.15)':'var(--input-bg)',border:`1px solid ${val?'rgba(127,218,150,.4)':'var(--border)'}`,borderRadius:20,color:val?'#7fda96':'var(--muted)',cursor:'pointer',padding:'4px 14px',fontSize:12,fontWeight:600,minWidth:52}}>
+                    {val?'ON':'OFF'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <button onClick={async()=>{
+            setSubSaving(true);
+            await Promise.all(Object.entries(subEdits).map(([key,value])=>
+              supabase.from('subscription_config').upsert({key,value,updated_by:superuserName,updated_at:new Date().toISOString()},{onConflict:'key'})
+            ));
+            await loadAll();
+            flash('✓ Subscription settings saved.');
+            setSubSaving(false);
+          }} disabled={subSaving} style={{background:'#f9a84f',border:'none',borderRadius:8,color:'#000',cursor:'pointer',padding:'10px 22px',fontSize:13,fontWeight:700}}>
+            {subSaving?'Saving…':'Save All Changes'}
+          </button>
         </div>
       )}
     </div>
@@ -3420,6 +3639,32 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
                   </button>
                 ))}
                 {busy==='year'&&<Mono color="var(--muted)" size={9}>Saving…</Mono>}
+              </div>
+            </div>
+          )}
+
+          {/* Subscription tier — superuser only */}
+          {isSU2&&(
+            <div>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:7,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>SUBSCRIPTION TIER</div>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
+                {[{k:'free',label:'🎓 Free',color:'#8892a4'},{k:'pro',label:'⭐ Pro',color:'#f9a84f'}].map(t=>{
+                  const active=(u.subscription_tier||'free')===t.k;
+                  return(
+                    <button key={t.k} onClick={async()=>{
+                      setBusy('tier');
+                      await supabase.from('users').update({subscription_tier:t.k}).eq('username',u.username);
+                      setBusy('');
+                    }} disabled={busy==='tier'}
+                      style={{padding:'7px 16px',borderRadius:8,cursor:'pointer',border:`1.5px solid ${active?t.color:t.color+'30'}`,background:active?`${t.color}14`:'var(--input-bg)',color:active?t.color:'var(--muted)',fontWeight:active?700:400,fontSize:12}}>
+                      {t.label}
+                    </button>
+                  );
+                })}
+                {busy==='tier'&&<Mono color="var(--muted)" size={9}>Saving…</Mono>}
+              </div>
+              <div style={{fontSize:10,color:'var(--muted)',marginTop:4}}>
+                Current: <span style={{color:TIER_CONFIG[u.subscription_tier||'free']?.color||'#8892a4',fontWeight:600}}>{TIER_CONFIG[u.subscription_tier||'free']?.label||'Free'}</span>
               </div>
             </div>
           )}
@@ -3621,7 +3866,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
         {tab==='status'&&<StatusChangesTab reviewerUsername={user.username}/>}
         {tab==='approvals'&&isSU2&&<ApprovalsTab onCourseChange={onCoursesChange} courses={courses} reviewerUsername={user.username}/>}
         {tab==='admins'&&isSU2&&<ManageAdminsTab/>}
-        {tab==='settings'&&isSU2&&<SettingsTab onReload={()=>onCoursesChange([...courses])}/>}
+        {tab==='settings'&&isSU2&&<SettingsTab onReload={()=>onCoursesChange([...courses])} superuserName={user.username}/>}
       </div>
       {showUpload&&(
         isSU2
@@ -3902,10 +4147,19 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[showBookmarks,setShowBookmarks]=useState(false);
   const[showStatusModal,setShowStatusModal]=useState(false);
   const[showPWADebug,setShowPWADebug]=useState(false);
+  const[showPayment,setShowPayment]=useState(false);
+  const[subCfg,setSubCfg]=useState({});
   const[browseMode,setBrowseMode]=useState('year'); // 'year' | 'course'
   const nativePrompt=usePWAPrompt();
   const[statusMsg,setStatusMsg]=useState('');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
+
+  // Load subscription config for PaymentPortal
+  useEffect(()=>{
+    supabase.from('subscription_config').select('*').then(({data})=>{
+      if(data){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
+    }).catch(()=>{});
+  },[]);
 
   // Course code tiles data
   const courseCodes=useMemo(()=>{
@@ -3966,6 +4220,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
               <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3,flexWrap:'wrap'}}>
                 <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
+                {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'}/>}
                 {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Yr {user.year} · @{user.username}</Mono>}
                 {isExternal&&<Mono color="#a8f94f" size={9}>@{user.username} · External</Mono>}
                 {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
@@ -3994,6 +4249,14 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           {/* Bookmarks */}
           {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:13,display:'flex',alignItems:'center',gap:5}}>🔖<span className="hide-xs">{bookmarks.length}</span></button>}
 
+          {/* ⭐ Upgrade — free-tier users only */}
+          {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(user.subscription_tier||'free')==='free'&&(
+            <button onClick={()=>setShowPayment(true)}
+              style={{background:'linear-gradient(135deg,rgba(249,168,79,.18),rgba(249,168,79,.08))',border:'1px solid rgba(249,168,79,.4)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 12px',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}>
+              ⭐ <span className="hide-xs">Upgrade</span>
+            </button>
+          )}
+
           {/* Change Status */}
           {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(
             <button onClick={()=>setShowStatusModal(true)} title="Request account status change" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
@@ -4016,6 +4279,9 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
 
       {/* PWA Diagnostic panel */}
       {showPWADebug&&<PWADiagnosticPanel onClose={()=>setShowPWADebug(false)}/>}
+
+      {/* Payment portal */}
+      {showPayment&&<PaymentPortal user={user} subCfg={subCfg} onClose={()=>setShowPayment(false)}/>}
 
       {/* Status change modal */}
       {showStatusModal&&<StatusChangeModal user={user} onClose={()=>setShowStatusModal(false)} onSubmitted={()=>{setStatusMsg('✓ Request submitted — an admin will review it shortly.');setTimeout(()=>setStatusMsg(''),4000);}}/>}
@@ -4352,6 +4618,7 @@ export default function App(){
   const[loading,setLoading]=useState(false);
   const[syncing,setSyncing]=useState(false);
   const[showWelcome,setShowWelcome]=useState(false);
+  const[subCfg,setSubCfg]=useState({});
   const[announceKey,setAnnounceKey]=useState(0);
 
   // Page title
@@ -4381,6 +4648,10 @@ export default function App(){
   // ── Startup: config + courses + restore progress ─────────────────────
   useEffect(()=>{
     Promise.all([loadDepartments(),loadUserTypes()]).catch(()=>{});
+    // Load subscription config
+    supabase.from('subscription_config').select('*').then(({data})=>{
+      if(data){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
+    }).catch(()=>{});
 
     // Reload courses silently
     const loadCourses=()=>{
@@ -4635,7 +4906,7 @@ export default function App(){
           courseName:active.data?.courseName,
           chapterTitle:active.data?.chapterTitle,
           summary:active.data?.keyConcepts?.slice(0,5).map(c=>c.title).join(', ')
-        }:null} courses={courses} user={user}/>
+        }:null} courses={courses} user={user} subCfg={subCfg}/>
       )}
 
       {showWelcome&&user&&<WelcomeModal user={user} onClose={()=>setShowWelcome(false)}/>}
