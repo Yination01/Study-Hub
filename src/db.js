@@ -281,3 +281,14 @@ footer{margin-top:30px;border-top:1px solid #ccc;padding-top:10px;font-size:10px
   setTimeout(()=>w.print(),400);
 }
 
+
+/* ═══ SUBSCRIPTION ═══ */
+export async function dbLoadSubConfig(){
+  try{const{data}=await supabase.from('subscription_config').select('*');const m={};(data||[]).forEach(r=>{m[r.key]=r.value;});return m;}catch{return{};}
+}
+export async function dbSaveSubConfig(key,value,updatedBy){
+  try{await supabase.from('subscription_config').upsert({key,value,updated_by:updatedBy,updated_at:new Date().toISOString()},{onConflict:'key'});}catch(e){console.error(e);}
+}
+export async function dbSetUserTier(username,tier){
+  try{await supabase.from('users').update({subscription_tier:tier}).eq('username',username);}catch(e){console.error(e);}
+}
