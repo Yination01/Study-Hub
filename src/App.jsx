@@ -8,8 +8,458 @@
 
 import React,{ useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { supabase } from './db.js';
-import * as db from './db.js';
+
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
+
+const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg:#0d0f14; --surface:#13161d; --card:#1a1e27; --border:#252a36;
+    --text:#e2e6f0; --muted:#8892a4; --input-bg:#0d0f14;
+    --shadow:0 8px 32px rgba(0,0,0,.5);
+    --radius:12px; --transition:all .22s cubic-bezier(.4,0,.2,1);
+  }
+  .light {
+    --bg:#f0f4fc; --surface:#ffffff; --card:#ffffff; --border:#dde3f0;
+    --text:#1a1e2f; --muted:#5a6478; --input-bg:#f5f7ff;
+    --shadow:0 8px 32px rgba(0,0,0,.1);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;font-size:16px}
+  /* Scale UI for 720p phones (720×1600/1640) to feel like 1080p */
+  @media (max-width:720px) and (max-height:1640px) {
+    html { font-size: 14.4px; }
+  }
+  @media (max-width:480px) {
+    html { font-size: 13.5px; }
+  }
+  body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh;transition:background .3s,color .3s;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:var(--surface)}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+  /* Animations */
+  @keyframes spin    {to{transform:rotate(360deg)}}
+  @keyframes fadeUp  {from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes fadeIn  {from{opacity:0}to{opacity:1}}
+  @keyframes scaleIn {from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+  @keyframes slideDown{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes stagger {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes pulse   {0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+  @keyframes blink   {0%,100%{opacity:1}50%{opacity:0}}
+  @keyframes shake   {0%,100%{transform:translateX(0)}25%,75%{transform:translateX(-5px)}50%{transform:translateX(5px)}}
+  @keyframes shimmer {0%{opacity:.6}50%{opacity:1}100%{opacity:.6}}
+
+  .fade-up   {animation:fadeUp .28s cubic-bezier(.4,0,.2,1) both}
+  .fade-in   {animation:fadeIn .2s ease both}
+  .scale-in  {animation:scaleIn .26s cubic-bezier(.4,0,.2,1) both}
+  .slide-down{animation:slideDown .22s ease both}
+  .shake     {animation:shake .3s ease}
+  .stagger-1 {animation:stagger .3s .05s both}
+  .stagger-2 {animation:stagger .3s .1s both}
+  .stagger-3 {animation:stagger .3s .15s both}
+  .stagger-4 {animation:stagger .3s .2s both}
+
+  input:focus,textarea:focus,select:focus{outline:2px solid rgba(79,156,249,.4)!important;outline-offset:0}
+  button{transition:var(--transition)}
+  button:active{transform:scale(.97)}
+
+  /* Mobile touch targets */
+  /* Hide text labels on very small screens */
+  @media(max-width:400px){
+    .hide-xs{display:none!important}
+  }
+
+  /* GPU-accelerate animations */
+  .fade-in,.fade-up,.scale-in,.slide-down,.slide-up{will-change:transform,opacity}
+  /* Remove will-change after animation to free memory */
+  .fade-in,.fade-up,.scale-in{animation-fill-mode:both}
+
+  /* Contain layout shifts in course grid */
+  .course-grid>*{contain:layout style}
+  @media(max-width:640px){
+    /* Touch targets */
+    button{min-height:44px}
+    .tab-btn{padding:10px 10px!important;font-size:11px!important;min-height:40px}
+
+    /* Layout */
+    .topbar{flex-wrap:wrap;gap:8px}
+    .course-grid{grid-template-columns:1fr!important}
+    .year-tabs{gap:6px!important;overflow-x:auto;flex-wrap:nowrap!important;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .year-tabs::-webkit-scrollbar{display:none}
+    .year-tab{padding:9px 14px!important;flex-shrink:0}
+
+    /* Course view tabs — horizontal scroll */
+    .course-tabs-row{overflow-x:auto;flex-wrap:nowrap!important;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+    .course-tabs-row::-webkit-scrollbar{display:none}
+
+    /* Auth card — full width */
+    .auth-card{padding:22px 18px!important;border-radius:12px!important}
+
+    /* Home padding */
+    .home-page{padding:20px 14px 100px!important}
+
+    /* Course view padding */
+    .course-page{padding:16px 14px 110px!important}
+
+    /* Admin panel */
+    .admin-page{padding:20px 12px 80px!important}
+
+    /* Definitions table — stack on mobile */
+    .def-grid{grid-template-columns:1fr!important}
+    .def-term{border-bottom:none!important;border-right:none!important;padding-bottom:4px!important}
+
+    /* Chatbot — full width at bottom */
+    .chatbot-panel{right:0!important;left:0!important;width:100%!important;bottom:52px!important;border-radius:14px 14px 0 0!important;max-height:60vh!important}
+    .chatbot-btn{right:12px!important;bottom:60px!important}
+
+    /* Notification dropdown handled by position:fixed inline */
+
+    /* Cards */
+    .modal-inner{padding:20px 16px!important;border-radius:14px!important}
+
+    /* Hide keyboard shortcut hint on mobile */
+    .kbd-hint{display:none!important}
+
+    /* Upload modal full height */
+    .upload-modal{max-height:95vh!important}
+
+    /* Year/semester pickers — 2 columns on mobile */
+    .year-picker-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  }
+
+  /* ── Tablet: 641–900px ── */
+  @media(min-width:641px) and (max-width:900px){
+    .course-grid{grid-template-columns:repeat(2,1fr)!important}
+    .year-tabs{flex-wrap:wrap;gap:8px}
+  }
+
+  /* ── Safe area for notched phones ── */
+  @supports(padding:max(0px)){
+    .copyright-bar{padding-bottom:max(7px,env(safe-area-inset-bottom))!important}
+    .course-page,.home-page{padding-bottom:max(88px,calc(52px + env(safe-area-inset-bottom)))!important}
+  }
+
+  @keyframes slideUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes slideDown {from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes slideRight {from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
+  .slide-up{animation:slideUp .28s cubic-bezier(.4,0,.2,1) both}
+  .slide-down{animation:slideDown .28s cubic-bezier(.4,0,.2,1) both}
+  .slide-right{animation:slideRight .28s cubic-bezier(.4,0,.2,1) both}
+
+  /* Focus visible — keyboard nav */
+  :focus-visible{outline:2px solid rgba(79,156,249,.6)!important;outline-offset:2px}
+
+  /* Text selection colour */
+  ::selection{background:rgba(79,156,249,.25);color:var(--text)}
+
+  /* Smooth transitions on theme switch */
+  *{transition:background-color .25s,border-color .25s,color .15s}
+  button,input,textarea,select{transition:background-color .25s,border-color .25s,color .15s,transform .1s,box-shadow .15s}
+  @media print{
+    .no-print{display:none!important}
+    body{background:#fff!important;color:#000!important}
+    .print-content{padding:20px}
+    h1,h2,h3{color:#000!important}
+    .course-card-print{page-break-inside:avoid;margin-bottom:16px;border:1px solid #ccc;padding:12px;border-radius:8px}
+    .q-print{page-break-inside:avoid;margin-bottom:12px;border-bottom:1px solid #eee;padding-bottom:12px}
+  }
+
+  /* Blur backdrop for modals */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.72);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    display:flex;align-items:center;justify-content:center;
+    z-index:2500;padding:20px;overflow-y:auto
+  }`;
+
+
+);
+
+// Dynamic config arrays — updated at runtime
+let DEPARTMENTS = ['Computer Science','Computer with Statistics'];
+let DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
+let DEPT_COLOR  = {'Computer Science':'#4f9cf9','Computer with Statistics':'#7fda96'};
+let USER_TYPES  = [
+  {id:'ut-student', label:'Enrolled Student',  shortCode:'Student',  roleKey:'user',     color:'#4f9cf9', description:'Currently enrolled students'},
+  {id:'ut-external',label:'External / Visitor',shortCode:'External', roleKey:'external', color:'#a8f94f', description:'Non-enrolled users'},
+];
+
+// Subscription config cache
+let _subConfig = {};
+function getSubVal(key, fallback='') { return _subConfig[key] ?? fallback; }
+function setSubConfigCache(cfg) { Object.assign(_subConfig, cfg); }
+const AI_MSG_KEY = 'sh-ai-msgs';
+function getAiMsgCount(){
+  try{const s=JSON.parse(localStorage.getItem(AI_MSG_KEY)||'{}');const today=new Date().toDateString();if(s.date!==today)return 0;return s.count||0;}catch{return 0;}
+}
+function incAiMsgCount(){
+  try{const today=new Date().toDateString();const s=JSON.parse(localStorage.getItem(AI_MSG_KEY)||'{}');const count=(s.date===today?s.count||0:0)+1;localStorage.setItem(AI_MSG_KEY,JSON.stringify({date:today,count}));return count;}catch{return 0;}
+}
+
+/* ═══════════════ DATABASE ═══════════════ */
+async function dbLoadUsers(){const{data}=await supabase.from('users').select('*');return data||[];}
+async function dbSaveUser(u){await supabase.from('users').upsert(u,{onConflict:'username'});}
+async function dbLoadAdmins(){const{data}=await supabase.from('admins').select('username');return(data||[]).map(r=>r.username.toLowerCase());}
+async function dbSetAdmins(list){await supabase.from('admins').delete().neq('username','__none__');if(list.length>0)await supabase.from('admins').insert(list.map(u=>({username:u.toLowerCase()})));}
+async function dbLoadCourseIndex(){
+  const{data}=await supabase.from('courses').select('id,year,semester,department,course_name,chapter_title,concept_count,term_count,q_count,added_at').order('added_at',{ascending:false});
+  return(data||[]).map(r=>({id:r.id,year:r.year,semester:r.semester||1,department:r.department||'Computer Science',courseName:r.course_name,chapterTitle:r.chapter_title,conceptCount:r.concept_count,termCount:r.term_count,qCount:r.q_count,addedAt:r.added_at}));
+}
+async function dbLoadCourseData(id){
+  const{data}=await supabase.from('courses').select('data').eq('id',id).single();
+  return data?.data||null;
+}
+async function dbSaveCourse(entry,courseData){
+  await supabase.from('courses').upsert({id:entry.id,year:entry.year,semester:entry.semester||1,department:entry.department||'Computer Science',course_name:entry.courseName,chapter_title:entry.chapterTitle,concept_count:entry.conceptCount,term_count:entry.termCount,q_count:entry.qCount,added_at:entry.addedAt,data:courseData},{onConflict:'id'});
+}
+async function dbDeleteCourse(id){await supabase.from('courses').delete().eq('id',id);}
+async function dbLoadProgress(username){const{data}=await supabase.from('progress').select('*').eq('username',username);const out={};(data||[]).forEach(r=>{out[r.course_id]={viewed:r.viewed,openedQs:r.opened_qs||[]};});return out;}
+async function dbSaveProgress(username,progress){const rows=Object.entries(progress).map(([cid,p])=>({username,course_id:cid,viewed:p.viewed,opened_qs:p.openedQs}));if(rows.length>0)await supabase.from('progress').upsert(rows,{onConflict:'username,course_id'});}
+async function resolveRole(username){
+  const admins=await dbLoadAdmins();
+  if(admins.includes(username.toLowerCase())) return ROLE.ADMIN;
+  try{
+    const{data}=await supabase.from('users').select('account_type').eq('username',username).single();
+    if(data?.account_type==='external') return ROLE.EXTERNAL;
+  }catch{}
+  return ROLE.USER;
+}
+
+// Resources
+async function dbLoadResources(courseId){try{const{data}=await supabase.from('resources').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
+async function dbAddResource(r){try{await supabase.from('resources').insert(r);}catch(e){console.error(e);}}
+async function dbDeleteResource(id){try{await supabase.from('resources').delete().eq('id',id);}catch{}}
+
+// Announcements
+async function dbLoadAnnouncements(courseId){
+  try{
+    let q=supabase.from('announcements').select('*').order('pinned',{ascending:false}).order('posted_at',{ascending:false});
+    if(courseId) q=q.or(`course_id.eq.${courseId},course_id.is.null`);
+    else q=q.is('course_id',null);
+    const{data}=await q;return data||[];
+  }catch{return[];}
+}
+async function dbLoadAllAnnouncements(){
+  try{const{data}=await supabase.from('announcements').select('*').order('posted_at',{ascending:false});return data||[];}catch{return[];}
+}
+async function dbSaveAnnouncement(a){try{await supabase.from('announcements').insert(a);}catch(e){console.error(e);}}
+async function dbDeleteAnnouncement(id){try{await supabase.from('announcements').delete().eq('id',id);}catch{}}
+async function dbPinAnnouncement(id,pinned){try{await supabase.from('announcements').update({pinned}).eq('id',id);}catch{}}
+
+// Notification log
+async function dbMarkSeen(username,itemId,itemType){
+  try{await supabase.from('notification_log').upsert({username,item_id:itemId,item_type:itemType,seen_at:new Date().toISOString()},{onConflict:'username,item_id'});}catch{}
+}
+async function dbLoadSeen(username){
+  try{const{data}=await supabase.from('notification_log').select('item_id').eq('username',username);return new Set((data||[]).map(r=>r.item_id));}catch{return new Set();}
+}
+
+// Fetch all recent notifiable items for a user
+async function dbLoadNotifications(username){
+  try{
+    const[assignments,cas,announcements]=await Promise.all([
+      supabase.from('assignments').select('id,title,course_id,added_at,due_date').order('added_at',{ascending:false}).limit(30),
+      supabase.from('course_cas').select('id,title,course_id,type,added_at,date').order('added_at',{ascending:false}).limit(30),
+      supabase.from('announcements').select('*').order('posted_at',{ascending:false}).limit(30),
+    ]);
+    const seen=await dbLoadSeen(username);
+    const items=[
+      ...(announcements.data||[]).map(a=>({id:a.id,type:'announcement',title:a.title,body:a.body,priority:a.priority,time:a.posted_at,courseId:a.course_id,pinned:a.pinned})),
+      ...(assignments.data||[]).map(a=>({id:a.id,type:'assignment',title:`Assignment: ${a.title}`,body:a.due_date?`Due ${new Date(a.due_date).toLocaleDateString()}`:'',priority:'info',time:a.added_at,courseId:a.course_id})),
+      ...(cas.data||[]).map(a=>({id:a.id,type:'ca',title:`${a.type}: ${a.title}`,body:a.date?`On ${new Date(a.date).toLocaleDateString()}`:'',priority:'info',time:a.added_at,courseId:a.course_id})),
+    ].sort((a,b)=>new Date(b.time)-new Date(a.time));
+    return{items,unseenCount:items.filter(i=>!seen.has(i.id)&&(i.pinned||true)).length,seen};
+  }catch{return{items:[],unseenCount:0,seen:new Set()};}
+}
+async function dbLoadAssignments(courseId){try{const{data}=await supabase.from('assignments').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
+async function dbSaveAssignment(a){try{await supabase.from('assignments').insert(a);}catch(e){console.error(e);}}
+async function dbDeleteAssignment(id){try{await supabase.from('assignments').delete().eq('id',id);}catch{}}
+
+// CAs / Tests
+async function dbLoadCAs(courseId){try{const{data}=await supabase.from('course_cas').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
+async function dbSaveCA(a){try{await supabase.from('course_cas').insert(a);}catch(e){console.error(e);}}
+async function dbDeleteCA(id){try{await supabase.from('course_cas').delete().eq('id',id);}catch{}}
+
+// Status change requests
+async function dbSubmitStatusRequest(r){
+  try{await supabase.from('status_change_requests').insert(r);}catch(e){console.error(e);}
+}
+async function dbLoadStatusRequests(status='pending'){
+  try{const{data}=await supabase.from('status_change_requests').select('*').eq('status',status).order('requested_at',{ascending:false});return data||[];}catch{return[];}
+}
+async function dbLoadAllStatusRequests(){
+  try{const{data}=await supabase.from('status_change_requests').select('*').order('requested_at',{ascending:false});return data||[];}catch{return[];}
+}
+async function dbReviewStatusRequest(id,status,reviewedBy,note=''){
+  try{await supabase.from('status_change_requests').update({status,reviewed_by:reviewedBy,reviewed_at:new Date().toISOString(),note}).eq('id',id);}catch(e){console.error(e);}
+}
+async function dbGetPendingStatusRequest(username){
+  try{const{data}=await supabase.from('status_change_requests').select('*').eq('username',username).eq('status','pending').single();return data||null;}catch{return null;}
+}
+async function dbApplyStatusChange(username,newType){
+  try{await supabase.from('users').update({account_type:newType}).eq('username',username);}catch(e){console.error(e);}
+}
+async function dbCountPendingStatusRequests(){
+  try{const{count}=await supabase.from('status_change_requests').select('*',{count:'exact',head:true}).eq('status','pending');return count||0;}catch{return 0;}
+}
+
+// Dynamic departments
+async function loadDepartments(){
+  try{
+    const{data}=await supabase.from('departments').select('*').order('name');
+    if(data?.length){
+      DEPARTMENTS=data.map(d=>d.name);
+      DEPT_SHORT=Object.fromEntries(data.map(d=>[d.name,d.short_code]));
+      DEPT_COLOR=Object.fromEntries(data.map(d=>[d.name,d.color||'#4f9cf9']));
+    }
+  }catch{}
+}
+async function dbAddDepartment(dept){await supabase.from('departments').insert(dept);}
+async function dbDeleteDepartment(id){await supabase.from('departments').delete().eq('id',id);}
+
+// Dynamic user types
+async function loadUserTypes(){
+  try{
+    const{data}=await supabase.from('user_types').select('*').order('created_at');
+    if(data?.length) USER_TYPES=data.map(d=>({id:d.id,label:d.label,shortCode:d.short_code,roleKey:d.role_key,color:d.color||'#4f9cf9',description:d.description||''}));
+  }catch{}
+}
+async function dbAddUserType(ut){await supabase.from('user_types').insert(ut);}
+async function dbDeleteUserType(id){await supabase.from('user_types').delete().eq('id',id);}
+
+// Helper — get display label for a user based on role + account_type
+function getUserTypeLabel(role,accountType){
+  if(role===ROLE.SUPERUSER) return '⚡ Superuser';
+  if(role===ROLE.ADMIN)     return '🛡 Admin';
+  if(role===ROLE.EXTERNAL||accountType==='external'){
+    const ut=USER_TYPES.find(u=>u.roleKey==='external');
+    return `🌐 ${ut?.shortCode||'External'}`;
+  }
+  const ut=USER_TYPES.find(u=>u.roleKey==='user');
+  return `🎓 ${ut?.shortCode||'Student'}`;
+}
+
+// Community
+async function dbLoadCommunity(courseId){try{const{data}=await supabase.from('community_posts').select('*').eq('course_id',courseId).order('upvote_count',{ascending:false});return data||[];}catch{return[];}}
+async function dbSubmitPost(post){try{await supabase.from('community_posts').insert(post);}catch(e){console.error(e);}}
+async function dbUpvote(username,postId){
+  try{
+    const{data:existing}=await supabase.from('community_votes').select('*').eq('username',username).eq('post_id',postId);
+    if(existing?.length>0){
+      await supabase.from('community_votes').delete().eq('username',username).eq('post_id',postId);
+      await supabase.from('community_posts').update({upvote_count:supabase.rpc('decrement',{x:1})}).eq('id',postId);
+      // simple approach: just reload
+    } else {
+      await supabase.from('community_votes').insert({username,post_id:postId});
+      const{data:post}=await supabase.from('community_posts').select('upvote_count').eq('id',postId).single();
+      await supabase.from('community_posts').update({upvote_count:(post?.upvote_count||0)+1}).eq('id',postId);
+    }
+  }catch(e){console.error(e);}
+}
+async function dbGetMyVotes(username){try{const{data}=await supabase.from('community_votes').select('post_id').eq('username',username);return(data||[]).map(r=>r.post_id);}catch{return[];}}
+async function dbDeletePost(id){try{await supabase.from('community_posts').delete().eq('id',id);}catch{}}
+
+/* ═══════════════ COURSE CODE HELPERS ═══════════════ */
+function normalizeCourseCode(raw=''){
+  const s=(raw||'').trim().toUpperCase().replace(/\s+/g,' ');
+  if(/^[A-Z]{2,4}\s\d{3,4}/.test(s)) return s;
+  const m=s.match(/^([A-Z]{2,4})(\d{3,4})/);
+  if(m) return `${m[1]} ${m[2]}`;
+  return s||'Other';
+}
+function uniqueCourseCodes(courses){
+  const seen=new Set();const out=[];
+  for(const c of courses){const code=normalizeCourseCode(c.courseName);if(code&&!seen.has(code)){seen.add(code);out.push(code);}}
+  return out.sort();
+}
+async function dbLoadCourseTabData(courseIds){
+  if(!courseIds.length) return{assignments:[],cas:[],resources:[],announcements:[]};
+  try{
+    const[a,ca,res,ann]=await Promise.all([
+      supabase.from('assignments').select('*').in('course_id',courseIds).order('added_at',{ascending:false}),
+      supabase.from('course_cas').select('*').in('course_id',courseIds).order('added_at',{ascending:false}),
+      supabase.from('resources').select('*').in('course_id',courseIds).order('added_at',{ascending:false}),
+      supabase.from('announcements').select('*').in('course_id',courseIds).order('posted_at',{ascending:false}),
+    ]);
+    return{assignments:a.data||[],cas:ca.data||[],resources:res.data||[],announcements:ann.data||[]};
+  }catch{return{assignments:[],cas:[],resources:[],announcements:[]};}
+}
+
+/* ═══════════════ PENDING ACTIONS ═══════════════ */
+async function dbSubmitPending(action_type,requested_by,payload,note=''){
+  await supabase.from('pending_actions').insert({id:`pa-${Date.now()}`,action_type,requested_by,requested_at:new Date().toISOString(),status:'pending',payload,note});
+}
+async function dbLoadPending(status='pending'){
+  const{data}=await supabase.from('pending_actions').select('*').eq('status',status).order('requested_at',{ascending:false});
+  return data||[];
+}
+async function dbLoadAllPending(){
+  const{data}=await supabase.from('pending_actions').select('*').order('requested_at',{ascending:false});
+  return data||[];
+}
+async function dbReviewPending(id,status,reviewed_by,note=''){
+  await supabase.from('pending_actions').update({status,reviewed_by,reviewed_at:new Date().toISOString(),note}).eq('id',id);
+}
+async function dbCountPending(){
+  const{count}=await supabase.from('pending_actions').select('*',{count:'exact',head:true}).eq('status','pending');
+  return count||0;
+}
+
+// Analytics helpers
+async function dbLoadAllProgress(){try{const{data}=await supabase.from('progress').select('*');return data||[];}catch{return[];}}
+
+/* ═══════════════ AI (chat via Groq) ═══════════════ */
+async function sendChatMessage(messages,context){
+  const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages,context})});
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`Error ${res.status}`);}
+  return(await res.json()).reply;
+}
+
+/* ═══════════════ PDF EXPORT ═══════════════ */
+function exportCoursePDF(d,chapterTitle){
+  const w=window.open('','_blank');
+  if(!w)return;
+  const styles=`body{font-family:Georgia,serif;max-width:800px;margin:0 auto;padding:30px;color:#000}
+h1{font-size:26px;margin-bottom:4px}h2{font-size:18px;margin:20px 0 8px;border-bottom:2px solid #333;padding-bottom:4px}
+h3{font-size:14px;margin:14px 0 4px;font-family:monospace}
+p,li{font-size:13px;line-height:1.7;margin-bottom:6px}
+.tag{background:#eee;padding:2px 8px;border-radius:4px;font-size:11px;margin-right:4px}
+.q{background:#f9f9f9;border-left:3px solid #333;padding:10px 14px;margin-bottom:12px;page-break-inside:avoid}
+.ans{margin-top:6px;padding:8px;background:#fff;border:1px solid #ddd;font-size:12px}
+.meta{color:#666;font-size:11px;font-family:monospace}
+footer{margin-top:30px;border-top:1px solid #ccc;padding-top:10px;font-size:10px;color:#999;text-align:center}`;
+  const concepts=(d.keyConcepts||[]).map(c=>`<li><strong>${c.title}</strong> — ${c.description}</li>`).join('');
+  const defs=(d.definitions||[]).map(def=>`<tr><td style="padding:4px 8px;font-weight:bold;font-family:monospace;font-size:12px;border:1px solid #ccc">${def.term}</td><td style="padding:4px 8px;font-size:12px;border:1px solid #ccc">${def.definition}</td></tr>`).join('');
+  const qs=(d.questions||[]).map((q,i)=>`<div class="q"><strong>Q${i+1}.</strong> ${q.question}<div class="ans"><strong>Answer:</strong> ${q.answer}</div></div>`).join('');
+  const mechs=(d.mechanisms||[]).map(m=>`<h3>${m.title}</h3><p style="white-space:pre-line">${m.body}</p>`).join('');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${chapterTitle} — StudyHub</title><style>${styles}</style></head><body>
+<p class="meta">StudyHub Export · ${new Date().toLocaleDateString()} · © ${COPYRIGHT_YEAR} Yination & Excalibur</p>
+<h1>${d.courseName} — ${chapterTitle}</h1>
+<div style="margin-bottom:12px"><span class="tag">${d.keyConcepts?.length||0} concepts</span><span class="tag">${d.definitions?.length||0} terms</span><span class="tag">${d.questions?.length||0} questions</span></div>
+<h2>Key Concepts</h2><ul>${concepts}</ul>
+<h2>Terms & Definitions</h2><table style="border-collapse:collapse;width:100%">${defs}</table>
+<h2>Mechanisms</h2>${mechs}
+<h2>Practice Questions (${d.questions?.length||0})</h2>${qs}
+<footer>© ${COPYRIGHT_YEAR} Yination & Excalibur · StudyHub v${APP_VERSION} · All rights reserved · Unauthorised distribution prohibited</footer>
+</body></html>`);
+  w.document.close();
+  setTimeout(()=>w.print(),400);
+}
+
+
+/* ═══ SUBSCRIPTION ═══ */
+async function dbLoadSubConfig(){
+  try{const{data}=await supabase.from('subscription_config').select('*');const m={};(data||[]).forEach(r=>{m[r.key]=r.value;});return m;}catch{return{};}
+}
+async function dbSaveSubConfig(key,value,updatedBy){
+  try{await supabase.from('subscription_config').upsert({key,value,updated_by:updatedBy,updated_at:new Date().toISOString()},{onConflict:'key'});}catch(e){console.error(e);}
+}
+async function dbSetUserTier(username,tier){
+  try{await supabase.from('users').update({subscription_tier:tier}).eq('username',username);}catch(e){console.error(e);}
+}
 import { DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
   getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY,
   loadDepartments, loadUserTypes, loadSubConfig,
@@ -28,7 +478,6 @@ import { DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
   normalizeCourseCode, uniqueCourseCodes, dbLoadCourseTabData,
   dbSubmitPending, dbLoadPending, dbLoadAllPending, dbReviewPending, dbCountPending,
   dbLoadAllProgress, sendChatMessage, exportCoursePDF,
-  dbLoadSubConfig, dbSaveSubConfig, dbSetUserTier, dbGetUserTier } from './db.js';
 
 /* ═══════════════ CONFIG ═══════════════ */
 // NOTE: No superuser credentials stored here.
@@ -85,7 +534,6 @@ const RES_ICONS   = {link:'🔗',video:'▶️',pdf:'📄',doc:'📝'};
 const CACHE_KEY   = id => `sh-course-cache-${id}`;
 
 /* ═══════════════ GLOBAL CSS ═══════════════ */
-import css from './styles.js';
 
 /* ═══════════════ HELPERS ═══════════════ */
 function hashStr(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return(h>>>0).toString(16);}
@@ -813,19 +1261,9 @@ const CopyrightBar=()=>{
   const[showDiag,setShowDiag]=useState(false);
   return(<>
     {showDiag&&<PWADiagnosticPanel onClose={()=>setShowDiag(false)}/>}
-    <div className="no-print copyright-bar" style={{position:'fixed',bottom:0,left:0,right:0,background:'var(--bg)',borderTop:'1px solid var(--border)',padding:'7px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',zIndex:100,flexWrap:'wrap',gap:6}}>
-      <div style={{display:'flex',alignItems:'center',gap:10}}>
-        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:14,color:'#4f9cf9'}}>StudyHub</span>
-        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>v{APP_VERSION}</span>
-      </div>
-      <div style={{display:'flex',alignItems:'center',gap:8}}>
-        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>© {COPYRIGHT_YEAR} · OWNED BY</span>
-        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Yination</span>
-        <span style={{color:'var(--muted)',fontSize:10}}>&</span>
-        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:'#f9a84f'}}>Excalibur</span>
-        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:1}}>· ALL RIGHTS RESERVED</span>
-        <button onClick={()=>setShowDiag(true)} title="PWA diagnostics" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:9,fontFamily:"'IBM Plex Mono',monospace",opacity:.4,padding:'0 4px',lineHeight:1}}>PWA?</button>
-      </div>
+    <div className="no-print copyright-bar" style={{position:'fixed',bottom:0,left:0,right:0,background:'var(--bg)',borderTop:'1px solid var(--border)',padding:'4px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',zIndex:100}}>
+      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',opacity:.45,letterSpacing:1}}>StudyHub v{APP_VERSION} · © {COPYRIGHT_YEAR}</span>
+      <button onClick={()=>setShowDiag(true)} title="PWA diagnostics" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:8,fontFamily:"'IBM Plex Mono',monospace",opacity:.3,padding:'0 2px',lineHeight:1}}>PWA?</button>
     </div>
   </>);
 };
@@ -3241,14 +3679,24 @@ function SubscriptionBadge({tier}){
 }
 
 function PaymentPortal({user,subCfg,onClose}){
-  const monthly  = subCfg?.pro_price_monthly||'500';
-  const yearly   = subCfg?.pro_price_yearly||'5000';
-  const acctName = subCfg?.payment_account_name||'StudyHUB';
-  const acctNum  = subCfg?.payment_account_number||'0123456789';
-  const bank     = subCfg?.payment_bank||'OPay';
-  const wa       = subCfg?.payment_whatsapp||'';
-  const freeLimit= subCfg?.free_ai_messages_per_day||'5';
+  const semPrice  = subCfg?.pro_price_semester||'1500';
+  const sixPrice  = subCfg?.pro_price_6month||'2500';
+  const yearPrice = subCfg?.pro_price_yearly||'5000';
+  const acctName  = subCfg?.payment_account_name||'StudyHUB';
+  const acctNum   = subCfg?.payment_account_number||'0123456789';
+  const bank      = subCfg?.payment_bank||'OPay';
+  const wa        = subCfg?.payment_whatsapp||'';
+  const aiLimit   = subCfg?.free_ai_messages_per_day||'5';
   const[copied,setCopied]=useState(false);
+  const[selPlan,setSelPlan]=useState('semester');
+
+  const plans=[
+    {id:'semester',label:'Per Semester',duration:'~5 months',price:semPrice,badge:null,color:'#4f9cf9'},
+    {id:'6month',  label:'6 Months',    duration:'Best value',price:sixPrice, badge:'Save ₦'+(semPrice*2-sixPrice > 0 ? (parseInt(semPrice)*2-parseInt(sixPrice)) : '500'),color:'#7fda96'},
+    {id:'yearly',  label:'Full Year',   duration:'2 semesters',price:yearPrice,badge:'Most popular',color:'#f9a84f'},
+  ];
+  const sel=plans.find(p=>p.id===selPlan)||plans[0];
+
   const copyAcct=()=>{navigator.clipboard.writeText(acctNum).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});};
 
   return(
@@ -3256,75 +3704,114 @@ function PaymentPortal({user,subCfg,onClose}){
       <div className="scale-in" style={{
         background:'linear-gradient(160deg,#07119a,#0e8f94)',
         border:'1px solid rgba(255,255,255,.12)',
-        borderRadius:20,padding:'28px 24px',
-        maxWidth:420,width:'calc(100% - 24px)',margin:'auto',
+        borderRadius:20,padding:'26px 22px',
+        maxWidth:440,width:'calc(100% - 20px)',margin:'auto',
         boxShadow:'0 20px 60px rgba(0,0,0,.5)',
-        position:'relative',overflow:'hidden',
-        maxHeight:'90vh',overflowY:'auto',
+        position:'relative',maxHeight:'92vh',overflowY:'auto',
       }}>
-        <div style={{position:'absolute',top:-60,right:-60,width:200,height:200,borderRadius:'50%',background:'rgba(17,163,168,.3)',filter:'blur(60px)',pointerEvents:'none'}}/>
+        <div style={{position:'absolute',top:-60,right:-60,width:180,height:180,borderRadius:'50%',background:'rgba(17,163,168,.3)',filter:'blur(50px)',pointerEvents:'none'}}/>
+
         {/* Header */}
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:18}}>
           <div>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'#fff',marginBottom:2}}>StudyHub Pro</div>
-            <div style={{fontSize:12,color:'rgba(255,255,255,.6)'}}>Unlock everything — one payment</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,.55)'}}>Unlock full access for your studies</div>
           </div>
-          <button onClick={onClose} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:'50%',color:'#fff',cursor:'pointer',width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>✕</button>
+          <button onClick={onClose} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:'50%',color:'#fff',cursor:'pointer',width:30,height:30,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,flexShrink:0,marginTop:2}}>✕</button>
         </div>
+
         {/* Tier comparison */}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:18}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:18}}>
           {[
-            {tier:'Free',color:'#8892a4',features:[`Year ${user?.year||1} only`,`${freeLimit} AI msgs/day`,'No community posting']},
-            {tier:'Pro ⭐',color:'#f9a84f',features:['All years & depts','Unlimited AI chat','Community + support']},
+            {tier:'🎓 Basic (Free)',color:'#8892a4',features:[
+              `Year ${user?.year||1} courses only`,
+              `${aiLimit} AI explanations/month`,
+              'Community forum support',
+              'Limited notes access',
+            ]},
+            {tier:'⭐ Premium',color:'#f9a84f',features:[
+              'All years & departments',
+              'Unlimited AI analysis',
+              'Personalized study plans',
+              'Practice questions',
+              'Detailed explanations',
+              'Priority support',
+            ]},
           ].map((t,i)=>(
-            <div key={i} style={{background:`rgba(255,255,255,${i===1?.12:.06})`,border:`1px solid ${t.color}40`,borderRadius:14,padding:'13px 12px'}}>
-              <div style={{fontSize:11,fontWeight:700,color:t.color,marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{t.tier}</div>
+            <div key={i} style={{background:`rgba(255,255,255,${i===1?.12:.05})`,border:`1px solid ${t.color}40`,borderRadius:12,padding:'12px 11px'}}>
+              <div style={{fontSize:10,fontWeight:700,color:t.color,marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5}}>{t.tier}</div>
               {t.features.map((f,j)=>(
-                <div key={j} style={{fontSize:11,color:i===1?'rgba(255,255,255,.9)':'rgba(255,255,255,.5)',marginBottom:4,display:'flex',alignItems:'flex-start',gap:5,lineHeight:1.4}}>
-                  <span style={{color:i===1?'#7fda96':'#555',fontSize:10,flexShrink:0,marginTop:1}}>{i===1?'✓':'·'}</span>{f}
+                <div key={j} style={{fontSize:10.5,color:i===1?'rgba(255,255,255,.9)':'rgba(255,255,255,.45)',marginBottom:3,display:'flex',alignItems:'flex-start',gap:4,lineHeight:1.4}}>
+                  <span style={{color:i===1?'#7fda96':'#444',fontSize:9,flexShrink:0,marginTop:2}}>{i===1?'✓':'·'}</span>{f}
                 </div>
               ))}
             </div>
           ))}
         </div>
-        {/* Pricing */}
-        <div style={{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.15)',borderRadius:14,padding:'13px 15px',marginBottom:16}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-            <span style={{fontSize:13,color:'rgba(255,255,255,.8)'}}>Monthly</span>
-            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:18,color:'#f9a84f',fontWeight:700}}>₦{monthly}</span>
-          </div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,borderTop:'1px solid rgba(255,255,255,.1)'}}>
-            <span style={{fontSize:13,color:'rgba(255,255,255,.8)'}}>Yearly <span style={{fontSize:10,color:'#7fda96'}}>(save {Math.max(0,Math.round((1-yearly/(monthly*12))*100))}%)</span></span>
-            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:18,color:'#f9a84f',fontWeight:700}}>₦{yearly}</span>
+
+        {/* Plan picker */}
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:9,color:'rgba(255,255,255,.45)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:10}}>CHOOSE YOUR PLAN</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {plans.map(p=>(
+              <button key={p.id} onClick={()=>setSelPlan(p.id)} style={{
+                background:selPlan===p.id?`rgba(255,255,255,.14)`:'rgba(255,255,255,.05)',
+                border:`1.5px solid ${selPlan===p.id?p.color:'rgba(255,255,255,.15)'}`,
+                borderRadius:12,padding:'11px 14px',cursor:'pointer',
+                display:'flex',alignItems:'center',justifyContent:'space-between',
+                transition:'all .15s',textAlign:'left',
+              }}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600,color:selPlan===p.id?p.color:'rgba(255,255,255,.85)',marginBottom:2}}>{p.label}</div>
+                  <div style={{fontSize:10,color:'rgba(255,255,255,.45)'}}>{p.duration}</div>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  {p.badge&&<span style={{fontSize:9,background:`${p.color}25`,color:p.color,borderRadius:4,padding:'2px 7px',fontFamily:"'IBM Plex Mono',monospace",fontWeight:700}}>{p.badge}</span>}
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:17,color:p.color,fontWeight:700}}>₦{p.price}</span>
+                </div>
+              </button>
+            ))}
           </div>
         </div>
+
+        {/* Referral note */}
+        <div style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.2)',borderRadius:10,padding:'10px 13px',marginBottom:16,display:'flex',gap:10,alignItems:'flex-start'}}>
+          <span style={{fontSize:16,flexShrink:0}}>🎁</span>
+          <div style={{fontSize:11,color:'rgba(255,255,255,.7)',lineHeight:1.5}}>
+            <strong style={{color:'#7fda96'}}>Referral discount:</strong> Get <strong style={{color:'#7fda96'}}>₦100 off</strong> for each friend you refer who subscribes. Mention your username during WhatsApp verification.
+          </div>
+        </div>
+
         {/* Payment details */}
-        <div style={{background:'rgba(0,0,0,.3)',border:'1px solid rgba(255,255,255,.1)',borderRadius:14,padding:'13px 15px',marginBottom:16}}>
-          <div style={{fontSize:9,color:'rgba(255,255,255,.45)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:10}}>PAYMENT DETAILS</div>
-          <div style={{fontSize:13,color:'#fff',fontWeight:600,marginBottom:6}}>{acctName}</div>
+        <div style={{background:'rgba(0,0,0,.3)',border:'1px solid rgba(255,255,255,.1)',borderRadius:12,padding:'12px 14px',marginBottom:16}}>
+          <div style={{fontSize:9,color:'rgba(255,255,255,.4)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:8}}>PAY ₦{sel.price} — {sel.label.toUpperCase()}</div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,.7)',marginBottom:8}}>{acctName}</div>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
             <div>
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:20,color:'#fff',letterSpacing:2,fontWeight:700}}>{acctNum}</div>
               <div style={{fontSize:11,color:'rgba(7,243,7,.9)',fontWeight:600,marginTop:2}}>{bank}</div>
             </div>
-            <button onClick={copyAcct} style={{background:copied?'rgba(127,218,150,.2)':'rgba(255,255,255,.12)',border:`1px solid ${copied?'rgba(127,218,150,.5)':'rgba(255,255,255,.2)'}`,borderRadius:8,color:copied?'#7fda96':'#fff',cursor:'pointer',padding:'8px 14px',fontSize:11,fontWeight:600,flexShrink:0,transition:'all .2s'}}>
+            <button onClick={copyAcct} style={{background:copied?'rgba(127,218,150,.2)':'rgba(255,255,255,.1)',border:`1px solid ${copied?'rgba(127,218,150,.5)':'rgba(255,255,255,.2)'}`,borderRadius:8,color:copied?'#7fda96':'#fff',cursor:'pointer',padding:'8px 14px',fontSize:11,fontWeight:600,flexShrink:0,transition:'all .2s'}}>
               {copied?'✓ Copied':'Copy'}
             </button>
           </div>
         </div>
+
         {/* WhatsApp CTA */}
-        <div style={{textAlign:'center',marginBottom:12}}>
-          <div style={{fontSize:11,color:'rgba(255,255,255,.6)',marginBottom:10,lineHeight:1.5}}>After payment, verify on WhatsApp to activate Pro</div>
+        <div style={{textAlign:'center',marginBottom:10}}>
+          <div style={{fontSize:11,color:'rgba(255,255,255,.55)',marginBottom:10,lineHeight:1.5}}>
+            Send proof of payment on WhatsApp to activate Pro
+          </div>
           {wa?(
             <a href={wa} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:8,background:'#1fff02',color:'#000',padding:'11px 26px',borderRadius:12,fontSize:14,fontWeight:700,textDecoration:'none',boxShadow:'0 4px 20px rgba(31,255,2,.3)'}}>
-              💬 Verify on WhatsApp
+              💬 Send Payment Proof
             </a>
           ):(
-            <div style={{fontSize:11,color:'rgba(255,255,255,.35)',fontStyle:'italic'}}>WhatsApp link not configured — contact admin</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,.3)',fontStyle:'italic'}}>WhatsApp link not configured — contact admin</div>
           )}
         </div>
-        <div style={{fontSize:10,color:'rgba(255,255,255,.3)',textAlign:'center',lineHeight:1.6}}>
-          Pro access activated within 24 hrs of WhatsApp verification.
+        <div style={{fontSize:10,color:'rgba(255,255,255,.25)',textAlign:'center',lineHeight:1.6}}>
+          Activated within 24 hrs · No auto-renewal · Pay per semester
         </div>
       </div>
     </div>
@@ -3490,13 +3977,15 @@ function SettingsTab({onReload,superuserName}){
             <div style={{color:'var(--muted)',fontSize:12}}>Only you can change these. Students see updates immediately.</div>
           </div>
           {[
-            {key:'free_ai_messages_per_day',label:'Free tier AI messages / day',type:'number',hint:'How many AI chat messages a free user can send per day'},
-            {key:'pro_price_monthly',        label:'Pro price — monthly (₦)',     type:'number',hint:'What students pay per month for Pro'},
-            {key:'pro_price_yearly',         label:'Pro price — yearly (₦)',      type:'number',hint:'Yearly price (show saving vs monthly)'},
-            {key:'payment_account_name',     label:'OPay account name',           type:'text',  hint:'Name shown on the payment card'},
-            {key:'payment_account_number',   label:'OPay account number',         type:'text',  hint:'Account number students copy to pay'},
-            {key:'payment_bank',             label:'Bank name',                   type:'text',  hint:'e.g. OPay'},
-            {key:'payment_whatsapp',         label:'WhatsApp verification link',  type:'text',  hint:'Full wa.me link e.g. https://wa.me/2348012345678'},
+            {key:'free_ai_messages_per_month', label:'Free tier AI explanations / month', type:'number', hint:'How many AI messages a free user gets per month (default: 5)'},
+            {key:'pro_price_semester',          label:'Premium — per semester (₦)',         type:'number', hint:'~5 months. Recommended: ₦500–₦1,000'},
+            {key:'pro_price_6month',            label:'Premium — 6 months bulk (₦)',        type:'number', hint:'Bulk discount. Recommended: ₦2,500'},
+            {key:'pro_price_yearly',            label:'Premium — full year (₦)',            type:'number', hint:'2 semesters. Recommended: ₦5,000'},
+            {key:'referral_credit',             label:'Referral credit per friend (₦)',     type:'number', hint:'₦ discount given for each friend who subscribes (default: ₦100)'},
+            {key:'payment_account_name',        label:'OPay account name',                  type:'text',   hint:'Name shown on the payment card'},
+            {key:'payment_account_number',      label:'OPay account number',                type:'text',   hint:'Account number students copy to pay'},
+            {key:'payment_bank',                label:'Bank name',                          type:'text',   hint:'e.g. OPay'},
+            {key:'payment_whatsapp',            label:'WhatsApp verification link',         type:'text',   hint:'Full wa.me link e.g. https://wa.me/2348012345678'},
           ].map(f=>(
             <div key={f.key} style={{marginBottom:14}}>
               <div style={{fontSize:11,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{f.label.toUpperCase()}</div>
@@ -4142,6 +4631,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[activeYear,setActiveYear]=useState(isExternal?'all':(user.year||1));
   const[activeSemester,setActiveSemester]=useState(1);
   const[activeDept,setActiveDept]=useState('all');
+  const[deptOpen,setDeptOpen]=useState(false);
   const[searchRaw,setSearchRaw]=useState('');
   const[search,setSearch]=useState('');
   const[showBookmarks,setShowBookmarks]=useState(false);
@@ -4149,6 +4639,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[showPWADebug,setShowPWADebug]=useState(false);
   const[showPayment,setShowPayment]=useState(false);
   const[subCfg,setSubCfg]=useState({});
+  const[drawerOpen,setDrawerOpen]=useState(false);
   const[browseMode,setBrowseMode]=useState('year'); // 'year' | 'course'
   const nativePrompt=usePWAPrompt();
   const[statusMsg,setStatusMsg]=useState('');
@@ -4229,53 +4720,109 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           </div>
         </div>
 
-        {/* Right side — ordered: theme | install | bookmarks | change status | panel | sign out | 🔔 */}
-        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',flexShrink:0}}>
-          <ThemeToggle dark={dark} toggle={toggleTheme}/>
-
-          {/* Install App */}
-          {!window.matchMedia('(display-mode: standalone)').matches&&!window.navigator.standalone&&nativePrompt&&(
-            <button onClick={async()=>{
-              if(!nativePrompt)return;
-              nativePrompt.prompt();
-              const{outcome}=await nativePrompt.userChoice;
-              if(outcome==='accepted') savePwaState({neverShow:true});
-              _pwaPromptEvent=null;
-            }} style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:8,color:'#4f9cf9',cursor:'pointer',padding:'8px 12px',fontSize:12,fontWeight:600,display:'flex',alignItems:'center',gap:5}}>
-              📲 Install App
-            </button>
-          )}
-
-          {/* Bookmarks */}
-          {bookmarks.length>0&&<button onClick={()=>setShowBookmarks(s=>!s)} style={{background:showBookmarks?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${showBookmarks?'#f9a84f':'var(--border)'}`,borderRadius:8,color:showBookmarks?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:13,display:'flex',alignItems:'center',gap:5}}>🔖<span className="hide-xs">{bookmarks.length}</span></button>}
+        {/* Right side — minimal: upgrade | bell | hamburger */}
+        <div style={{display:'flex',gap:8,alignItems:'center',flexShrink:0}}>
 
           {/* ⭐ Upgrade — free-tier users only */}
           {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(user.subscription_tier||'free')==='free'&&(
             <button onClick={()=>setShowPayment(true)}
-              style={{background:'linear-gradient(135deg,rgba(249,168,79,.18),rgba(249,168,79,.08))',border:'1px solid rgba(249,168,79,.4)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 12px',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}>
+              style={{background:'linear-gradient(135deg,rgba(249,168,79,.18),rgba(249,168,79,.08))',border:'1px solid rgba(249,168,79,.4)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'7px 11px',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}>
               ⭐ <span className="hide-xs">Upgrade</span>
             </button>
           )}
 
-          {/* Change Status */}
-          {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(
-            <button onClick={()=>setShowStatusModal(true)} title="Request account status change" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 12px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
-              🔄 <span className="hide-xs">Change Status</span>
-            </button>
-          )}
-
-          {/* Admin Panel */}
-          {isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Panel':'⚙ Panel'}</button>}
-
-          {/* Sign Out */}
-          <button onClick={onLogout} title={user.isGuest?'Sign In':'Sign Out'} style={{background:user.isGuest?'#4f9cf9':'none',border:user.isGuest?'none':'1px solid var(--border)',borderRadius:8,color:user.isGuest?'#000':'var(--muted)',cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:user.isGuest?700:400}}>
-            {user.isGuest?'Sign In':'Sign Out'}
-          </button>
-
-          {/* 🔔 Bell — always far right */}
+          {/* 🔔 Bell */}
           {!user.isGuest&&<NotificationBell user={user} courses={courses} onNavigate={(courseId,tab)=>{onSelectCourse(courseId,tab);}}/>}
+
+          {/* ☰ Hamburger */}
+          <button onClick={()=>setDrawerOpen(true)}
+            style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',cursor:'pointer',padding:'8px 10px',display:'flex',flexDirection:'column',gap:4,alignItems:'center',justifyContent:'center',width:38,height:38}}>
+            <span style={{display:'block',width:16,height:2,background:'currentColor',borderRadius:1}}/>
+            <span style={{display:'block',width:16,height:2,background:'currentColor',borderRadius:1}}/>
+            <span style={{display:'block',width:12,height:2,background:'currentColor',borderRadius:1}}/>
+          </button>
         </div>
       </div>
+
+      {/* ── Side Drawer ─────────────────────────────────────── */}
+      {drawerOpen&&(
+        <>
+          <div onClick={()=>setDrawerOpen(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.55)',backdropFilter:'blur(3px)',zIndex:1998}}/>
+          <div className="slide-right" style={{position:'fixed',top:0,right:0,bottom:0,width:280,background:'var(--card)',borderLeft:'1px solid var(--border)',zIndex:1999,display:'flex',flexDirection:'column',overflowY:'auto',boxShadow:'-8px 0 40px rgba(0,0,0,.5)'}}>
+            {/* Drawer header */}
+            <div style={{padding:'20px 20px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div>
+                <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'var(--text)'}}>StudyHub</div>
+                <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{user.displayName}</div>
+              </div>
+              <button onClick={()=>setDrawerOpen(false)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,padding:4}}>✕</button>
+            </div>
+
+            {/* User info */}
+            <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12}}>
+              <div style={{width:44,height:44,borderRadius:'50%',background:`linear-gradient(135deg,${ROLE_COLOR[user.role]||'#4f9cf9'},#1a1e27)`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>
+                {ROLE_ICON[user.role]||'👤'}
+              </div>
+              <div>
+                <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
+                <div style={{display:'flex',gap:6,marginTop:4,flexWrap:'wrap'}}>
+                  <RolePill role={user.role} accountType={user.accountType}/>
+                  {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'}/>}
+                </div>
+                {user.role===ROLE.USER&&!user.isGuest&&<div style={{fontSize:10,color:'var(--muted)',marginTop:3}}>Year {user.year} · @{user.username}</div>}
+              </div>
+            </div>
+
+            {/* Nav links */}
+            <div style={{padding:'12px 12px',flex:1}}>
+              <div style={{fontSize:9,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,padding:'4px 8px',marginBottom:6}}>NAVIGATION</div>
+              {[
+                {icon:'🏠',label:'Home',action:()=>{setDrawerOpen(false);},active:true},
+                ...(bookmarks.length>0?[{icon:'🔖',label:`Bookmarks (${bookmarks.length})`,action:()=>{setShowBookmarks(s=>!s);setDrawerOpen(false);}}]:[]),
+                ...(isPriv?[{icon:user.role===ROLE.SUPERUSER?'⚡':'⚙️',label:'Admin Panel',action:()=>{onShowAdmin();setDrawerOpen(false);}}]:[]),
+                ...(!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)?[{icon:'🔄',label:'Change Status',action:()=>{setShowStatusModal(true);setDrawerOpen(false);}}]:[]),
+                ...(!user.isGuest&&(user.subscription_tier||'free')==='free'&&user.role!==ROLE.SUPERUSER&&user.role!==ROLE.ADMIN?[{icon:'⭐',label:'Upgrade to Pro',action:()=>{setShowPayment(true);setDrawerOpen(false);},highlight:true}]:[]),
+              ].map((item,i)=>(
+                <button key={i} onClick={item.action}
+                  style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'11px 12px',borderRadius:10,border:'none',background:item.active?'rgba(79,156,249,.08)':item.highlight?'rgba(249,168,79,.08)':'transparent',color:item.highlight?'#f9a84f':item.active?'#4f9cf9':'var(--text)',cursor:'pointer',textAlign:'left',fontSize:13,fontWeight:item.active||item.highlight?600:400,marginBottom:2}}>
+                  <span style={{fontSize:16,width:22,textAlign:'center'}}>{item.icon}</span>
+                  {item.label}
+                </button>
+              ))}
+
+              <div style={{fontSize:9,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,padding:'4px 8px',marginTop:12,marginBottom:6}}>SETTINGS</div>
+              {/* Theme toggle */}
+              <button onClick={()=>{toggleTheme();}} style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'11px 12px',borderRadius:10,border:'none',background:'transparent',color:'var(--text)',cursor:'pointer',textAlign:'left',fontSize:13,marginBottom:2}}>
+                <span style={{fontSize:16,width:22,textAlign:'center'}}>{dark?'🌙':'☀️'}</span>
+                {dark?'Dark Mode':'Light Mode'}
+                <span style={{marginLeft:'auto',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>ON</span>
+              </button>
+              {/* Install */}
+              {!window.matchMedia('(display-mode: standalone)').matches&&!window.navigator.standalone&&nativePrompt&&(
+                <button onClick={async()=>{
+                  nativePrompt.prompt();
+                  const{outcome}=await nativePrompt.userChoice;
+                  if(outcome==='accepted') savePwaState({neverShow:true});
+                  _pwaPromptEvent=null;
+                  setDrawerOpen(false);
+                }} style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'11px 12px',borderRadius:10,border:'none',background:'rgba(79,156,249,.08)',color:'#4f9cf9',cursor:'pointer',textAlign:'left',fontSize:13,fontWeight:600,marginBottom:2}}>
+                  <span style={{fontSize:16,width:22,textAlign:'center'}}>📲</span>
+                  Install App
+                </button>
+              )}
+            </div>
+
+            {/* Sign out */}
+            <div style={{padding:'12px 12px',borderTop:'1px solid var(--border)'}}>
+              <button onClick={()=>{setDrawerOpen(false);onLogout();}}
+                style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'11px 12px',borderRadius:10,border:'1px solid var(--border)',background:'transparent',color:'var(--muted)',cursor:'pointer',textAlign:'left',fontSize:13}}>
+                <span style={{fontSize:16,width:22,textAlign:'center'}}>{user.isGuest?'🔑':'🚪'}</span>
+                {user.isGuest?'Sign In / Sign Up':'Sign Out'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* PWA Diagnostic panel */}
       {showPWADebug&&<PWADiagnosticPanel onClose={()=>setShowPWADebug(false)}/>}
@@ -4413,22 +4960,52 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         </div>
       </div>
 
-      {/* Department filter */}
-      <div className="stagger-4" style={{marginBottom:20}}>
-        <Mono color="var(--muted)" size={9}>DEPARTMENT</Mono>
-        <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:8}}>
-          {[{label:'All Departments',key:'all',color:'#8892a4'},...DEPARTMENTS.map(d=>({label:d,key:d,color:DEPT_COLOR[d]}))].map(({label,key,color})=>{
-            const active=activeDept===key;
-            return(
-              <button key={key} onClick={()=>setActiveDept(key)} style={{background:active?`${color}15`:'var(--surface)',border:`1px solid ${active?color+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'8px 16px',transition:'var(--transition)',display:'flex',alignItems:'center',gap:7}}>
-                {key!=='all'&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:active?`${color}25`:'var(--border)',color:active?color:'var(--muted)',borderRadius:4,padding:'2px 6px'}}>{DEPT_SHORT[key]}</span>}
-                <span style={{fontSize:13,color:active?color:'var(--text)',fontWeight:active?600:400}}>{label}</span>
-                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:active?`${color}20`:'var(--border)',color:active?color:'var(--muted)',borderRadius:10,padding:'2px 7px'}}>{deptCount(key)}</span>
+      {/* Department filter — collapsible */}
+      {DEPARTMENTS.length>0&&(
+        <div className="stagger-4" style={{marginBottom:16}}>
+          <button onClick={()=>setDeptOpen(o=>!o)}
+            style={{display:'flex',alignItems:'center',gap:8,background:'none',border:'none',cursor:'pointer',padding:'4px 0',width:'100%',textAlign:'left'}}>
+            <Mono color={activeDept!=='all'?DEPT_COLOR[activeDept]||'#f9a84f':'var(--muted)'} size={9}>
+              DEPARTMENT{activeDept!=='all'?` · ${DEPT_SHORT[activeDept]||activeDept}`:''}
+            </Mono>
+            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginLeft:'auto'}}>
+              {deptOpen?'▲ hide':'▼ show'}
+            </span>
+          </button>
+          {/* Always show "All Departments" chip */}
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:6}}>
+            <button onClick={()=>{setActiveDept('all');setDeptOpen(false);}}
+              style={{background:activeDept==='all'?'rgba(136,146,164,.15)':'var(--surface)',border:`1px solid ${activeDept==='all'?'#8892a4':'var(--border)'}`,borderRadius:20,cursor:'pointer',padding:'6px 14px',display:'flex',alignItems:'center',gap:6,transition:'var(--transition)'}}>
+              <span style={{fontSize:12,color:activeDept==='all'?'#e2e6f0':'var(--muted)',fontWeight:activeDept==='all'?700:400}}>All Departments</span>
+              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'var(--border)',color:'var(--muted)',borderRadius:10,padding:'1px 6px'}}>{deptCount('all')}</span>
+            </button>
+            {activeDept!=='all'&&(
+              <button onClick={()=>setActiveDept('all')}
+                style={{background:`${DEPT_COLOR[activeDept]||'#f9a84f'}15`,border:`1px solid ${DEPT_COLOR[activeDept]||'#f9a84f'}50`,borderRadius:20,cursor:'pointer',padding:'6px 12px',display:'flex',alignItems:'center',gap:6}}>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:DEPT_COLOR[activeDept]||'#f9a84f',fontWeight:700}}>{DEPT_SHORT[activeDept]||activeDept}</span>
+                <span style={{fontSize:11,color:DEPT_COLOR[activeDept]||'#f9a84f'}}>✕</span>
               </button>
-            );
-          })}
+            )}
+          </div>
+          {/* Expanded dept list */}
+          {deptOpen&&(
+            <div className="fade-in" style={{display:'flex',flexDirection:'column',gap:6,marginTop:10,background:'var(--surface)',borderRadius:12,padding:'10px',border:'1px solid var(--border)'}}>
+              {DEPARTMENTS.map(d=>{
+                const isActive=activeDept===d;
+                const color=DEPT_COLOR[d]||'#4f9cf9';
+                return(
+                  <button key={d} onClick={()=>{setActiveDept(d);setDeptOpen(false);}}
+                    style={{background:isActive?`${color}15`:'transparent',border:`1px solid ${isActive?color+'60':'transparent'}`,borderRadius:8,cursor:'pointer',padding:'9px 12px',display:'flex',alignItems:'center',gap:10,textAlign:'left',transition:'var(--transition)'}}>
+                    <span style={{width:8,height:8,borderRadius:'50%',background:color,flexShrink:0}}/>
+                    <span style={{flex:1,fontSize:13,color:isActive?color:'var(--text)',fontWeight:isActive?600:400}}>{d}</span>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:isActive?`${color}20`:'var(--border)',color:isActive?color:'var(--muted)',borderRadius:10,padding:'2px 7px'}}>{deptCount(d)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''}{activeYear==='all'?` · ALL YEARS`:` · YEAR ${activeYear} · SEM ${activeSemester}`}{activeDept!=='all'?` · ${DEPT_SHORT[activeDept]}`:''}{search?` · "${search}"`:''}</Mono>
 
