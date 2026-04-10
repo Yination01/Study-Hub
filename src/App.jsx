@@ -175,9 +175,6 @@ const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Di
     z-index:2500;padding:20px;overflow-y:auto
   }`;
 
-
-);
-
 // Dynamic config arrays — updated at runtime
 let DEPARTMENTS = ['Computer Science','Computer with Statistics'];
 let DEPT_SHORT  = {'Computer Science':'CS','Computer with Statistics':'CwS'};
@@ -460,24 +457,6 @@ async function dbSaveSubConfig(key,value,updatedBy){
 async function dbSetUserTier(username,tier){
   try{await supabase.from('users').update({subscription_tier:tier}).eq('username',username);}catch(e){console.error(e);}
 }
-import { DEPARTMENTS, DEPT_SHORT, DEPT_COLOR, USER_TYPES,
-  getSubVal, getAiMsgCount, incAiMsgCount, AI_MSG_KEY,
-  loadDepartments, loadUserTypes, loadSubConfig,
-  resolveRole, dbLoadUsers, dbSaveUser, dbLoadAdmins, dbSetAdmins,
-  dbLoadCourseIndex, dbLoadCourseData, dbSaveCourse, dbDeleteCourse,
-  dbLoadProgress, dbSaveProgress, dbLoadResources, dbAddResource, dbDeleteResource,
-  dbLoadAnnouncements, dbLoadAllAnnouncements, dbSaveAnnouncement,
-  dbDeleteAnnouncement, dbPinAnnouncement, dbMarkSeen, dbLoadSeen, dbLoadNotifications,
-  dbLoadAssignments, dbSaveAssignment, dbDeleteAssignment,
-  dbLoadCAs, dbSaveCA, dbDeleteCA,
-  dbSubmitStatusRequest, dbLoadStatusRequests, dbLoadAllStatusRequests,
-  dbReviewStatusRequest, dbGetPendingStatusRequest, dbApplyStatusChange,
-  dbCountPendingStatusRequests, loadDepartments as _loadDepts,
-  dbAddDepartment, dbDeleteDepartment, dbAddUserType, dbDeleteUserType,
-  getUserTypeLabel, dbLoadCommunity, dbSubmitPost, dbUpvote, dbGetMyVotes, dbDeletePost,
-  normalizeCourseCode, uniqueCourseCodes, dbLoadCourseTabData,
-  dbSubmitPending, dbLoadPending, dbLoadAllPending, dbReviewPending, dbCountPending,
-  dbLoadAllProgress, sendChatMessage, exportCoursePDF,
 
 /* ═══════════════ CONFIG ═══════════════ */
 // NOTE: No superuser credentials stored here.
