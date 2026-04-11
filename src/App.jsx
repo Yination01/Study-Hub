@@ -144,7 +144,7 @@ const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Di
 
   @keyframes slideUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
   @keyframes slideDown {from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
-  @keyframes slideRight {from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
+  @keyframes slideRight {from{opacity:0;transform:translateX(-100%)}to{opacity:1;transform:translateX(0)}}
   .slide-up{animation:slideUp .28s cubic-bezier(.4,0,.2,1) both}
   .slide-down{animation:slideDown .28s cubic-bezier(.4,0,.2,1) both}
   .slide-right{animation:slideRight .28s cubic-bezier(.4,0,.2,1) both}
@@ -268,7 +268,7 @@ async function dbLoadNotifications(username){
       ...(assignments.data||[]).map(a=>({id:a.id,type:'assignment',title:`Assignment: ${a.title}`,body:a.due_date?`Due ${new Date(a.due_date).toLocaleDateString()}`:'',priority:'info',time:a.added_at,courseId:a.course_id})),
       ...(cas.data||[]).map(a=>({id:a.id,type:'ca',title:`${a.type}: ${a.title}`,body:a.date?`On ${new Date(a.date).toLocaleDateString()}`:'',priority:'info',time:a.added_at,courseId:a.course_id})),
     ].sort((a,b)=>new Date(b.time)-new Date(a.time));
-    return{items,unseenCount:items.filter(i=>!seen.has(i.id)&&(i.pinned||true)).length,seen};
+    return{items,unseenCount:items.filter(i=>!seen.has(i.id)).length,seen};
   }catch{return{items:[],unseenCount:0,seen:new Set()};}
 }
 async function dbLoadAssignments(courseId){try{const{data}=await supabase.from('assignments').select('*').eq('course_id',courseId).order('added_at',{ascending:false});return data||[];}catch{return[];}}
@@ -1322,11 +1322,12 @@ function Chatbot({context,courses,user,subCfg={}}){
     if(!msg||loading)return;
 
     // Rate limit free users (not admins/superusers, not assignment mode)
-    const isFree=!user?.isGuest&&(user?.subscription_tier||'free')==='free'&&user?.role!==ROLE.SUPERUSER&&user?.role!==ROLE.ADMIN;
+    const isFree=!user?.isGuest&&(user?.subscription_tier||'free')==='free'&&user?.role!==ROLE.SUPERUSER;
     if(isFree&&!assignmentCtx){
       const limit=parseInt(subCfg?.free_ai_messages_per_day||'5');
-      const getCount=()=>{try{const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const today=new Date().toDateString();return s.date===today?s.count||0:0;}catch{return 0;}};
-      const incCount=()=>{try{const today=new Date().toDateString();const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const count=(s.date===today?s.count||0:0)+1;localStorage.setItem('sh-ai-msgs',JSON.stringify({date:today,count}));}catch{}};
+      const getMonth=()=>new Date().toISOString().slice(0,7); // "2025-04"
+      const getCount=()=>{try{const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const m=getMonth();return s.month===m?s.count||0:0;}catch{return 0;}};
+      const incCount=()=>{try{const m=getMonth();const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const count=(s.month===m?s.count||0:0)+1;localStorage.setItem('sh-ai-msgs',JSON.stringify({month:m,count}));}catch{}};
       const used=getCount();
       if(used>=limit){
         setMessages(m=>[...m,{role:'user',content:msg},{role:'assistant',content:`⚠️ You've used all ${limit} free AI messages for today.\n\nUpgrade to Pro for unlimited AI chat — tap ⭐ Upgrade in the top bar.`}]);
@@ -1372,7 +1373,19 @@ function Chatbot({context,courses,user,subCfg={}}){
         <div style={{display:'flex',alignItems:'center',gap:9}}>
           <div style={{width:28,height:28,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>🤖</div>
           <div>
-            <div style={{fontSize:13,fontWeight:600,color:'var(--text)',lineHeight:1}}>StudyBot</div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{fontSize:13,fontWeight:600,color:'var(--text)',lineHeight:1}}>StudyBot</div>
+              {(()=>{
+                const isFreeC=!user?.isGuest&&user?.role!==ROLE.SUPERUSER&&(user?.subscription_tier||'free')==='free';
+                if(!isFreeC||assignmentCtx) return null;
+                const limit=parseInt(subCfg?.free_ai_messages_per_month||'5');
+                const used=(()=>{try{const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const m=new Date().toISOString().slice(0,7);return s.month===m?s.count||0:0;}catch{return 0;}})();
+                const left=Math.max(0,limit-used);
+                return <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:left===0?'#f05050':left<=2?'#f9a84f':'#8892a4',background:'var(--surface)',borderRadius:4,padding:'1px 6px'}}>
+                  {left}/{limit} this month
+                </span>;
+              })()}
+            </div>
             <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:assignmentCtx?'#f9a84f':'#4f9cf9',letterSpacing:1}}>
               {assignmentCtx?'📋 ASSIGNMENT MODE · GROQ':'AI TUTOR · GROQ'}
             </div>
@@ -1465,7 +1478,7 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
     try{
       const suResult = await checkSuperuser(f.username, f.password);
       if(suResult){
-        onLogin({username:f.username.toLowerCase(),displayName:'Owner',role:ROLE.SUPERUSER});
+        onLogin({username:f.username.toLowerCase(),displayName:'Owner',role:ROLE.SUPERUSER,accountType:'superuser',subscription_tier:'pro'});
         return;
       }
     }catch{}
@@ -1475,7 +1488,7 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
       const users=await dbLoadUsers();const user=users.find(u=>u.username.toLowerCase()===f.username.toLowerCase());
       if(!user||user.pw_hash!==hashStr(f.password)){setErrs({password:'Incorrect username or password.'});setLoading(false);return;}
       const role=await resolveRole(user.username);
-      onLogin({username:user.username,displayName:user.display_name||user.username,year:user.year,role,accountType:user.account_type||'student'});
+      onLogin({username:user.username,displayName:user.display_name||user.username,year:user.year,role,accountType:user.account_type||'student',subscription_tier:user.subscription_tier||'free'});
     }catch{setErrs({password:'Connection error. Try again.'});setLoading(false);}
   };
 
@@ -1740,7 +1753,7 @@ const FORMAT_INFO = {
 };
 
 /* ═══════════════ AI CONFIRMATION MODAL ═══════════════ */
-function AiConfirmModal({aiResult,courses,defaultYear,defaultSem,defaultDept,onConfirm,onCancel}){
+function AiConfirmModal({aiResult,courses,dupWarning,defaultYear,defaultSem,defaultDept,onConfirm,onCancel}){
   const[editCourse,setEditCourse]=useState(normalizeCourseCode(aiResult.courseName||''));
   const[editTitle,setEditTitle]=useState(aiResult.chapterTitle||aiResult.title||'');
   const[saveAs,setSaveAs]=useState(aiResult._type==='assignment'?'assignment':aiResult._type==='ca'?'ca':'course');
@@ -1776,6 +1789,35 @@ function AiConfirmModal({aiResult,courses,defaultYear,defaultSem,defaultDept,onC
             <div style={{fontSize:11,color:'var(--muted)',marginTop:1}}>Review what AI detected — edit anything before saving.</div>
           </div>
         </div>
+
+        {/* ── Duplicate warning ── */}
+        {dupWarning&&(
+          <div className="slide-down" style={{background:dupWarning.exact?'rgba(240,80,80,.08)':'rgba(249,168,79,.07)',border:`1px solid ${dupWarning.exact?'rgba(240,80,80,.35)':'rgba(249,168,79,.3)'}`,borderRadius:10,padding:'12px 14px',marginBottom:14}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <span style={{fontSize:16}}>{dupWarning.exact?'🚫':'⚠️'}</span>
+              <div style={{fontSize:12,fontWeight:700,color:dupWarning.exact?'#f05050':'#f9a84f'}}>
+                {dupWarning.exact?'Exact duplicate detected':'Possible duplicate detected'}
+              </div>
+            </div>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,lineHeight:1.5}}>
+              {dupWarning.exact
+                ?'This course appears to already exist in StudyHub. Submitting will require superuser approval to avoid duplicates.'
+                :`Similar course content found. The superuser will be notified and must approve before this is saved.`}
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:5}}>
+              {dupWarning.matches.map((m,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:8,background:'var(--surface)',borderRadius:7,padding:'6px 10px'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:YEAR_COLORS[m.year]||'#4f9cf9',background:YEAR_BG[m.year]||'rgba(79,156,249,.1)',borderRadius:4,padding:'1px 6px',flexShrink:0}}>Yr{m.year}</span>
+                  <span style={{fontSize:11,color:'var(--text)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.chapterTitle}</span>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',flexShrink:0}}>{m.courseName}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{marginTop:8,fontSize:10,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5}}>
+              ⚡ This upload will be flagged for superuser review regardless of your role.
+            </div>
+          </div>
+        )}
 
         {/* AI classification badge */}
         <div style={{background:'rgba(168,249,79,.07)',border:'1px solid rgba(168,249,79,.2)',borderRadius:8,padding:'8px 13px',marginBottom:18,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
@@ -2144,9 +2186,37 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
   const[activeFilter,setActiveFilter]=useState('All');
   const[filterInfo,setFilterInfo]=useState(null);
   const[pendingAiResult,setPendingAiResult]=useState(null); // holds AI result waiting for confirm
+  const[dupWarning,setDupWarning]=useState(null); // {exact:bool, matches:[{id,chapterTitle,courseName,year,semester}]}
   const fileRef=useRef();
 
   const copyPrompt=()=>{navigator.clipboard.writeText(JSON_PROMPT);setCopied(true);setTimeout(()=>setCopied(false),2000);};
+
+  // Similarity check: compares a candidate against existing courses
+  const checkDuplicates=useCallback((chapterTitle='',courseName='')=>{
+    if(!courses.length) return null;
+    const normT=chapterTitle.toLowerCase().replace(/[^a-z0-9\s]/g,'').trim();
+    const normC=courseName.toLowerCase().replace(/[^a-z0-9\s]/g,'').trim();
+    const words=t=>new Set(t.split(/\s+/).filter(w=>w.length>3));
+    const jaccard=(a,b)=>{
+      const setA=words(a),setB=words(b);
+      const intersection=[...setA].filter(x=>setB.has(x)).length;
+      const union=new Set([...setA,...setB]).size;
+      return union===0?0:intersection/union;
+    };
+    const matches=[];
+    for(const c of courses){
+      const ct=(c.chapterTitle||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').trim();
+      const cn=(c.courseName||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').trim();
+      const titleSim=jaccard(normT,ct);
+      const courseSim=jaccard(normC,cn);
+      const exact=normT===ct&&normC===cn;
+      if(exact||titleSim>0.6){
+        matches.push({...c,titleSim,exact});
+      }
+    }
+    if(!matches.length) return null;
+    return{exact:matches.some(m=>m.exact),matches:matches.slice(0,3)};
+  },[courses]);
 
   const saveEntry=async(data,autoDetected)=>{
     if(!data.chapterTitle) throw new Error('Missing chapterTitle in response');
@@ -2216,6 +2286,8 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
       // Show confirmation modal instead of auto-saving
       setStatus('idle');setProgress('');
       const detected=detectMetadata(data);
+      const dup=checkDuplicates(data.chapterTitle,data.courseName);
+      setDupWarning(dup);
       setPendingAiResult({...data,_detectedYear:detected.year,_detectedSem:detected.semester,_detectedDept:detected.department});
     }catch(e){
       const msg=e.message||'Unknown error';
@@ -2234,6 +2306,8 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
       const data=safeParse(pasteText.replace(/```json|```/g,'').trim());
       if(!data.chapterTitle) throw new Error('Missing chapterTitle');
       const detected=detectMetadata(data);
+      const dup=checkDuplicates(data.chapterTitle,data.courseName);
+      setDupWarning(dup);
       setPendingAiResult({...data,_type:'course',_detectedYear:detected.year,_detectedSem:detected.semester,_detectedDept:detected.department});
     }catch(e){setError('Invalid JSON: '+e.message);setStatus('idle');}
   };
@@ -2241,6 +2315,8 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
   const handleConfirm=async(confirmed)=>{
     setPendingAiResult(null);
     const saveAs=confirmed._saveAs||'course';
+    const isDup=!!dupWarning;
+    setDupWarning(null);
     setStatus('processing');setProgress('Saving…');
     try{
       if(saveAs==='assignment'){
@@ -2257,10 +2333,23 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
         setSmartSortMsg('🔗 Saved as Resource');
         setStatus('done');return;
       }
-      // Study guide — save with user-confirmed metadata
+      // Study guide — if duplicate detected, force it to approval queue regardless of role
       const autoDetected={year:confirmed._year,semester:confirmed._semester,department:confirmed._department};
-      await saveEntry(confirmed,autoDetected);
-      setSmartSortMsg(`✨ Saved: ${confirmed.courseName||''} · Yr ${confirmed._year} · Sem ${confirmed._semester}`);
+      if(isDup&&!adminMode){
+        // Force to pending queue even for superuser-direct uploads — superuser reviews their own
+        const id=`c-${Date.now()}-dup`;
+        const entry={id,year:confirmed._year,semester:confirmed._semester,department:confirmed._department,
+          courseName:confirmed.courseName||'Course',chapterTitle:confirmed.chapterTitle,
+          conceptCount:confirmed.keyConcepts?.length||0,termCount:confirmed.definitions?.length||0,
+          qCount:confirmed.questions?.length||0,addedAt:new Date().toLocaleDateString()};
+        await dbSubmitPending('add_course',requestedBy||'superuser',{entry,courseData:confirmed},
+          `⚠️ DUPLICATE WARNING: Similar course detected — "${dupWarning?.matches?.[0]?.chapterTitle||'unknown'}". Requires superuser review.`);
+        setSmartSortMsg('⚠️ Potential duplicate — flagged for superuser review before saving.');
+        setStatus('done');
+      } else {
+        await saveEntry(confirmed,autoDetected);
+        setSmartSortMsg(`✨ Saved: ${confirmed.courseName||''} · Yr ${confirmed._year} · Sem ${confirmed._semester}`);
+      }
     }catch(e){
       setError('Save failed: '+e.message);setStatus('idle');setProgress('');
     }
@@ -2275,9 +2364,10 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
       <AiConfirmModal
         aiResult={pendingAiResult}
         courses={courses}
+        dupWarning={dupWarning}
         defaultYear={year} defaultSem={semester} defaultDept={departments[0]||DEPARTMENTS[0]||'Computer Science'}
         onConfirm={handleConfirm}
-        onCancel={()=>{setPendingAiResult(null);setStatus('idle');}}
+        onCancel={()=>{setPendingAiResult(null);setDupWarning(null);setStatus('idle');}}
       />
     )}
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -2677,6 +2767,7 @@ function AnnouncementsTab({courseId,user,onNew}){
 function NotificationBell({user,courses,onNavigate}){
   const[open,setOpen]=useState(false);
   const[notifs,setNotifs]=useState({items:[],unseenCount:0,seen:new Set()});
+  const[notifFilter,setNotifFilter]=useState('all');
   const[permState,requestPerm]=useNotificationPermission();
   const[showPermBanner,setShowPermBanner]=useState(false);
   const[askingPerm,setAskingPerm]=useState(false); // blocks outside-click while dialog is open
@@ -2694,6 +2785,17 @@ function NotificationBell({user,courses,onNavigate}){
 
   useEffect(()=>{load();},[]);
   useEffect(()=>{if(open)load();},[open]);
+
+  // Realtime: refresh bell count when assignments, CAs or announcements change
+  useEffect(()=>{
+    if(!user||user.isGuest) return;
+    const ch=supabase.channel('rt-notif-bell')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'assignments'},()=>load())
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'course_cas'},()=>load())
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'announcements'},()=>load())
+      .subscribe();
+    return()=>supabase.removeChannel(ch);
+  },[user?.username]);
 
   // Close on outside click — but NOT while the permission dialog is open
   useEffect(()=>{
@@ -2735,8 +2837,10 @@ function NotificationBell({user,courses,onNavigate}){
     }
   };
 
-  const courseMap=Object.fromEntries((courses||[]).map(c=>[c.id,c.courseName||c.chapterTitle]));
+  const courseMap=Object.fromEntries((courses||[]).map(c=>[c.id,c.chapterTitle?`${c.courseName} — ${c.chapterTitle}`:c.courseName]));
   const count=notifs.unseenCount;
+  const filteredNotifs=notifFilter==='all'?notifs.items
+    :notifs.items.filter(i=>i.type===notifFilter||(notifFilter==='unseen'&&!notifs.seen.has(i.id)));
 
   return(
     <div ref={bellRef} style={{position:'relative'}} className="no-print">
@@ -2819,6 +2923,7 @@ function NotificationBell({user,courses,onNavigate}){
             }}>
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:'var(--text)',letterSpacing:1,fontWeight:700}}>
                 🔔 NOTIFICATIONS
+                {count>0&&<span style={{marginLeft:8,background:'#f05050',color:'#fff',borderRadius:10,padding:'1px 7px',fontSize:9}}>{count}</span>}
               </div>
               <div style={{display:'flex',gap:10,alignItems:'center'}}>
                 {permState==='default'&&(
@@ -2845,16 +2950,25 @@ function NotificationBell({user,courses,onNavigate}){
               </div>
             </div>
 
+            {/* Filter tabs */}
+            <div style={{display:'flex',gap:0,borderBottom:'1px solid var(--border)',background:'var(--surface)',flexShrink:0}}>
+              {[{id:'all',label:'All'},{id:'unseen',label:'Unread'},{id:'announcement',label:'📢'},{id:'assignment',label:'📋'},{id:'ca',label:'📝'}].map(f=>(
+                <button key={f.id} onClick={()=>setNotifFilter(f.id)}
+                  style={{flex:1,padding:'8px 4px',border:'none',borderBottom:notifFilter===f.id?'2px solid #f9a84f':'2px solid transparent',background:'none',color:notifFilter===f.id?'#f9a84f':'var(--muted)',cursor:'pointer',fontSize:11,fontWeight:notifFilter===f.id?700:400,whiteSpace:'nowrap'}}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
             {/* Items list */}
             <div style={{overflowY:'auto',flex:1,paddingBottom:'env(safe-area-inset-bottom,12px)'}}>
-              {notifs.items.length===0&&(
+              {filteredNotifs.length===0&&(
                 <div style={{padding:'40px 20px',textAlign:'center',color:'var(--muted)',fontSize:13}}>
                   <div style={{fontSize:36,marginBottom:10}}>🔕</div>
                   <div style={{fontWeight:600,marginBottom:4}}>No notifications yet</div>
                   <div style={{fontSize:11}}>New assignments, CAs and announcements will appear here</div>
                 </div>
               )}
-              {notifs.items.map((n,i)=>{
+              {filteredNotifs.map((n,i)=>{
                 const p=PRIORITY[n.priority]||PRIORITY.info;
                 const unseen=!notifs.seen.has(n.id);
                 // Map notification type to the tab it should open
@@ -3102,11 +3216,14 @@ function CATab({courseId,user}){
 }
 
 /* ═══════════════ COMMUNITY BOARD ═══════════════ */
-function CommunityBoard({courseId,user}){
+function CommunityBoard({courseId,user,subCfg={}}){
   const[posts,setPosts]=useState([]);const[myVotes,setMyVotes]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',url:'',description:''});const[loading,setLoading]=useState(false);
   const isPriv=user.role!==ROLE.USER;
   const isGuest=user.isGuest===true;
+  const freePosting=(subCfg?.free_community_posting||'false')==='true';
+  const isFree=!isGuest&&user.role!==ROLE.SUPERUSER&&(user.subscription_tier||'free')==='free';
+  const canPost=!isGuest&&(!isFree||freePosting||isPriv);
 
   const load=async()=>{const[p,v]=await Promise.all([dbLoadCommunity(courseId),dbGetMyVotes(user.username)]);setPosts(p);setMyVotes(v);};
   useEffect(()=>{load();},[courseId]);
@@ -3138,6 +3255,14 @@ function CommunityBoard({courseId,user}){
         <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'14px 16px',marginBottom:16,display:'flex',gap:10,alignItems:'center'}}>
           <span style={{fontSize:18}}>🔒</span>
           <div><div style={{fontSize:13,color:'#f9a84f',fontWeight:600,marginBottom:2}}>Create an account to participate</div><div style={{fontSize:12,color:'var(--muted)'}}>Guests can read posts but cannot submit or upvote.</div></div>
+        </div>
+      ):!canPost?(
+        <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'14px 16px',marginBottom:16,display:'flex',gap:10,alignItems:'center'}}>
+          <span style={{fontSize:18}}>⭐</span>
+          <div>
+            <div style={{fontSize:13,color:'#f9a84f',fontWeight:600,marginBottom:2}}>Pro feature — community posting</div>
+            <div style={{fontSize:12,color:'var(--muted)'}}>Upgrade to Pro to share resources and participate in the community board.</div>
+          </div>
         </div>
       ):(
         <button onClick={()=>setShowForm(s=>!s)} style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.25)',borderRadius:8,color:'#4f9cf9',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:600,marginBottom:16}}>
@@ -3275,10 +3400,31 @@ function DefinitionRow({def,isLast}){
   );
 }
 
-const ALL_TABS=[{id:'announcements',label:'📢 Announcements'},{id:'concepts',label:'Key Concepts'},{id:'definitions',label:'Definitions'},{id:'mechanisms',label:'Mechanisms'},{id:'algorithms',label:'Algorithms'},{id:'takeaways',label:'Takeaways'},{id:'questions',label:'Practice Q&A'},{id:'assignments',label:'📋 Assignments'},{id:'ca',label:'📝 CA / Tests'},{id:'resources',label:'Resources'},{id:'community',label:'Community'}];
+const ALL_TABS=[
+  {id:'announcements', label:'📢 Notices'},
+  {id:'concepts',      label:'💡 Concepts'},
+  {id:'definitions',   label:'📖 Definitions'},
+  {id:'flashcards',    label:'🃏 Flashcards'},
+  {id:'quiz',          label:'🎯 Quiz'},
+  {id:'mechanisms',    label:'⚙️ Mechanisms'},
+  {id:'algorithms',    label:'🔢 Algorithms'},
+  {id:'takeaways',     label:'✨ Takeaways'},
+  {id:'questions',     label:'❓ Q&A'},
+  {id:'assignments',   label:'📋 Assignments'},
+  {id:'ca',            label:'📝 CA / Tests'},
+  {id:'resources',     label:'🔗 Resources'},
+  {id:'community',     label:'💬 Community'},
+];
 
-function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses}){
+function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses,subCfg={}}){
   const[tab,setTab]=useState(course.initialTab||'announcements');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
+  // Flashcard state
+  const[fcIdx,setFcIdx]=useState(0);const[fcFlipped,setFcFlipped]=useState(false);const[fcDeck,setFcDeck]=useState('definitions');const[fcKnown,setFcKnown]=useState(new Set());
+  // Quiz state
+  const[quizStarted,setQuizStarted]=useState(false);const[quizIdx,setQuizIdx]=useState(0);const[quizChoice,setQuizChoice]=useState(null);const[quizScore,setQuizScore]=useState(0);const[quizLog,setQuizLog]=useState([]);const[quizDone,setQuizDone]=useState(false);const[quizOpts,setQuizOpts]=useState([]);
+  const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' = fill the gap
+  const[fillInput,setFillInput]=useState('');const[fillRevealed,setFillRevealed]=useState(false);
+  const[explainIdx,setExplainIdx]=useState(null);const[explainText,setExplainText]=useState({});const[explainLoading,setExplainLoading]=useState(false);
   const d=course.data;const cp=progress[course.id]||{viewed:false,openedQs:[]};const isPriv=user.role!==ROLE.USER;
   const isBookmarked=bookmarks.includes(course.id);
 
@@ -3290,10 +3436,67 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
   const totalQ=d.questions?.length||0;const pct=totalQ===0?0:Math.round(cp.openedQs.length/totalQ*100);
   const hasAlgo=d.algorithms?.length>0;
-  const tabs=ALL_TABS.filter(t=>t.id!=='algorithms'||hasAlgo);
+  const tabs=ALL_TABS.filter(t=>{
+    if(t.id==='algorithms'&&!hasAlgo) return false;
+    if(t.id==='flashcards'&&!(d.definitions?.length||d.keyConcepts?.length)) return false;
+    if(t.id==='quiz'&&!totalQ) return false;
+    return true;
+  });
   const filteredQ=(d.questions||[]).filter(q=>!filter||q.question.toLowerCase().includes(filter.toLowerCase()));
   const accent=YEAR_COLORS[course.year]||'#4f9cf9';
   const chatCtx={courseName:d.courseName,chapterTitle:d.chapterTitle,summary:[d.keyConcepts?.slice(0,5).map(c=>c.title).join(', '),d.chapters?.map(c=>c.name).join(', ')].filter(Boolean).join(' | ')};
+
+  // Flashcard deck
+  const fcCards=useMemo(()=>{
+    if(fcDeck==='definitions') return(d.definitions||[]).map(df=>({front:df.term,back:df.definition,color:'#4f9cf9'}));
+    return(d.keyConcepts||[]).map(c=>({front:c.title,back:c.description,color:(COLOR_MAP[c.color]||COLOR_MAP.blue).bar}));
+  },[fcDeck,d.definitions,d.keyConcepts]);
+  const fcCard=fcCards[fcIdx]||null;
+  const fcTotal=fcCards.length;
+  const fcKnownCount=fcKnown.size;
+
+  // Quiz option generator
+  const buildQuizOpts=useCallback((idx)=>{
+    const qs=d.questions||[];if(!qs[idx])return[];
+    const correct=qs[idx].answer;
+    const pool=qs.filter((_,i)=>i!==idx).map(q=>q.answer);
+    const shuffled=pool.sort(()=>Math.random()-.5).slice(0,3);
+    const opts=[...shuffled,correct].sort(()=>Math.random()-.5);
+    return opts;
+  },[d.questions]);
+
+  const startQuiz=()=>{setQuizStarted(true);setQuizIdx(0);setQuizChoice(null);setFillInput('');setFillRevealed(false);setQuizScore(0);setQuizLog([]);setQuizDone(false);setExplainIdx(null);setExplainText({});if(quizMode==='mc')setQuizOpts(buildQuizOpts(0));};
+  const nextQuiz=()=>{
+    if(quizChoice===null)return;
+    const qs=d.questions||[];const correct=qs[quizIdx].answer;const isCorrect=quizChoice===correct;
+    const newScore=quizScore+(isCorrect?1:0);
+    const newLog=[...quizLog,{q:qs[quizIdx].question,correct,chosen:quizChoice,ok:isCorrect}];
+    if(quizIdx+1>=qs.length){setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);}
+    else{setQuizScore(newScore);setQuizLog(newLog);setQuizIdx(quizIdx+1);setQuizChoice(null);if(quizMode==='mc')setQuizOpts(buildQuizOpts(quizIdx+1));}
+  };
+  const nextFill=()=>{
+    if(!fillRevealed)return;
+    const qs=d.questions||[];const correct=qs[quizIdx].answer;
+    const trimmed=fillInput.trim().toLowerCase();const correctTrim=correct.trim().toLowerCase();
+    const isCorrect=trimmed===correctTrim||correctTrim.includes(trimmed)&&trimmed.length>5;
+    const newScore=quizScore+(isCorrect?1:0);
+    const newLog=[...quizLog,{q:qs[quizIdx].question,correct,chosen:fillInput.trim()||'(no answer)',ok:isCorrect}];
+    if(quizIdx+1>=qs.length){setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);}
+    else{setQuizScore(newScore);setQuizLog(newLog);setQuizIdx(quizIdx+1);setFillInput('');setFillRevealed(false);}
+  };
+  const askExplanation=async(logItem,idx)=>{
+    if(explainText[idx])return; // already loaded
+    setExplainIdx(idx);setExplainLoading(true);
+    try{
+      const prompt=`A student got this question wrong in a quiz about "${d.chapterTitle}" (${d.courseName}).\n\nQuestion: ${logItem.q}\nCorrect answer: ${logItem.correct}\nStudent's answer: ${logItem.chosen}\n\nGive a clear, concise explanation (3-5 sentences) of why the correct answer is right. Be encouraging and educational. No preamble.`;
+      const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:prompt}],context:{mode:'explanation',courseName:d.courseName,chapterTitle:d.chapterTitle}})});
+      const data=await res.json();
+      setExplainText(prev=>({...prev,[idx]:data.reply||'No explanation available.'}));
+    }catch{
+      setExplainText(prev=>({...prev,[idx]:'Could not load explanation — check your connection.'}));
+    }
+    setExplainLoading(false);
+  };
 
   return(
     <div className="course-page" style={{maxWidth:960,margin:'0 auto',padding:'28px 20px 88px'}}>
@@ -3333,9 +3536,361 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       </div>
 
       {/* Tab content */}
-      {tab==='concepts'&&<div className="fade-up"><SectionLabel>Key Concepts</SectionLabel><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))',gap:12}}>{(d.keyConcepts||[]).map((c,i)=><div key={i} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'15px 17px',borderLeft:`3px solid ${(COLOR_MAP[c.color]||COLOR_MAP.blue).bar}`}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'var(--text)',marginBottom:5}}>{c.title}</div><p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.65,margin:0}}>{c.description}</p></div>)}</div></div>}
+      {tab==='concepts'&&<div className="fade-up">
+        <SectionLabel>Key Concepts</SectionLabel>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))',gap:12}}>
+          {(d.keyConcepts||[]).map((c,i)=>{
+            const col=(COLOR_MAP[c.color]||COLOR_MAP.blue).bar;
+            return(
+              <div key={i} className={`stagger-${Math.min(i%4+1,4)}`}
+                style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 18px',borderLeft:`3px solid ${col}`,position:'relative',overflow:'hidden'}}>
+                <div style={{position:'absolute',top:0,right:0,width:60,height:60,borderRadius:'0 12px 0 60px',background:`${col}08`}}/>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:col,marginBottom:6,letterSpacing:.5}}>{c.title}</div>
+                <p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.7,margin:0}}>{c.description}</p>
+              </div>
+            );
+          })}
+        </div>
+        {!(d.keyConcepts?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No key concepts in this course.</div>}
+      </div>}
 
-      {tab==='definitions'&&<div className="fade-up"><SectionLabel>Terms & Definitions</SectionLabel><div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>{(d.definitions||[]).map((def,i)=><DefinitionRow key={i} def={def} isLast={i===d.definitions.length-1}/>)}</div></div>}
+      {tab==='definitions'&&<div className="fade-up">
+        <SectionLabel>Terms & Definitions</SectionLabel>
+        <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+          {(d.definitions||[]).map((def,i)=><DefinitionRow key={i} def={def} isLast={i===d.definitions.length-1}/>)}
+        </div>
+        {!(d.definitions?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No definitions in this course.</div>}
+      </div>}
+
+      {/* ── Flashcards ───────────────────────────────────────────────── */}
+      {tab==='flashcards'&&<div className="fade-up">
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:10}}>
+          <SectionLabel>Flashcards</SectionLabel>
+          <div style={{display:'flex',gap:6}}>
+            {[{id:'definitions',label:'📖 Terms'},{id:'concepts',label:'💡 Concepts'}].map(dk=>(
+              <button key={dk.id} onClick={()=>{setFcDeck(dk.id);setFcIdx(0);setFcFlipped(false);setFcKnown(new Set());}}
+                style={{background:fcDeck===dk.id?'rgba(79,156,249,.15)':'var(--surface)',border:`1px solid ${fcDeck===dk.id?'rgba(79,156,249,.4)':'var(--border)'}`,borderRadius:8,color:fcDeck===dk.id?'#4f9cf9':'var(--muted)',cursor:'pointer',padding:'6px 12px',fontSize:11,fontWeight:fcDeck===dk.id?700:400}}>
+                {dk.label} ({fcDeck===dk.id?fcTotal:(dk.id==='definitions'?(d.definitions?.length||0):(d.keyConcepts?.length||0))})
+              </button>
+            ))}
+          </div>
+        </div>
+        {fcTotal===0?(
+          <div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No cards in this deck.</div>
+        ):(
+          <>
+            {/* Progress bar */}
+            <div style={{marginBottom:14}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                <Mono color="var(--muted)" size={9}>{fcIdx+1} / {fcTotal}</Mono>
+                <Mono color="#7fda96" size={9}>{fcKnownCount} known · {fcTotal-fcKnownCount} to review</Mono>
+              </div>
+              <div style={{height:4,background:'var(--border)',borderRadius:2}}>
+                <div style={{height:'100%',background:'#7fda96',borderRadius:2,width:`${(fcKnownCount/fcTotal)*100}%`,transition:'width .3s'}}/>
+              </div>
+            </div>
+
+            {/* Card */}
+            <div onClick={()=>setFcFlipped(f=>!f)}
+              style={{cursor:'pointer',minHeight:200,background:'var(--card)',border:`2px solid ${fcCard?.color||'#4f9cf9'}40`,borderRadius:16,padding:'32px 28px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center',position:'relative',userSelect:'none',boxShadow:`0 4px 24px ${fcCard?.color||'#4f9cf9'}18`,transition:'all .2s'}}>
+              <div style={{position:'absolute',top:12,right:14,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>
+                {fcFlipped?'BACK — tap to flip':'FRONT — tap to flip'}
+              </div>
+              {!fcFlipped?(
+                <>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:fcCard?.color||'#4f9cf9',letterSpacing:2,marginBottom:16,fontWeight:700}}>
+                    {fcDeck==='definitions'?'TERM':'CONCEPT'}
+                  </div>
+                  <div style={{fontSize:20,fontWeight:700,color:'var(--text)',lineHeight:1.4}}>{fcCard?.front}</div>
+                </>
+              ):(
+                <>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',letterSpacing:2,marginBottom:16,fontWeight:700}}>ANSWER</div>
+                  <div style={{fontSize:14,color:'var(--text)',lineHeight:1.7}}>{fcCard?.back}</div>
+                </>
+              )}
+            </div>
+
+            {/* Navigation */}
+            <div style={{display:'flex',gap:10,marginTop:14,justifyContent:'center',flexWrap:'wrap'}}>
+              <button onClick={()=>{if(fcIdx>0){setFcIdx(fcIdx-1);setFcFlipped(false);}}}
+                disabled={fcIdx===0}
+                style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,color:fcIdx===0?'var(--border)':'var(--muted)',cursor:fcIdx===0?'not-allowed':'pointer',padding:'8px 18px',fontSize:13}}>
+                ← Prev
+              </button>
+              <button onClick={()=>{
+                const newKnown=new Set(fcKnown);newKnown.add(fcIdx);setFcKnown(newKnown);
+                if(fcIdx<fcTotal-1){setFcIdx(fcIdx+1);setFcFlipped(false);}
+              }}
+                style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:9,color:'#7fda96',cursor:'pointer',padding:'8px 20px',fontSize:13,fontWeight:700}}>
+                ✓ Got it
+              </button>
+              <button onClick={()=>{
+                const newKnown=new Set(fcKnown);newKnown.delete(fcIdx);setFcKnown(newKnown);
+                if(fcIdx<fcTotal-1){setFcIdx(fcIdx+1);setFcFlipped(false);}
+              }}
+                style={{background:'rgba(240,80,80,.08)',border:'1px solid rgba(240,80,80,.3)',borderRadius:9,color:'#f05050',cursor:'pointer',padding:'8px 20px',fontSize:13,fontWeight:700}}>
+                ✗ Review
+              </button>
+              <button onClick={()=>{if(fcIdx<fcTotal-1){setFcIdx(fcIdx+1);setFcFlipped(false);}}}
+                disabled={fcIdx===fcTotal-1}
+                style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,color:fcIdx===fcTotal-1?'var(--border)':'var(--muted)',cursor:fcIdx===fcTotal-1?'not-allowed':'pointer',padding:'8px 18px',fontSize:13}}>
+                Next →
+              </button>
+            </div>
+            {/* Reset */}
+            <div style={{textAlign:'center',marginTop:10}}>
+              <button onClick={()=>{setFcIdx(0);setFcFlipped(false);setFcKnown(new Set());}}
+                style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,textDecoration:'underline'}}>
+                Reset deck
+              </button>
+            </div>
+          </>
+        )}
+      </div>}
+
+      {/* ── Quiz mode ───────────────────────────────────────────────── */}
+      {tab==='quiz'&&<div className="fade-up">
+
+        {/* ── Start screen ─────────────────────────────────────────── */}
+        {!quizStarted&&!quizDone&&(
+          <div style={{maxWidth:420,margin:'0 auto',padding:'32px 20px'}}>
+            <div style={{textAlign:'center',marginBottom:28}}>
+              <div style={{fontSize:48,marginBottom:12}}>🎯</div>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)',marginBottom:6}}>Quiz Time</div>
+              <p style={{color:'var(--muted)',fontSize:13,lineHeight:1.6}}>{totalQ} questions · Instant feedback · AI explanations</p>
+            </div>
+
+            {/* Quiz type picker */}
+            <div style={{marginBottom:24}}>
+              <Mono color="var(--muted)" size={9}>CHOOSE QUIZ TYPE</Mono>
+              <div style={{display:'flex',flexDirection:'column',gap:10,marginTop:10}}>
+                {[
+                  {id:'mc',  icon:'🔘', title:'Multiple Choice', desc:'Pick the correct answer from 4 options'},
+                  {id:'fill',icon:'✏️', title:'Fill in the Gap',  desc:'Type the answer yourself — tests real recall'},
+                ].map(m=>(
+                  <button key={m.id} onClick={()=>setQuizMode(m.id)}
+                    style={{background:quizMode===m.id?'rgba(79,156,249,.1)':'var(--surface)',border:`2px solid ${quizMode===m.id?'#4f9cf9':'var(--border)'}`,borderRadius:14,padding:'14px 16px',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:14,transition:'all .15s'}}>
+                    <span style={{fontSize:22,flexShrink:0}}>{m.icon}</span>
+                    <div>
+                      <div style={{fontSize:14,fontWeight:700,color:quizMode===m.id?'#4f9cf9':'var(--text)',marginBottom:3}}>{m.title}</div>
+                      <div style={{fontSize:11,color:'var(--muted)',lineHeight:1.4}}>{m.desc}</div>
+                    </div>
+                    {quizMode===m.id&&<span style={{marginLeft:'auto',color:'#4f9cf9',fontSize:18,flexShrink:0}}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {totalQ<4&&quizMode==='mc'?(
+              <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',color:'#f9a84f',fontSize:12,textAlign:'center'}}>
+                Need at least 4 questions for Multiple Choice. This course has {totalQ}. Try Fill in the Gap instead.
+              </div>
+            ):(
+              <button onClick={startQuiz}
+                style={{width:'100%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',border:'none',borderRadius:12,color:'#fff',cursor:'pointer',padding:'15px 0',fontSize:15,fontWeight:700,boxShadow:'0 4px 20px rgba(79,156,249,.3)'}}>
+                Start {quizMode==='mc'?'Multiple Choice':'Fill in the Gap'} Quiz →
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── Active quiz ───────────────────────────────────────────── */}
+        {quizStarted&&!quizDone&&(()=>{
+          const qs=d.questions||[];const q=qs[quizIdx];if(!q)return null;
+          const revealed=quizMode==='mc'?quizChoice!==null:fillRevealed;
+          const correct=q.answer;
+          const mcCorrect=quizMode==='mc'&&quizChoice===correct;
+          const fillCorrect=quizMode==='fill'&&fillRevealed&&(fillInput.trim().toLowerCase()===correct.trim().toLowerCase()||correct.trim().toLowerCase().includes(fillInput.trim().toLowerCase())&&fillInput.trim().length>5);
+          const isWrong=revealed&&(quizMode==='mc'?!mcCorrect:!fillCorrect);
+
+          return(
+            <div>
+              {/* Progress bar */}
+              <div style={{marginBottom:18}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
+                  <Mono color="var(--muted)" size={9}>Q{quizIdx+1} / {qs.length}</Mono>
+                  <Mono color="#7fda96" size={9}>{quizScore} correct so far</Mono>
+                </div>
+                <div style={{height:5,background:'var(--border)',borderRadius:3}}>
+                  <div style={{height:'100%',background:'linear-gradient(90deg,#4f9cf9,#7f5ff9)',borderRadius:3,width:`${(quizIdx/qs.length)*100}%`,transition:'width .4s'}}/>
+                </div>
+              </div>
+
+              {/* Question card */}
+              <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'20px 18px',marginBottom:14}}>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#4f9cf9',letterSpacing:1,marginBottom:8,fontWeight:700,display:'flex',gap:8,alignItems:'center'}}>
+                  Q{quizIdx+1}
+                  <span style={{background:quizMode==='mc'?'rgba(79,156,249,.1)':'rgba(218,127,240,.1)',color:quizMode==='mc'?'#4f9cf9':'#da7ff0',borderRadius:4,padding:'1px 7px'}}>{quizMode==='mc'?'MULTIPLE CHOICE':'FILL IN THE GAP'}</span>
+                </div>
+                <div style={{fontSize:15,color:'var(--text)',fontWeight:500,lineHeight:1.65}}>{q.question}</div>
+              </div>
+
+              {/* Multiple choice options */}
+              {quizMode==='mc'&&(
+                <div style={{display:'flex',flexDirection:'column',gap:9,marginBottom:14}}>
+                  {quizOpts.map((opt,i)=>{
+                    const isChosen=quizChoice===opt;const isCorr=opt===correct;
+                    let bg='var(--surface)',bdr='var(--border)',col='var(--text)';
+                    if(revealed&&isCorr){bg='rgba(127,218,150,.1)';bdr='rgba(127,218,150,.5)';col='#7fda96';}
+                    else if(revealed&&isChosen&&!isCorr){bg='rgba(240,80,80,.08)';bdr='rgba(240,80,80,.4)';col='#f05050';}
+                    return(
+                      <button key={i} onClick={()=>{if(!quizChoice)setQuizChoice(opt);}}
+                        style={{background:bg,border:`1.5px solid ${bdr}`,borderRadius:11,color:col,cursor:quizChoice?'default':'pointer',padding:'13px 16px',textAlign:'left',fontSize:13,lineHeight:1.5,display:'flex',alignItems:'center',gap:12,transition:'all .15s'}}>
+                        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:revealed&&isCorr?'rgba(127,218,150,.2)':revealed&&isChosen&&!isCorr?'rgba(240,80,80,.2)':'var(--border)',color:revealed&&isCorr?'#7fda96':revealed&&isChosen&&!isCorr?'#f05050':'var(--muted)',borderRadius:4,padding:'2px 7px',flexShrink:0,fontWeight:700,minWidth:22,textAlign:'center'}}>
+                          {String.fromCharCode(65+i)}
+                        </span>
+                        <span style={{flex:1}}>{opt}</span>
+                        {revealed&&isCorr&&<span style={{fontSize:16,flexShrink:0}}>✓</span>}
+                        {revealed&&isChosen&&!isCorr&&<span style={{fontSize:16,flexShrink:0}}>✗</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Fill in the gap input */}
+              {quizMode==='fill'&&(
+                <div style={{marginBottom:14}}>
+                  <div style={{position:'relative'}}>
+                    <input
+                      value={fillInput}
+                      onChange={e=>!fillRevealed&&setFillInput(e.target.value)}
+                      onKeyDown={e=>{if(e.key==='Enter'&&!fillRevealed&&fillInput.trim())setFillRevealed(true);}}
+                      placeholder="Type your answer here…"
+                      style={{width:'100%',background:'var(--input-bg)',border:`1.5px solid ${fillRevealed?(fillCorrect?'rgba(127,218,150,.5)':'rgba(240,80,80,.4)'):'var(--border)'}`,borderRadius:11,padding:'13px 16px',color:'var(--text)',fontSize:13,outline:'none',fontFamily:"'DM Sans',sans-serif"}}
+                    />
+                  </div>
+                  {!fillRevealed&&(
+                    <button onClick={()=>{if(fillInput.trim())setFillRevealed(true);}}
+                      disabled={!fillInput.trim()}
+                      style={{marginTop:10,width:'100%',background:fillInput.trim()?'rgba(79,156,249,.12)':'var(--border)',border:`1px solid ${fillInput.trim()?'rgba(79,156,249,.35)':'transparent'}`,borderRadius:9,color:fillInput.trim()?'#4f9cf9':'var(--muted)',cursor:fillInput.trim()?'pointer':'not-allowed',padding:'10px 0',fontSize:13,fontWeight:600}}>
+                      Check Answer
+                    </button>
+                  )}
+                  {fillRevealed&&(
+                    <div style={{marginTop:10,background:fillCorrect?'rgba(127,218,150,.08)':'rgba(240,80,80,.06)',border:`1px solid ${fillCorrect?'rgba(127,218,150,.3)':'rgba(240,80,80,.25)'}`,borderRadius:10,padding:'12px 14px'}}>
+                      <div style={{fontSize:12,fontWeight:700,color:fillCorrect?'#7fda96':'#f05050',marginBottom:4}}>
+                        {fillCorrect?'✓ Correct!':'✗ Not quite'}
+                      </div>
+                      {!fillCorrect&&<div style={{fontSize:12,color:'var(--muted)'}}>Correct answer: <span style={{color:'#7fda96',fontWeight:600}}>{correct}</span></div>}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* AI Explanation button — shows when wrong */}
+              {revealed&&isWrong&&(
+                <div style={{marginBottom:14}}>
+                  {!explainText[quizIdx]?(
+                    <button onClick={()=>askExplanation({q:q.question,correct,chosen:quizMode==='mc'?quizChoice:fillInput},quizIdx)}
+                      disabled={explainLoading&&explainIdx===quizIdx}
+                      style={{display:'flex',alignItems:'center',gap:8,background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.25)',borderRadius:10,color:'#7fda96',cursor:'pointer',padding:'10px 16px',fontSize:12,fontWeight:600,width:'100%',justifyContent:'center'}}>
+                      {explainLoading&&explainIdx===quizIdx
+                        ?<><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Asking StudyBot…</>
+                        :<>🤖 Ask StudyBot to explain this</>}
+                    </button>
+                  ):(
+                    <div className="fade-in" style={{background:'rgba(79,156,249,.06)',border:'1px solid rgba(79,156,249,.2)',borderRadius:12,padding:'14px 16px'}}>
+                      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#4f9cf9',letterSpacing:1,marginBottom:8,fontWeight:700}}>🤖 STUDYBOT EXPLANATION</div>
+                      <p style={{fontSize:13,color:'var(--text)',lineHeight:1.75,margin:0}}>{explainText[quizIdx]}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Next button */}
+              {revealed&&(
+                <div style={{textAlign:'center'}}>
+                  <button onClick={quizMode==='mc'?nextQuiz:nextFill}
+                    style={{background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',border:'none',borderRadius:10,color:'#fff',cursor:'pointer',padding:'12px 36px',fontSize:14,fontWeight:700,boxShadow:'0 3px 14px rgba(79,156,249,.3)'}}>
+                    {quizIdx+1>=qs.length?'See Results →':'Next Question →'}
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── Results screen ────────────────────────────────────────── */}
+        {quizDone&&(()=>{
+          const total=d.questions?.length||0;
+          const pctScore=Math.round(quizScore/total*100);
+          const grade=pctScore>=80?'🏆 Excellent!':pctScore>=60?'👍 Good job!':pctScore>=40?'📚 Keep studying':'💪 Keep at it!';
+          const missed=quizLog.filter(l=>!l.ok);
+          return(
+            <div>
+              {/* Score card */}
+              <div style={{textAlign:'center',padding:'32px 16px 24px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,marginBottom:20}}>
+                <div style={{fontSize:52,marginBottom:10}}>{pctScore>=80?'🏆':pctScore>=60?'⭐':'📚'}</div>
+                <div style={{fontFamily:"'DM Serif Display',serif",fontSize:32,color:'var(--text)',marginBottom:4}}>{quizScore}<span style={{fontSize:18,color:'var(--muted)'}}>/{total}</span></div>
+                <div style={{fontSize:14,color:pctScore>=80?'#7fda96':pctScore>=60?'#f9a84f':'#f05050',fontWeight:700,marginBottom:4}}>{pctScore}%</div>
+                <div style={{fontSize:13,color:'var(--muted)'}}>{grade}</div>
+                <div style={{marginTop:10,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:1}}>
+                  {quizMode==='mc'?'MULTIPLE CHOICE':'FILL IN THE GAP'} · {total} QUESTIONS
+                </div>
+              </div>
+
+              {/* Missed questions with AI explanations */}
+              {missed.length>0&&(
+                <div style={{marginBottom:20}}>
+                  <Mono color="#f05050" size={9}>REVIEW — {missed.length} MISSED</Mono>
+                  <div style={{marginTop:10,display:'flex',flexDirection:'column',gap:12}}>
+                    {missed.map((l,i)=>{
+                      const logIdx=quizLog.findIndex(x=>x===l);
+                      return(
+                        <div key={i} style={{background:'var(--card)',border:'1px solid rgba(240,80,80,.2)',borderRadius:12,padding:'15px 16px'}}>
+                          <div style={{fontSize:13,color:'var(--text)',fontWeight:600,marginBottom:8,lineHeight:1.5}}>{l.q}</div>
+                          <div style={{fontSize:12,color:'#f05050',marginBottom:3}}>✗ Your answer: <em>{l.chosen}</em></div>
+                          <div style={{fontSize:12,color:'#7fda96',marginBottom:10}}>✓ Correct: <strong>{l.correct}</strong></div>
+                          {/* AI explain button on results screen */}
+                          {!explainText[`r-${i}`]?(
+                            <button onClick={async()=>{
+                              setExplainLoading(true);setExplainIdx(`r-${i}`);
+                              try{
+                                const prompt=`A student got this question wrong in a quiz about "${d.chapterTitle}" (${d.courseName}).\n\nQuestion: ${l.q}\nCorrect answer: ${l.correct}\nStudent's answer: ${l.chosen}\n\nGive a clear, concise explanation (3-5 sentences) of why the correct answer is right. Be encouraging. No preamble.`;
+                                const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:prompt}],context:{mode:'explanation'}})});
+                                const data=await res.json();
+                                setExplainText(prev=>({...prev,[`r-${i}`]:data.reply||'No explanation available.'}));
+                              }catch{setExplainText(prev=>({...prev,[`r-${i}`]:'Could not load explanation.'}));}
+                              setExplainLoading(false);
+                            }} disabled={explainLoading&&explainIdx===`r-${i}`}
+                              style={{display:'flex',alignItems:'center',gap:7,background:'rgba(79,156,249,.08)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,color:'#4f9cf9',cursor:'pointer',padding:'7px 14px',fontSize:11,fontWeight:600}}>
+                              {explainLoading&&explainIdx===`r-${i}`?<><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Loading…</>:<>🤖 Explain this</>}
+                            </button>
+                          ):(
+                            <div className="fade-in" style={{background:'rgba(79,156,249,.06)',border:'1px solid rgba(79,156,249,.2)',borderRadius:9,padding:'11px 13px',marginTop:6}}>
+                              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',letterSpacing:1,marginBottom:6,fontWeight:700}}>🤖 STUDYBOT</div>
+                              <p style={{fontSize:12,color:'var(--text)',lineHeight:1.7,margin:0}}>{explainText[`r-${i}`]}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {missed.length===0&&(
+                <div style={{textAlign:'center',padding:'20px',color:'#7fda96',fontSize:13,fontWeight:600}}>
+                  🎉 Perfect score! You got every question right.
+                </div>
+              )}
+
+              <div style={{display:'flex',gap:10,justifyContent:'center',flexWrap:'wrap',paddingBottom:20}}>
+                <button onClick={startQuiz}
+                  style={{background:'rgba(79,156,249,.12)',border:'1px solid rgba(79,156,249,.35)',borderRadius:10,color:'#4f9cf9',cursor:'pointer',padding:'11px 24px',fontSize:13,fontWeight:700}}>
+                  Retry Quiz
+                </button>
+                <button onClick={()=>{setQuizMode('mc');setQuizStarted(false);setQuizDone(false);}}
+                  style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,color:'var(--muted)',cursor:'pointer',padding:'11px 20px',fontSize:13}}>
+                  Change Type
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </div>}
 
       {tab==='mechanisms'&&<div className="fade-up"><SectionLabel>Mechanisms Explained</SectionLabel><div style={{display:'flex',flexDirection:'column',gap:13}}>{(d.mechanisms||[]).map((m,i)=><div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'18px 22px'}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:10}}>{m.title}</div><p style={{fontSize:13,color:'var(--muted)',lineHeight:1.85,margin:0,whiteSpace:'pre-line'}}>{m.body}</p></div>)}</div></div>}
 
@@ -3374,7 +3929,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       {tab==='assignments'&&<AssignmentsTab courseId={course.id} user={user}/>}
       {tab==='ca'&&<CATab courseId={course.id} user={user}/>}
       {tab==='resources'&&<ResourcesTab courseId={course.id} user={user}/>}
-      {tab==='community'&&<CommunityBoard courseId={course.id} user={user}/>}
+      {tab==='community'&&<CommunityBoard courseId={course.id} user={user} subCfg={subCfg}/>}
     </div>
   );
 }
@@ -3648,7 +4203,8 @@ const TIER_CONFIG={
   external:{label:'External',   color:'#a8f94f',icon:'🌐',badge:'Pro' },
 };
 
-function SubscriptionBadge({tier}){
+function SubscriptionBadge({tier,role}){
+  if(role===ROLE.SUPERUSER) return null;
   const t=TIER_CONFIG[tier]||TIER_CONFIG.free;
   return(
     <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:`${t.color}20`,color:t.color,border:`1px solid ${t.color}40`,borderRadius:4,padding:'1px 6px',letterSpacing:1,fontWeight:700}}>
@@ -4049,6 +4605,7 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
           </div>
         </div>
         <RolePill role={isAdm?ROLE.ADMIN:isExternal?ROLE.EXTERNAL:ROLE.USER} accountType={localAccountType}/>
+        <SubscriptionBadge tier={u.subscription_tier||'free'} role={isAdm?ROLE.ADMIN:isExternal?ROLE.EXTERNAL:ROLE.USER}/>
         {!isExternal&&localYear>0&&(
           <div style={{background:YEAR_BG[localYear]||'transparent',border:`1px solid ${YEAR_COLORS[localYear]||'var(--border)'}40`,borderRadius:5,padding:'3px 9px'}}>
             <Mono color={YEAR_COLORS[localYear]||'var(--muted)'} size={9}>Yr {localYear}</Mono>
@@ -4171,14 +4728,72 @@ function UserStatusHistory({username}){
 function AdminPanel({user,courses,onClose,onCoursesChange}){
   const isSU2=user.role===ROLE.SUPERUSER;
   const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[statusPendingCount,setStatusPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
+  const[selectedUsers,setSelectedUsers]=useState(new Set());
+  const[bulkAction,setBulkAction]=useState('');const[bulkBusy,setBulkBusy]=useState(false);
+  const[onlineUsers,setOnlineUsers]=useState(new Set());
 
   useEffect(()=>{
     Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});
     if(isSU2)dbCountPending().then(setPendingCount);
     dbCountPendingStatusRequests().then(setStatusPendingCount);
+
+    // Presence channel — track online users (superuser only)
+    if(isSU2){
+      const presence=supabase.channel('sh-presence',{config:{presence:{key:user.username}}});
+      presence
+        .on('presence',{event:'sync'},()=>{
+          const state=presence.presenceState();
+          setOnlineUsers(new Set(Object.keys(state)));
+        })
+        .on('presence',{event:'join'},({key})=>{
+          setOnlineUsers(prev=>new Set([...prev,key]));
+        })
+        .on('presence',{event:'leave'},({key})=>{
+          setOnlineUsers(prev=>{const n=new Set(prev);n.delete(key);return n;});
+        })
+        .subscribe(async status=>{
+          if(status==='SUBSCRIBED'){
+            await presence.track({username:user.username,role:user.role,at:Date.now()});
+          }
+        });
+      return()=>supabase.removeChannel(presence);
+    }
   },[]);
 
   const flash=m=>{setActionMsg(m);setTimeout(()=>setActionMsg(''),3000);};
+
+  // Bulk action handler
+  const doBulkAction=async()=>{
+    if(!bulkAction||selectedUsers.size===0)return;
+    setBulkBusy(true);
+    const usernames=[...selectedUsers];
+    try{
+      if(bulkAction==='make_pro'){
+        await Promise.all(usernames.map(u=>supabase.from('users').update({subscription_tier:'pro'}).eq('username',u)));
+        flash(`✓ Set ${usernames.length} user(s) to Pro`);
+      }else if(bulkAction==='make_free'){
+        await Promise.all(usernames.map(u=>supabase.from('users').update({subscription_tier:'free'}).eq('username',u)));
+        flash(`✓ Set ${usernames.length} user(s) to Free`);
+      }else if(bulkAction==='make_admin'){
+        const current=await dbLoadAdmins();
+        const combined=[...new Set([...current,...usernames])];
+        await dbSetAdmins(combined);
+        flash(`✓ Made ${usernames.length} user(s) admin`);
+      }else if(bulkAction==='remove_admin'){
+        const current=await dbLoadAdmins();
+        await dbSetAdmins(current.filter(a=>!usernames.includes(a)));
+        flash(`✓ Removed admin from ${usernames.length} user(s)`);
+      }else if(bulkAction==='year_1'||bulkAction==='year_2'||bulkAction==='year_3'||bulkAction==='year_4'){
+        const yr=parseInt(bulkAction.split('_')[1]);
+        await Promise.all(usernames.map(u=>supabase.from('users').update({year:yr}).eq('username',u)));
+        flash(`✓ Set ${usernames.length} user(s) to Year ${yr}`);
+      }
+      const[u,a]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
+      setAllUsers(u);setAdmins(a);
+      setSelectedUsers(new Set());setBulkAction('');
+    }catch(e){flash('Error: '+e.message);}
+    setBulkBusy(false);
+  };
 
   // Admins submit for approval; superuser acts directly
   const doDelete=async id=>{
@@ -4301,28 +4916,99 @@ function AdminPanel({user,courses,onClose,onCoursesChange}){
 
         {tab==='users'&&(
           <div className="fade-up">
-            {isSU2&&<div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:8,padding:'9px 14px',fontSize:12,color:'#f9a84f',marginBottom:14}}>⚡ Superuser: click a user row to expand and change their year or account type directly — no approval needed.</div>}
-            <div style={{marginBottom:14,display:'flex',gap:10,alignItems:'center'}}><SearchBar value={search} onChange={setSearch} placeholder="Search users…"/><Mono color="var(--muted)" size={9}>{allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).length} USERS</Mono></div>
+            {isSU2&&<div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:8,padding:'9px 14px',fontSize:12,color:'#f9a84f',marginBottom:14}}>
+              ⚡ Superuser: expand a row to edit individually, or tick checkboxes for bulk actions.
+              {onlineUsers.size>0&&<span style={{marginLeft:8,color:'#7fda96'}}>🟢 {onlineUsers.size} online now</span>}
+            </div>}
+
+            {/* Search + select all */}
+            <div style={{marginBottom:10,display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+              <SearchBar value={search} onChange={setSearch} placeholder="Search users…"/>
+              {isSU2&&(
+                <button onClick={()=>{
+                  const filtered=allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase()));
+                  if(selectedUsers.size===filtered.length) setSelectedUsers(new Set());
+                  else setSelectedUsers(new Set(filtered.map(u=>u.username)));
+                }} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:7,color:'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:11,whiteSpace:'nowrap'}}>
+                  {selectedUsers.size>0?`✓ ${selectedUsers.size} selected`:'Select All'}
+                </button>
+              )}
+              <Mono color="var(--muted)" size={9}>{allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).length} USERS</Mono>
+            </div>
+
+            {/* Bulk action toolbar — appears when users are selected */}
+            {isSU2&&selectedUsers.size>0&&(
+              <div className="slide-down" style={{background:'rgba(249,168,79,.08)',border:'1px solid rgba(249,168,79,.3)',borderRadius:10,padding:'10px 14px',marginBottom:14,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                <span style={{fontSize:12,color:'#f9a84f',fontWeight:700,marginRight:4}}>
+                  {selectedUsers.size} user{selectedUsers.size!==1?'s':''} selected
+                </span>
+                <select value={bulkAction} onChange={e=>setBulkAction(e.target.value)}
+                  style={{background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,color:'var(--text)',padding:'6px 10px',fontSize:12,flex:1,minWidth:160}}>
+                  <option value="">Choose action…</option>
+                  <optgroup label="Subscription">
+                    <option value="make_pro">⭐ Set to Pro</option>
+                    <option value="make_free">🎓 Set to Free</option>
+                  </optgroup>
+                  <optgroup label="Admin">
+                    <option value="make_admin">🛡 Make Admin</option>
+                    <option value="remove_admin">Remove Admin</option>
+                  </optgroup>
+                  <optgroup label="Year">
+                    <option value="year_1">Set Year 1</option>
+                    <option value="year_2">Set Year 2</option>
+                    <option value="year_3">Set Year 3</option>
+                    <option value="year_4">Set Year 4</option>
+                  </optgroup>
+                </select>
+                <button onClick={doBulkAction} disabled={!bulkAction||bulkBusy}
+                  style={{background:bulkAction?'#f9a84f':'var(--border)',border:'none',borderRadius:7,color:bulkAction?'#000':'var(--muted)',cursor:bulkAction?'pointer':'not-allowed',padding:'7px 16px',fontSize:12,fontWeight:700}}>
+                  {bulkBusy?'Applying…':'Apply'}
+                </button>
+                <button onClick={()=>{setSelectedUsers(new Set());setBulkAction('');}}
+                  style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'0 4px',lineHeight:1}}>✕</button>
+              </div>
+            )}
+
             <div style={{display:'flex',flexDirection:'column',gap:9}}>
               {allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).map((u,i)=>{
                 const isAdm=admins.includes(u.username.toLowerCase());
                 const role=isAdm?ROLE.ADMIN:u.account_type==='external'?ROLE.EXTERNAL:ROLE.USER;
+                const isOnline=onlineUsers.has(u.username);
+                const uTier=u.subscription_tier||'free';
                 return(
-                  <UserRow key={i} u={u} role={role} isAdm={isAdm} isSU2={isSU2}
-                    onRoleChange={async(newAccountType)=>{
-                      await dbApplyStatusChange(u.username,newAccountType);
-                      const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
-                      setAllUsers(users);setAdmins(adms);
-                    }}
-                    onAdminToggle={async()=>{
-                      const next=isAdm?admins.filter(a=>a!==u.username.toLowerCase()):[...admins,u.username.toLowerCase()];
-                      setAdmins(next);await dbSetAdmins(next);
-                    }}
-                    onYearChange={async(yr)=>{
-                      await supabase.from('users').update({year:yr}).eq('username',u.username);
-                      setAllUsers(prev=>prev.map(x=>x.username===u.username?{...x,year:yr}:x));
-                    }}
-                  />
+                  <div key={i} style={{display:'flex',alignItems:'flex-start',gap:8}}>
+                    {/* Checkbox */}
+                    {isSU2&&(
+                      <button onClick={()=>{
+                        setSelectedUsers(prev=>{
+                          const n=new Set(prev);
+                          n.has(u.username)?n.delete(u.username):n.add(u.username);
+                          return n;
+                        });
+                      }} style={{background:selectedUsers.has(u.username)?'rgba(79,156,249,.15)':'var(--surface)',border:`1px solid ${selectedUsers.has(u.username)?'#4f9cf9':'var(--border)'}`,borderRadius:5,cursor:'pointer',width:28,height:28,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,marginTop:2}}>
+                        {selectedUsers.has(u.username)?'✓':''}
+                      </button>
+                    )}
+                    {/* Online dot */}
+                    {isSU2&&<span title={isOnline?'Online now':'Offline'} style={{width:8,height:8,borderRadius:'50%',background:isOnline?'#7fda96':'var(--border)',flexShrink:0,marginTop:10,border:`1px solid ${isOnline?'rgba(127,218,150,.5)':'transparent'}`}}/>}
+                    <div style={{flex:1}}>
+                      <UserRow u={u} role={role} isAdm={isAdm} isSU2={isSU2}
+                        onRoleChange={async(newAccountType)=>{
+                          await dbApplyStatusChange(u.username,newAccountType);
+                          const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
+                          setAllUsers(users);setAdmins(adms);
+                        }}
+                        onAdminToggle={async()=>{
+                          const next=isAdm?admins.filter(a=>a!==u.username.toLowerCase()):[...admins,u.username.toLowerCase()];
+                          setAdmins(next);await dbSetAdmins(next);
+                        }}
+                        onYearChange={async(yr)=>{
+                          await supabase.from('users').update({year:yr}).eq('username',u.username);
+                          setAllUsers(prev=>prev.map(x=>x.username===u.username?{...x,year:yr}:x));
+                        }}
+                      />
+                    </div>
+                  </div>
                 );
               })}
               {allUsers.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12}}>No users yet.</div>}
@@ -4604,6 +5290,184 @@ const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarke
   );
 });
 
+/* ═══════════════ STUDY TOOLS ═══════════════ */
+function StudyTools({user}){
+  const storageKey = user?.username ? `sh-studytools-${user.username}` : 'sh-studytools-guest';
+  const padKey     = user?.username ? `sh-scratchpad-${user.username}` : 'sh-scratchpad-guest';
+
+  // Load persisted state
+  const[open,setOpen]=useState(()=>{
+    try{return localStorage.getItem(storageKey+'-open')!=='false';}catch{return true;}
+  });
+  const[tasks,setTasks]=useState(()=>{
+    try{return JSON.parse(localStorage.getItem(storageKey))||[];}catch{return [];}
+  });
+  const[input,setInput]=useState('');
+  const[pad,setPad]=useState(()=>{
+    try{return localStorage.getItem(padKey)||'';}catch{return '';}
+  });
+  const[activePanel,setActivePanel]=useState('tasks'); // 'tasks' | 'pad'
+
+  // Persist tasks
+  useEffect(()=>{
+    try{localStorage.setItem(storageKey,JSON.stringify(tasks));}catch{}
+  },[tasks,storageKey]);
+
+  // Persist open state
+  useEffect(()=>{
+    try{localStorage.setItem(storageKey+'-open',String(open));}catch{}
+  },[open,storageKey]);
+
+  const addTask=()=>{
+    const t=input.trim();
+    if(!t||tasks.length>=3)return;
+    setTasks(prev=>[...prev,{id:Date.now(),text:t,done:false}]);
+    setInput('');
+  };
+
+  const toggleTask=id=>setTasks(prev=>prev.map(t=>t.id===id?{...t,done:!t.done}:t));
+  const deleteTask=id=>setTasks(prev=>prev.filter(t=>t.id!==id));
+
+  const savePad=val=>{
+    setPad(val);
+    try{localStorage.setItem(padKey,val);}catch{}
+  };
+
+  const full=tasks.length>=3;
+
+  return(
+    <div style={{marginBottom:18}}>
+      {/* Header toggle */}
+      <button onClick={()=>setOpen(o=>!o)}
+        style={{display:'flex',alignItems:'center',gap:8,background:'none',border:'none',cursor:'pointer',padding:'4px 0',width:'100%',textAlign:'left',marginBottom:open?10:0}}>
+        <Mono color="var(--muted)" size={9}>STUDY TOOLS</Mono>
+        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginLeft:'auto'}}>
+          {open?'▲ hide':'▼ show'}
+        </span>
+      </button>
+
+      {open&&(
+        <div className="fade-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:14,overflow:'hidden'}}>
+
+          {/* Sub-tabs */}
+          <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
+            {[{id:'tasks',label:'✅ Focus List'},{id:'pad',label:'📝 Scratchpad'}].map(p=>(
+              <button key={p.id} onClick={()=>setActivePanel(p.id)}
+                style={{flex:1,padding:'10px 0',border:'none',borderBottom:activePanel===p.id?'2px solid #4f9cf9':'2px solid transparent',background:'none',color:activePanel===p.id?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:activePanel===p.id?700:400,transition:'all .15s'}}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Top 3 Task List ── */}
+          {activePanel==='tasks'&&(
+            <div style={{padding:'14px 16px'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <div style={{fontSize:11,color:'var(--muted)',lineHeight:1.4}}>
+                  Your 3 most important tasks for today.
+                </div>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:full?'#f9a84f':'var(--muted)',background:full?'rgba(249,168,79,.1)':'var(--border)',borderRadius:10,padding:'2px 8px',whiteSpace:'nowrap'}}>
+                  {tasks.length}/3
+                </div>
+              </div>
+
+              {/* Task list */}
+              <div style={{display:'flex',flexDirection:'column',gap:7,marginBottom:12}}>
+                {tasks.length===0&&(
+                  <div style={{textAlign:'center',padding:'16px 0',color:'var(--muted)',fontSize:12,fontStyle:'italic'}}>
+                    No tasks yet — add up to 3 below
+                  </div>
+                )}
+                {tasks.map(t=>(
+                  <div key={t.id} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',background:'var(--card)',borderRadius:9,border:'1px solid var(--border)',transition:'opacity .2s',opacity:t.done?.55:1}}>
+                    {/* Custom checkbox */}
+                    <button onClick={()=>toggleTask(t.id)}
+                      style={{width:20,height:20,borderRadius:5,border:`2px solid ${t.done?'#7fda96':'var(--border)'}`,background:t.done?'rgba(127,218,150,.15)':'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all .15s',padding:0}}>
+                      {t.done&&<span style={{color:'#7fda96',fontSize:11,lineHeight:1}}>✓</span>}
+                    </button>
+                    {/* Task text */}
+                    <span style={{flex:1,fontSize:13,color:'var(--text)',textDecoration:t.done?'line-through':'none',lineHeight:1.4,wordBreak:'break-word'}}>
+                      {t.text}
+                    </span>
+                    {/* Delete */}
+                    <button onClick={()=>deleteTask(t.id)}
+                      style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:15,padding:'0 2px',lineHeight:1,flexShrink:0,opacity:.4}}
+                      onMouseEnter={e=>e.currentTarget.style.opacity='1'}
+                      onMouseLeave={e=>e.currentTarget.style.opacity='.4'}>
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Input row */}
+              <div style={{display:'flex',gap:8}}>
+                <input
+                  value={input}
+                  onChange={e=>setInput(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&addTask()}
+                  disabled={full}
+                  maxLength={80}
+                  placeholder={full?'Complete or delete a task first…':'Add a task (Enter to save)…'}
+                  style={{flex:1,background:full?'var(--border)':'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',color:full?'var(--muted)':'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",opacity:full?.6:1,cursor:full?'not-allowed':'text'}}
+                />
+                <button onClick={addTask} disabled={full||!input.trim()}
+                  style={{background:full||!input.trim()?'var(--border)':'#4f9cf9',border:'none',borderRadius:8,color:full||!input.trim()?'var(--muted)':'#000',cursor:full||!input.trim()?'not-allowed':'pointer',padding:'9px 16px',fontSize:12,fontWeight:700,flexShrink:0,transition:'all .15s'}}>
+                  Add
+                </button>
+              </div>
+
+              {/* Completion hint */}
+              {tasks.length>0&&tasks.every(t=>t.done)&&(
+                <div className="fade-in" style={{marginTop:12,textAlign:'center',padding:'10px',background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.2)',borderRadius:8,fontSize:12,color:'#7fda96',fontWeight:600}}>
+                  🎉 All done! Clear your list to start fresh.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Scratchpad ── */}
+          {activePanel==='pad'&&(
+            <div style={{padding:'4px 0 0'}}>
+              <textarea
+                value={pad}
+                onChange={e=>savePad(e.target.value)}
+                placeholder="Quick notes, ideas, formulas… auto-saved as you type."
+                style={{
+                  display:'block',width:'100%',
+                  minHeight:160,maxHeight:320,
+                  background:'transparent',
+                  border:'none',outline:'none',
+                  resize:'vertical',
+                  padding:'12px 16px',
+                  color:'var(--text)',
+                  fontSize:13,
+                  lineHeight:1.75,
+                  fontFamily:"'DM Sans',sans-serif",
+                }}
+              />
+              {/* Footer: char count + clear */}
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 16px 10px',borderTop:'1px solid var(--border)'}}>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:.5}}>
+                  {pad.length} chars · auto-saved
+                </span>
+                {pad&&(
+                  <button onClick={()=>savePad('')}
+                    style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,opacity:.5,textDecoration:'underline',padding:0}}
+                    onMouseEnter={e=>e.currentTarget.style.opacity='1'}
+                    onMouseLeave={e=>e.currentTarget.style.opacity='.5'}>
+                    clear
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ═══════════════ HOME ═══════════════ */
 function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab}){
   const isExternal=user.role===ROLE.EXTERNAL;
@@ -4648,14 +5512,23 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
     return()=>clearTimeout(t);
   },[searchRaw]);
 
+  // Tier-based access: free users locked to their year unless free_all_years=true
+  const isFreeUser=!user.isGuest&&user.role!==ROLE.SUPERUSER&&(user.subscription_tier||'free')==='free';
+  const freeAllYears=(subCfg?.free_all_years||'false')==='true';
+  const accessibleYears=useMemo(()=>{
+    if(user.isGuest||!isFreeUser||freeAllYears) return null; // null = all years
+    return new Set([user.year||1]);
+  },[isFreeUser,freeAllYears,user.year,user.isGuest]);
+
   const visible=useMemo(()=>courses.filter(c=>{
     const matchYear=activeYear==='all'||c.year===activeYear;
     const matchSem=activeYear==='all'||c.semester===activeSemester;
     const matchDept=activeDept==='all'||c.department===activeDept;
     const lq=search.toLowerCase();
     const matchSearch=!search||c.chapterTitle.toLowerCase().includes(lq)||c.courseName.toLowerCase().includes(lq);
-    return matchYear&&matchSem&&matchDept&&matchSearch;
-  }),[courses,activeYear,activeSemester,activeDept,search]);
+    const matchTier=!accessibleYears||accessibleYears.has(c.year);
+    return matchYear&&matchSem&&matchDept&&matchSearch&&matchTier;
+  }),[courses,activeYear,activeSemester,activeDept,search,accessibleYears]);
 
   const semCount=useCallback(s=>courses.filter(c=>(activeYear==='all'||c.year===activeYear)&&c.semester===s).length,[courses,activeYear]);
   const deptCount=useCallback(d=>courses.filter(c=>(activeYear==='all'||c.year===activeYear)&&(activeYear==='all'||c.semester===activeSemester)&&(d==='all'||c.department===d)).length,[courses,activeYear,activeSemester]);
@@ -4664,7 +5537,14 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const pct=useCallback(id=>{const cp=progress[id];const m=courses.find(c=>c.id===id);if(!cp||!m||m.qCount===0)return 0;return Math.round((cp.openedQs?.length||0)/m.qCount*100);},[progress,courses]);
   const yearStat=useCallback(y=>{const yc=courses.filter(c=>c.year===y);if(!yc.length)return null;return `${yc.filter(c=>progress[c.id]?.viewed).length}/${yc.length} started`;},[courses,progress]);
 
-  const selectYear=useCallback(y=>{setActiveYear(y);setActiveSemester(1);setActiveDept('all');setSearch('');setSearchRaw('');},[]);
+  const selectYear=useCallback(y=>{
+    // Block free users from selecting locked years
+    if(accessibleYears&&y!=='all'&&!accessibleYears.has(y)){
+      setShowPayment(true);
+      return;
+    }
+    setActiveYear(y);setActiveSemester(1);setActiveDept('all');setSearch('');setSearchRaw('');
+  },[accessibleYears]);
 
   return(
     <div className="home-page" style={{maxWidth:990,margin:'0 auto',padding:'34px 20px 88px'}}>
@@ -4690,7 +5570,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
               <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3,flexWrap:'wrap'}}>
                 <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
-                {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'}/>}
+                {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'} role={user.role}/>}
                 {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Yr {user.year} · @{user.username}</Mono>}
                 {isExternal&&<Mono color="#a8f94f" size={9}>@{user.username} · External</Mono>}
                 {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
@@ -4703,7 +5583,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         <div style={{display:'flex',gap:8,alignItems:'center',flexShrink:0}}>
 
           {/* ⭐ Upgrade — free-tier users only */}
-          {!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)&&(user.subscription_tier||'free')==='free'&&(
+          {!user.isGuest&&user.role!==ROLE.SUPERUSER&&(user.subscription_tier||'free')==='free'&&(
             <button onClick={()=>setShowPayment(true)}
               style={{background:'linear-gradient(135deg,rgba(249,168,79,.18),rgba(249,168,79,.08))',border:'1px solid rgba(249,168,79,.4)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'7px 11px',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}>
               ⭐ <span className="hide-xs">Upgrade</span>
@@ -4727,7 +5607,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       {drawerOpen&&(
         <>
           <div onClick={()=>setDrawerOpen(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.55)',backdropFilter:'blur(3px)',zIndex:1998}}/>
-          <div className="slide-right" style={{position:'fixed',top:0,right:0,bottom:0,width:280,background:'var(--card)',borderLeft:'1px solid var(--border)',zIndex:1999,display:'flex',flexDirection:'column',overflowY:'auto',boxShadow:'-8px 0 40px rgba(0,0,0,.5)'}}>
+          <div className="slide-right" style={{position:'fixed',top:0,left:0,bottom:0,width:280,background:'var(--card)',borderRight:'1px solid var(--border)',zIndex:1999,display:'flex',flexDirection:'column',overflowY:'auto',boxShadow:'8px 0 40px rgba(0,0,0,.5)'}}>
             {/* Drawer header */}
             <div style={{padding:'20px 20px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
               <div>
@@ -4746,7 +5626,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
                 <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
                 <div style={{display:'flex',gap:6,marginTop:4,flexWrap:'wrap'}}>
                   <RolePill role={user.role} accountType={user.accountType}/>
-                  {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'}/>}
+                  {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'} role={user.role}/>}
                 </div>
                 {user.role===ROLE.USER&&!user.isGuest&&<div style={{fontSize:10,color:'var(--muted)',marginTop:3}}>Year {user.year} · @{user.username}</div>}
               </div>
@@ -4760,7 +5640,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
                 ...(bookmarks.length>0?[{icon:'🔖',label:`Bookmarks (${bookmarks.length})`,action:()=>{setShowBookmarks(s=>!s);setDrawerOpen(false);}}]:[]),
                 ...(isPriv?[{icon:user.role===ROLE.SUPERUSER?'⚡':'⚙️',label:'Admin Panel',action:()=>{onShowAdmin();setDrawerOpen(false);}}]:[]),
                 ...(!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)?[{icon:'🔄',label:'Change Status',action:()=>{setShowStatusModal(true);setDrawerOpen(false);}}]:[]),
-                ...(!user.isGuest&&(user.subscription_tier||'free')==='free'&&user.role!==ROLE.SUPERUSER&&user.role!==ROLE.ADMIN?[{icon:'⭐',label:'Upgrade to Pro',action:()=>{setShowPayment(true);setDrawerOpen(false);},highlight:true}]:[]),
+                ...(!user.isGuest&&(user.subscription_tier||'free')==='free'&&user.role!==ROLE.SUPERUSER?[{icon:'⭐',label:'Upgrade to Pro',action:()=>{setShowPayment(true);setDrawerOpen(false);},highlight:true}]:[]),
               ].map((item,i)=>(
                 <button key={i} onClick={item.action}
                   style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'11px 12px',borderRadius:10,border:'none',background:item.active?'rgba(79,156,249,.08)':item.highlight?'rgba(249,168,79,.08)':'transparent',color:item.highlight?'#f9a84f':item.active?'#4f9cf9':'var(--text)',cursor:'pointer',textAlign:'left',fontSize:13,fontWeight:item.active||item.highlight?600:400,marginBottom:2}}>
@@ -4904,10 +5784,12 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:activeYear==='all'?'#a8f94faa':'var(--muted)',marginTop:2}}>{courses.length} courses</div>
             </button>
           )}
-          {YEARS.map(y=>{const active=activeYear===y;const st=yearStat(y);return(
-            <button key={y} className="year-tab" onClick={()=>selectYear(y)} style={{background:active?YEAR_BG[y]:'var(--surface)',border:`1px solid ${active?YEAR_COLORS[y]+'60':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'10px 18px',transition:'var(--transition)',textAlign:'left'}}>
-              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:active?YEAR_COLORS[y]:'var(--text)'}}>Year {y}</div>
-              {st&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:active?YEAR_COLORS[y]+'aa':'var(--muted)',marginTop:2}}>{st}</div>}
+          {YEARS.map(y=>{const active=activeYear===y;const st=yearStat(y);const locked=accessibleYears&&!accessibleYears.has(y);return(
+            <button key={y} className="year-tab" onClick={()=>selectYear(y)} style={{background:active?YEAR_BG[y]:'var(--surface)',border:`1px solid ${active?YEAR_COLORS[y]+'60':locked?'var(--border)':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'10px 18px',transition:'var(--transition)',textAlign:'left',opacity:locked?.55:1,position:'relative'}}>
+              {locked&&<span style={{position:'absolute',top:6,right:8,fontSize:10}}>🔒</span>}
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:active?YEAR_COLORS[y]:locked?'var(--muted)':'var(--text)'}}>Year {y}</div>
+              {locked?<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',marginTop:2}}>Pro only</div>
+                :(st&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:active?YEAR_COLORS[y]+'aa':'var(--muted)',marginTop:2}}>{st}</div>)}
             </button>
           );})}
         </div>
@@ -4930,6 +5812,9 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           })}
         </div>
       </div>}
+
+      {/* ── Study Tools: Top 3 Tasks + Scratchpad ───────────────── */}
+      <StudyTools user={user}/>
 
       {/* Search */}
       <div className="stagger-3" style={{marginBottom:16}}>
@@ -4955,7 +5840,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:6}}>
             <button onClick={()=>{setActiveDept('all');setDeptOpen(false);}}
               style={{background:activeDept==='all'?'rgba(136,146,164,.15)':'var(--surface)',border:`1px solid ${activeDept==='all'?'#8892a4':'var(--border)'}`,borderRadius:20,cursor:'pointer',padding:'6px 14px',display:'flex',alignItems:'center',gap:6,transition:'var(--transition)'}}>
-              <span style={{fontSize:12,color:activeDept==='all'?'#e2e6f0':'var(--muted)',fontWeight:activeDept==='all'?700:400}}>All Departments</span>
+              <span style={{fontSize:12,color:'var(--text)',fontWeight:activeDept==='all'?700:400}}>All Departments</span>
               <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'var(--border)',color:'var(--muted)',borderRadius:10,padding:'1px 6px'}}>{deptCount('all')}</span>
             </button>
             {activeDept!=='all'&&(
@@ -4986,22 +5871,33 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         </div>
       )}
 
+      {isFreeUser&&!freeAllYears&&<div className="fade-in" style={{background:'linear-gradient(135deg,rgba(249,168,79,.08),rgba(249,168,79,.03))',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'10px 16px',marginBottom:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+        <div style={{fontSize:12,color:'rgba(249,168,79,.9)',lineHeight:1.5}}>
+          🎓 <strong>Free plan:</strong> Year {user.year||1} only · {subCfg?.free_ai_messages_per_month||'5'} AI msgs/month
+        </div>
+        <button onClick={()=>setShowPayment(true)} style={{background:'rgba(249,168,79,.15)',border:'1px solid rgba(249,168,79,.4)',borderRadius:7,color:'#f9a84f',cursor:'pointer',padding:'5px 12px',fontSize:11,fontWeight:700,whiteSpace:'nowrap',flexShrink:0}}>
+          ⭐ Upgrade
+        </button>
+      </div>}
       <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''}{activeYear==='all'?` · ALL YEARS`:` · YEAR ${activeYear} · SEM ${activeSemester}`}{activeDept!=='all'?` · ${DEPT_SHORT[activeDept]}`:''}{search?` · "${search}"`:''}</Mono>
 
       {visible.length===0?(
         <div style={{textAlign:'center',padding:'50px 24px',border:'1px dashed var(--border)',borderRadius:16,marginTop:16,background:'var(--surface)'}}>
-          <div style={{fontSize:48,marginBottom:14,lineHeight:1}}>{search?'🔍':isPriv?'➕':'📭'}</div>
+          <div style={{fontSize:48,marginBottom:14,lineHeight:1}}>{search?'🔍':accessibleYears&&activeYear!=='all'&&!accessibleYears.has(activeYear)?'🔒':isPriv?'➕':'📭'}</div>
           <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>
             {search?`No results for "${search}"`
+             :accessibleYears&&activeYear!=='all'&&!accessibleYears.has(activeYear)?`Year ${activeYear} is Pro only`
              :activeYear==='all'?'No courses yet'
              :`No Year ${activeYear}, Semester ${activeSemester} courses yet`}
           </div>
           <p style={{color:'var(--muted)',fontSize:13,lineHeight:1.6,maxWidth:280,margin:'0 auto 16px'}}>
             {search?'Try a different keyword or clear the search.'
+             :accessibleYears&&activeYear!=='all'&&!accessibleYears.has(activeYear)?'Upgrade to Pro to access all years and departments.'
              :isPriv?'Open the admin panel and add courses for this year and semester.'
              :'No courses have been added here yet. Check back soon.'}
           </p>
           {search&&<button onClick={()=>{setSearch('');setSearchRaw('');}} style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:8,color:'#4f9cf9',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:600}}>Clear search</button>}
+          {!search&&accessibleYears&&activeYear!=='all'&&!accessibleYears.has(activeYear)&&<button onClick={()=>setShowPayment(true)} style={{background:'linear-gradient(135deg,rgba(249,168,79,.18),rgba(249,168,79,.08))',border:'1px solid rgba(249,168,79,.4)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>⭐ Upgrade to Pro</button>}
           {!search&&isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Open Panel':'⚙ Open Panel'}</button>}
         </div>
       ):(
@@ -5020,6 +5916,17 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
 
 /* ═══════════════ ROOT APP ═══════════════ */
 const SESSION_KEY = 'sh-session';
+const NAV_KEY = 'sh-nav';
+
+function saveNav(view, activeCourseCode=null, activeCourseId=null){
+  // Don't persist admin view — always drop back to home on refresh for security
+  const persistView = (view==='admin'||view==='auth') ? 'home' : view;
+  try{localStorage.setItem(NAV_KEY,JSON.stringify({view:persistView,activeCourseCode,activeCourseId}));}catch{}
+}
+function loadNav(){
+  try{const raw=localStorage.getItem(NAV_KEY);return raw?JSON.parse(raw):null;}catch{return null;}
+}
+function clearNav(){try{localStorage.removeItem(NAV_KEY);}catch{}}
 
 function saveSession(u){
   try{localStorage.setItem(SESSION_KEY,JSON.stringify({...u,savedAt:Date.now()}));}catch{}
@@ -5165,17 +6072,35 @@ export default function App(){
 
   // Restore session from localStorage on mount
   const savedSession=loadSession();
-  const[view,setView]=useState(savedSession?'home':'auth');
+  const savedNav=savedSession?loadNav():null;
+  const[view,setView]=useState(savedSession?(savedNav?.view||'home'):'auth');
   const[user,setUser]=useState(savedSession||null);
   const[courses,setCourses]=useState([]);
   const[active,setActive]=useState(null);
-  const[activeCourseCode,setActiveCourseCode]=useState(null);
+  const[activeCourseCode,setActiveCourseCode]=useState(savedNav?.activeCourseCode||null);
   const[progress,setProgress]=useState({});
   const[loading,setLoading]=useState(false);
   const[syncing,setSyncing]=useState(false);
   const[showWelcome,setShowWelcome]=useState(false);
   const[subCfg,setSubCfg]=useState({});
   const[announceKey,setAnnounceKey]=useState(0);
+
+  // Track presence so superuser can see online users
+  useEffect(()=>{
+    if(!user||user.isGuest) return;
+    const ch=supabase.channel('sh-presence',{config:{presence:{key:user.username}}});
+    ch.subscribe(async status=>{
+      if(status==='SUBSCRIBED'){
+        await ch.track({username:user.username,role:user.role,at:Date.now()});
+      }
+    });
+    return()=>supabase.removeChannel(ch);
+  },[user?.username]);
+
+  // Persist current view so refresh restores the same page
+  useEffect(()=>{
+    if(user&&!user.isGuest) saveNav(view,activeCourseCode,active?.id||null);
+  },[view,activeCourseCode,active?.id,user?.username]);
 
   // Page title
   useEffect(()=>{
@@ -5209,10 +6134,23 @@ export default function App(){
       if(data){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
     }).catch(()=>{});
 
-    // Reload courses silently
+    // Reload courses silently, then restore active course if nav was persisted
     const loadCourses=()=>{
-      dbLoadCourseIndex().then(data=>{
+      dbLoadCourseIndex().then(async data=>{
         setCourses(data);
+        // If refreshed mid-course, re-fetch and restore
+        if(savedNav?.view==='course'&&savedNav?.activeCourseId){
+          try{
+            const courseData=await dbLoadCourseData(savedNav.activeCourseId);
+            const meta=data.find(c=>c.id===savedNav.activeCourseId);
+            if(courseData&&meta){
+              setActive({id:meta.id,data:courseData,year:meta.year,semester:meta.semester||1,department:meta.department||'Computer Science',initialTab:null});
+              setView('course');
+            } else {
+              setView('home');saveNav('home');
+            }
+          }catch{setView('home');saveNav('home');}
+        }
       }).catch(async()=>{
         const cached=[];
         for(let i=0;i<localStorage.length;i++){
@@ -5306,6 +6244,14 @@ export default function App(){
         if(newRole!==user.role) pushNotification('✅ Account updated','Your account type has been changed. Changes are live.');
       }).subscribe();
 
+    // Subscription config changes
+    const subCfgCh=supabase.channel('rt-sub-config')
+      .on('postgres_changes',{event:'*',schema:'public',table:'subscription_config'},()=>{
+        supabase.from('subscription_config').select('*').then(({data})=>{
+          if(data){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
+        });
+      }).subscribe();
+
     return()=>{
       supabase.removeChannel(coursesCh);
       supabase.removeChannel(annCh);
@@ -5314,6 +6260,7 @@ export default function App(){
       supabase.removeChannel(pendingCh);
       supabase.removeChannel(statusCh);
       supabase.removeChannel(usersCh);
+      supabase.removeChannel(subCfgCh);
     };
   },[user?.role]);
 
@@ -5368,7 +6315,7 @@ export default function App(){
   },[]);
 
   const handleLogout=useCallback(()=>{
-    clearSession();
+    clearSession();clearNav();
     setUser(null);setProgress({});setActive(null);setActiveCourseCode(null);setView('auth');
   },[]);
 
@@ -5396,7 +6343,7 @@ export default function App(){
       await dbSaveProgress(user.username,p).catch(()=>{});
   },[user?.username,user?.role,user?.isGuest]);
 
-  const goToSignUp=useCallback(()=>{clearSession();setUser(null);setProgress({});setActive(null);setView('auth');},[]);
+  const goToSignUp=useCallback(()=>{clearSession();clearNav();setUser(null);setProgress({});setActive(null);setView('auth');},[]);
 
   return(
     <ErrorBoundary>
@@ -5442,7 +6389,7 @@ export default function App(){
             onBack={()=>{activeCourseCode?setView('coursetab'):setView('home');}}
             onProgressUpdate={handleProgress}
             bookmarks={bookmarks} toggleBookmark={toggleBookmark}
-            courses={courses}/>
+            courses={courses} subCfg={subCfg}/>
         </div>
       )}
 
