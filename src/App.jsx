@@ -624,7 +624,7 @@ function Logo({onClick,size='md'}){
 /* ═══════════════ THEME TOGGLE ═══════════════ */
 function ThemeToggle({dark,toggle}){
   return(
-    <button onClick={toggle} title={dark?'Switch to light mode':'Switch to dark mode'} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,padding:'6px 12px',cursor:'pointer',color:'var(--text)',fontSize:16,display:'flex',alignItems:'center',gap:6,fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>
+    <button onClick={toggle} title={dark?'Switch to light mode':'Switch to dark mode'} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,padding:'6px 12px',cursor:'pointer',color:'var(--text)',display:'flex',alignItems:'center',gap:6,fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>
       {dark?'☀️':'🌙'} <span style={{color:'var(--muted)'}}>{dark?'Light':'Dark'}</span>
     </button>
   );
@@ -3390,7 +3390,7 @@ function DefinitionRow({def,isLast}){
     setCopied(true);setTimeout(()=>setCopied(false),1500);
   };
   return(
-    <div className="def-grid" style={{display:'grid',gridTemplateColumns:'190px 1fr auto',borderBottom:isLast?'none':'1px solid var(--border)',alignItems:'stretch'}} className="fade-in">
+    <div className="def-grid fade-in" style={{display:'grid',gridTemplateColumns:'190px 1fr auto',borderBottom:isLast?'none':'1px solid var(--border)',alignItems:'stretch'}}>
       <div className="def-term" style={{padding:'12px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:600,color:'#7fda96',background:'var(--surface)',display:'flex',alignItems:'center'}}>{def.term}</div>
       <div style={{padding:'12px 14px',fontSize:13,color:'var(--text)',lineHeight:1.7}}>{def.definition}</div>
       <button onClick={copy} title="Copy term and definition" style={{background:'none',border:'none',color:copied?'#7fda96':'var(--muted)',cursor:'pointer',padding:'0 12px',fontSize:13,flexShrink:0,opacity:copied?1:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>!copied&&(e.currentTarget.style.opacity='.5')}>
