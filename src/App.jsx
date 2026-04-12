@@ -6308,4 +6308,112 @@ export default function App(){
   },[]);
 
   const handleGuest=useCallback(()=>{
-    setUser({us
+    setUser({username:'guest',displayName:'Guest',role:ROLE.USER,isGuest:true,year:1});
+    setView('home');
+  },[]);
+
+  const handleLogout=useCallback(()=>{
+    clearSession();clearNav();
+    setUser(null);setProgress({});setActive(null);setActiveCourseCode(null);setView('auth');
+  },[]);
+
+  const handleOpenCourseTab=useCallback(code=>{
+    setActiveCourseCode(code);setView('coursetab');
+  },[]);
+
+  const handleSelect=useCallback(async(id,initialTab)=>{
+    setLoading(true);
+    let data=null,year=null,semester=1,department='Computer Science';
+    try{
+      data=await dbLoadCourseData(id);
+      const meta=courses.find(c=>c.id===id);
+      year=meta?.year;semester=meta?.semester||1;department=meta?.department||'Computer Science';
+    }catch{
+      try{const c=JSON.parse(localStorage.getItem(CACHE_KEY(id)));data=c?.data;year=c?.year;semester=c?.semester||1;department=c?.department||'Computer Science';}catch{}
+    }
+    if(data){setActive({id,data,year,semester,department,initialTab:initialTab||null});setView('course');}
+    setLoading(false);
+  },[courses]);
+
+  const handleProgress=useCallback(async p=>{
+    setProgress(p);
+    if(user?.role===ROLE.USER&&!user?.isGuest)
+      await dbSaveProgress(user.username,p).catch(()=>{});
+  },[user?.username,user?.role,user?.isGuest]);
+
+  const goToSignUp=useCallback(()=>{clearSession();clearNav();setUser(null);setProgress({});setActive(null);setView('auth');},[]);
+
+  return(
+    <ErrorBoundary>
+    <>
+      <style>{css}</style>
+      {!online&&<OfflineBanner/>}
+      <SyncToast visible={syncing&&online}/>
+      <ErrorToast message={errMsg} onDismiss={()=>setErrMsg('')}/>
+      {ConfirmModal}
+      {user?.isGuest&&view!=='auth'&&<GuestBanner onSignUp={goToSignUp}/>}
+      <InstallPrompt/>
+
+      {view==='auth'&&<AuthScreen onLogin={handleLogin} onGuest={handleGuest} dark={dark} toggleTheme={toggleTheme}/>}
+
+      {view==='home'&&user&&(
+        <div style={{paddingTop:user?.isGuest?48:0}}>
+          <Home user={user} courses={courses} progress={progress}
+            onSelectCourse={handleSelect} onLogout={handleLogout}
+            onShowAdmin={()=>setView('admin')} onProgressUpdate={handleProgress}
+            bookmarks={bookmarks} toggleBookmark={toggleBookmark}
+            dark={dark} toggleTheme={toggleTheme}
+            onOpenCourseTab={handleOpenCourseTab}/>
+        </div>
+      )}
+
+      {view==='coursetab'&&activeCourseCode&&user&&(
+        <div style={{paddingTop:user?.isGuest?48:0}}>
+          <CourseTabView
+            courseCode={activeCourseCode}
+            courses={courses}
+            user={user}
+            progress={progress}
+            onSelectCourse={id=>{setActiveCourseCode(activeCourseCode);handleSelect(id);}}
+            onBack={()=>setView('home')}
+            bookmarks={bookmarks}
+            toggleBookmark={toggleBookmark}/>
+        </div>
+      )}
+
+      {view==='course'&&active&&user&&(
+        <div style={{paddingTop:user?.isGuest?48:0}}>
+          <CourseView course={active} user={user} progress={progress}
+            onBack={()=>{activeCourseCode?setView('coursetab'):setView('home');}}
+            onProgressUpdate={handleProgress}
+            bookmarks={bookmarks} toggleBookmark={toggleBookmark}
+            courses={courses} subCfg={subCfg}/>
+        </div>
+      )}
+
+      {view==='admin'&&user&&(user.role===ROLE.ADMIN||user.role===ROLE.SUPERUSER)&&(
+        <AdminPanel user={user} courses={courses} onClose={()=>setView('home')} onCoursesChange={setCourses}/>
+      )}
+
+      {loading&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:3000}}>
+          <div style={{color:'#4f9cf9',fontSize:32,animation:'spin 1s linear infinite'}}>⟳</div>
+        </div>
+      )}
+
+      {/* Persistent chatbot — visible on home and course views, hidden on auth/admin */}
+      {user&&!user.isGuest&&view!=='auth'&&view!=='admin'&&(
+        <Chatbot context={view==='course'&&active?{
+          courseName:active.data?.courseName,
+          chapterTitle:active.data?.chapterTitle,
+          summary:active.data?.keyConcepts?.slice(0,5).map(c=>c.title).join(', ')
+        }:null} courses={courses} user={user} subCfg={subCfg}/>
+      )}
+
+      {showWelcome&&user&&<WelcomeModal user={user} onClose={()=>setShowWelcome(false)}/>}
+
+      {view!=='auth'&&<CopyrightBar/>}
+    </>
+    </ErrorBoundary>
+  );
+}
