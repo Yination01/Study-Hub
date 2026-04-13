@@ -4725,36 +4725,16 @@ function UserStatusHistory({username}){
 }
 
 /* ═══════════════ ADMIN PANEL ═══════════════ */
-function AdminPanel({user,courses,onClose,onCoursesChange}){
+function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}){
   const isSU2=user.role===ROLE.SUPERUSER;
   const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[statusPendingCount,setStatusPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
   const[selectedUsers,setSelectedUsers]=useState(new Set());
   const[bulkAction,setBulkAction]=useState('');const[bulkBusy,setBulkBusy]=useState(false);
-  const[onlineUsers,setOnlineUsers]=useState(new Set());
 
   useEffect(()=>{
     Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});
     if(isSU2)dbCountPending().then(setPendingCount);
     dbCountPendingStatusRequests().then(setStatusPendingCount);
-
-    // Presence channel — superuser watches who's online
-    // Uses a separate listener channel so it doesn't conflict with the tracker in root App
-    if(isSU2){
-      const presence=supabase.channel('sh-presence-watch');
-      presence
-        .on('presence',{event:'sync'},()=>{
-          const state=presence.presenceState();
-          setOnlineUsers(new Set(Object.keys(state)));
-        })
-        .on('presence',{event:'join'},({key})=>{
-          setOnlineUsers(prev=>new Set([...prev,key]));
-        })
-        .on('presence',{event:'leave'},({key})=>{
-          setOnlineUsers(prev=>{const n=new Set(prev);n.delete(key);return n;});
-        })
-        .subscribe();
-      return()=>supabase.removeChannel(presence);
-    }
   },[]);
 
   const flash=m=>{setActionMsg(m);setTimeout(()=>setActionMsg(''),3000);};
@@ -6081,17 +6061,29 @@ export default function App(){
   const[showWelcome,setShowWelcome]=useState(false);
   const[subCfg,setSubCfg]=useState({});
   const[announceKey,setAnnounceKey]=useState(0);
+  const[onlineUsers,setOnlineUsers]=useState(new Set());
 
-  // Track presence so superuser can see online users
-  // Broadcasts on sh-presence-watch so AdminPanel can listen without conflict
+  // Single presence channel — tracks this user AND watches who's online
+  // Only one channel ever exists, owned by root App, passed down as prop
   useEffect(()=>{
     if(!user||user.isGuest) return;
-    const ch=supabase.channel('sh-presence-watch',{config:{presence:{key:user.username}}});
-    ch.subscribe(async status=>{
-      if(status==='SUBSCRIBED'){
-        await ch.track({username:user.username,role:user.role,at:Date.now()});
-      }
-    });
+    const ch=supabase.channel('sh-presence',{config:{presence:{key:user.username}}});
+    ch
+      .on('presence',{event:'sync'},()=>{
+        const state=ch.presenceState();
+        setOnlineUsers(new Set(Object.keys(state)));
+      })
+      .on('presence',{event:'join'},({key})=>{
+        setOnlineUsers(prev=>new Set([...prev,key]));
+      })
+      .on('presence',{event:'leave'},({key})=>{
+        setOnlineUsers(prev=>{const n=new Set(prev);n.delete(key);return n;});
+      })
+      .subscribe(async status=>{
+        if(status==='SUBSCRIBED'){
+          await ch.track({username:user.username,role:user.role,at:Date.now()});
+        }
+      });
     return()=>supabase.removeChannel(ch);
   },[user?.username]);
 
@@ -6392,7 +6384,7 @@ export default function App(){
       )}
 
       {view==='admin'&&user&&(user.role===ROLE.ADMIN||user.role===ROLE.SUPERUSER)&&(
-        <AdminPanel user={user} courses={courses} onClose={()=>setView('home')} onCoursesChange={setCourses}/>
+        <AdminPanel user={user} courses={courses} onClose={()=>setView('home')} onCoursesChange={setCourses} onlineUsers={onlineUsers}/>
       )}
 
       {loading&&(
