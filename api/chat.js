@@ -16,52 +16,75 @@ export default async function handler(req, res) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'Groq API key not configured' });
 
-  // Determine mode from context
   const mode = context?.mode || 'tutor';
+  const isSuperuser = context?.isSuperuser === true;
 
   let systemPrompt;
 
   if (mode === 'assignment') {
-    // Assignment answering mode — thorough, crosschecked
-    systemPrompt = `You are an expert academic assistant helping a student understand and solve an assignment.
+    systemPrompt = `You are an expert academic assistant helping a student fully understand and solve an assignment for "${context?.courseName || 'their course'}".
 
-Assignment context:
-Title: ${context?.assignmentTitle || 'Unknown'}
-Course: ${context?.courseName || 'Unknown'}
+Assignment: ${context?.assignmentTitle || 'Unknown'}
 ${context?.assignmentDescription ? `Description: ${context.assignmentDescription}` : ''}
 ${context?.assignmentQuestions ? `Questions:\n${context.assignmentQuestions}` : ''}
 
-Your role:
-- Read and understand each question carefully
-- Provide complete, step-by-step worked answers
-- Show ALL working — do not skip steps
-- Crosscheck your answers: verify calculations, re-read the question, check logic
-- If you spot an error in your reasoning, correct it immediately
-- Format answers clearly: "Q1: [question text]\nAnswer: [full working]\nVerification: [crosscheck]"
-- Be thorough enough that a student following your answer would get full marks
-- Use plain text only — no markdown symbols`;
+Rules:
+- Read every question carefully before answering anything
+- Provide complete step-by-step worked answers with full working shown
+- After answering, verify: re-read the question, check calculations, confirm logic
+- Format: "Q1: [question]\nAnswer: [full working]\nVerification: [crosscheck]"
+- Be thorough enough that a student following your answer would score full marks
+- Acknowledge uncertainty honestly — never fabricate facts
+- Plain text only, no markdown`;
+
+  } else if (mode === 'explanation') {
+    systemPrompt = `You are StudyBot, an expert academic tutor for "${context?.chapterTitle || 'this course'}".
+A student got a quiz question wrong and needs a clear explanation.
+Be encouraging, concise (3-5 sentences), and educational. Plain text only.`;
+
+  } else if (mode === 'suggest') {
+    // AI suggests improvements to course content — routes to approvals
+    systemPrompt = `You are an AI curriculum assistant reviewing a StudyHub course.
+Course: "${context?.chapterTitle}" (${context?.courseName})
+Current content summary: ${context?.summary || 'not provided'}
+
+Suggest 2-3 specific, actionable improvements to this course's study material.
+For each suggestion, provide:
+- What to add/change/improve (be specific)
+- Why it would help students
+
+Format as JSON only:
+{"suggestions": [{"title": "...", "description": "...", "type": "add_content|improve_explanation|add_questions|add_examples"}]}
+No preamble, no markdown, JSON only.`;
 
   } else if (context?.chapterTitle) {
-    // Course tutor mode
     systemPrompt = `You are StudyBot, an expert academic tutor built into StudyHub.
-The student is studying: "${context.chapterTitle}" (${context.courseName || 'unknown course'}).
-${context.summary ? `Course content: ${context.summary}` : ''}
-${context.allCourses ? `Other available courses: ${context.allCourses}` : ''}
+You are helping a student studying: "${context.chapterTitle}" — ${context.courseName || 'unknown course'}.
+${context.summary ? `Course content overview: ${context.summary}` : ''}
+${context.allCourses ? `Other courses available: ${context.allCourses}` : ''}
 
-Your role:
-- Answer questions about this course material clearly and thoroughly
-- Explain concepts with real-world examples
-- Generate practice questions with full worked answers when asked
-- When generating questions, number them: "Q1. [question]" then "Answer: [answer]"
-- Be encouraging and supportive
-- Use plain text only — no markdown symbols`;
+Your capabilities:
+- Answer questions about this material with clear explanations and real-world examples
+- Generate well-structured practice questions with complete worked answers
+- Identify gaps in understanding and suggest what to review
+- Compare related concepts clearly
+- When asked for questions, number them: "Q1. [question]" → "Answer: [answer]"
+- Always verify your answers before responding
+- Be encouraging, honest about uncertainty, and thorough
+- Plain text only — no markdown symbols`;
 
   } else {
-    // General tutor mode
-    systemPrompt = `You are StudyBot, an expert academic tutor built into StudyHub.
+    systemPrompt = `You are StudyBot, an expert academic tutor built into StudyHub — an AI-powered study platform for university students.
 ${context?.allCourses ? `Available courses: ${context.allCourses}` : ''}
-Help students understand their course material, explain concepts clearly, and generate practice questions.
-Be encouraging, clear, and thorough. Use plain text only — no markdown.`;
+
+Help students:
+- Understand course material with clear explanations and examples
+- Generate practice questions with complete answers
+- Prepare for exams with study strategies
+- Explain difficult concepts in multiple ways until understood
+
+Always: verify your answers, be honest about uncertainty, and encourage the student.
+Plain text only — no markdown.`;
   }
 
   try {
@@ -74,8 +97,8 @@ Be encouraging, clear, and thorough. Use plain text only — no markdown.`;
           { role: 'system', content: systemPrompt },
           ...messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
         ],
-        temperature: mode === 'assignment' ? 0.2 : 0.7,
-        max_tokens: mode === 'assignment' ? 4096 : 2048,
+        temperature: mode === 'assignment' ? 0.2 : mode === 'suggest' ? 0.6 : 0.7,
+        max_tokens: mode === 'assignment' ? 4096 : mode === 'suggest' ? 1024 : 2048,
       })
     });
 
@@ -83,7 +106,7 @@ Be encouraging, clear, and thorough. Use plain text only — no markdown.`;
 
     const data = await groqRes.json();
     const text = data.choices?.[0]?.message?.content || 'Sorry, I could not generate a response.';
-    return res.status(200).json({ reply: text });
+    return res.status(200).json({ reply: text, mode });
 
   } catch (err) {
     console.error('Chat error:', err);
