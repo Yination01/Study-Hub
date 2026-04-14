@@ -3401,23 +3401,33 @@ function DefinitionRow({def,isLast}){
 }
 
 const ALL_TABS=[
-  {id:'announcements', label:'📢 Notices'},
-  {id:'concepts',      label:'💡 Concepts'},
-  {id:'definitions',   label:'📖 Definitions'},
-  {id:'flashcards',    label:'🃏 Flashcards'},
-  {id:'quiz',          label:'🎯 Quiz'},
-  {id:'mechanisms',    label:'⚙️ Mechanisms'},
-  {id:'algorithms',    label:'🔢 Algorithms'},
-  {id:'takeaways',     label:'✨ Takeaways'},
-  {id:'questions',     label:'❓ Q&A'},
-  {id:'assignments',   label:'📋 Assignments'},
-  {id:'ca',            label:'📝 CA / Tests'},
-  {id:'resources',     label:'🔗 Resources'},
-  {id:'community',     label:'💬 Community'},
+  {id:'updates',  label:'📢 Updates'},
+  {id:'notes',    label:'📖 Study Notes'},
+  {id:'practice', label:'🎓 Practice'},
+  {id:'resources',label:'🔗 Resources'},
+  {id:'community',label:'💬 Community'},
 ];
 
 function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses,subCfg={}}){
-  const[tab,setTab]=useState(course.initialTab||'announcements');const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
+  // Map legacy initialTab values to new merged tab IDs
+  const resolveInitialTab=(t)=>{
+    if(!t) return 'updates';
+    if(['announcements','assignments','ca'].includes(t)) return 'updates';
+    if(['concepts','definitions','mechanisms','algorithms','takeaways'].includes(t)) return 'notes';
+    if(['questions','flashcards','quiz'].includes(t)) return 'practice';
+    return t; // resources, community — unchanged
+  };
+  const resolveInitialSection=(t)=>{
+    if(['assignments','ca'].includes(t)) return t;
+    if(['concepts','definitions','mechanisms','algorithms','takeaways'].includes(t)) return t;
+    if(['questions','flashcards','quiz'].includes(t)){
+      return t==='questions'?'qa':t;
+    }
+    return null;
+  };
+  const initTab=resolveInitialTab(course.initialTab);
+  const initSection=resolveInitialSection(course.initialTab);
+  const[tab,setTab]=useState(initTab);const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
   // Flashcard state
   const[fcIdx,setFcIdx]=useState(0);const[fcFlipped,setFcFlipped]=useState(false);const[fcDeck,setFcDeck]=useState('definitions');const[fcKnown,setFcKnown]=useState(new Set());
   // Quiz state
@@ -3425,6 +3435,8 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' = fill the gap
   const[fillInput,setFillInput]=useState('');const[fillRevealed,setFillRevealed]=useState(false);
   const[explainIdx,setExplainIdx]=useState(null);const[explainText,setExplainText]=useState({});const[explainLoading,setExplainLoading]=useState(false);
+  // AI suggestions state
+  const[suggestLoading,setSuggestLoading]=useState(false);const[suggestModal,setSuggestModal]=useState(null);
   const d=course.data;const cp=progress[course.id]||{viewed:false,openedQs:[]};const isPriv=user.role!==ROLE.USER;
   const isBookmarked=bookmarks.includes(course.id);
 
@@ -3436,12 +3448,10 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
   const totalQ=d.questions?.length||0;const pct=totalQ===0?0:Math.round(cp.openedQs.length/totalQ*100);
   const hasAlgo=d.algorithms?.length>0;
-  const tabs=ALL_TABS.filter(t=>{
-    if(t.id==='algorithms'&&!hasAlgo) return false;
-    if(t.id==='flashcards'&&!(d.definitions?.length||d.keyConcepts?.length)) return false;
-    if(t.id==='quiz'&&!totalQ) return false;
-    return true;
-  });
+  const tabs=ALL_TABS;
+  const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways'].includes(initSection)?initSection:'concepts'));
+  const[practiceSection,setPracticeSection]=useState((['qa','flashcards','quiz'].includes(initSection)?initSection:'qa'));
+  const[updatesSection,setUpdatesSection]=useState((['announcements','assignments','ca'].includes(initSection)?initSection:'announcements'));
   const filteredQ=(d.questions||[]).filter(q=>!filter||q.question.toLowerCase().includes(filter.toLowerCase()));
   const accent=YEAR_COLORS[course.year]||'#4f9cf9';
   const chatCtx={courseName:d.courseName,chapterTitle:d.chapterTitle,summary:[d.keyConcepts?.slice(0,5).map(c=>c.title).join(', '),d.chapters?.map(c=>c.name).join(', ')].filter(Boolean).join(' | ')};
@@ -3464,6 +3474,33 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
     const opts=[...shuffled,correct].sort(()=>Math.random()-.5);
     return opts;
   },[d.questions]);
+
+  // AI improvement suggestions — routes to approvals for superuser review
+  const askAiSuggestions=async()=>{
+    setSuggestLoading(true);
+    try{
+      const summary=`Concepts: ${(d.keyConcepts||[]).map(c=>c.title).join(', ')}. Definitions: ${(d.definitions||[]).length}. Questions: ${totalQ}. Mechanisms: ${(d.mechanisms||[]).length}.`;
+      const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        messages:[{role:'user',content:`Please suggest improvements for this course content.`}],
+        context:{mode:'suggest',chapterTitle:d.chapterTitle,courseName:d.courseName,summary,isSuperuser:user.role===ROLE.SUPERUSER}
+      })});
+      const data=await res.json();
+      const raw=data.reply||'{}';
+      const parsed=JSON.parse(raw.replace(/```json|```/g,'').trim());
+      setSuggestModal({suggestions:parsed.suggestions||[],courseId:course.id,chapterTitle:d.chapterTitle,courseName:d.courseName});
+    }catch(e){
+      setSuggestModal({error:'Could not generate suggestions: '+e.message,suggestions:[]});
+    }
+    setSuggestLoading(false);
+  };
+
+  const submitSuggestion=async(s)=>{
+    await dbSubmitPending('ai_suggestion',user.username,{
+      courseId:course.id,chapterTitle:d.chapterTitle,courseName:d.courseName,
+      suggestion:s,requestedAt:new Date().toISOString()
+    },`🤖 AI Suggestion: "${s.title}" for ${d.chapterTitle}`);
+    setSuggestModal(prev=>({...prev,submitted:{...prev.submitted,[s.title]:true}}));
+  };
 
   const startQuiz=()=>{setQuizStarted(true);setQuizIdx(0);setQuizChoice(null);setFillInput('');setFillRevealed(false);setQuizScore(0);setQuizLog([]);setQuizDone(false);setExplainIdx(null);setExplainText({});if(quizMode==='mc')setQuizOpts(buildQuizOpts(0));};
   const nextQuiz=()=>{
@@ -3515,8 +3552,62 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
             {isBookmarked?'🔖':'🔖'}
           </button>
           <button onClick={()=>exportCoursePDF(d,d.chapterTitle)} title="Export to PDF" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>⬇ PDF</button>
+          {/* AI Suggest — all roles can request, routes to approvals */}
+          <button onClick={askAiSuggestions} disabled={suggestLoading}
+            title="Ask AI to suggest improvements to this course"
+            style={{background:'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.25)',borderRadius:8,color:'#a8f94f',cursor:suggestLoading?'not-allowed':'pointer',padding:'7px 12px',fontSize:12,fontWeight:600,display:'flex',alignItems:'center',gap:5,opacity:suggestLoading?.65:1}}>
+            {suggestLoading?<><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Thinking…</>:<>🤖 Suggest</>}
+          </button>
         </div>
       </div>
+
+      {/* AI Suggestions Modal */}
+      {suggestModal&&(
+        <div className="modal-overlay" style={{zIndex:3100}} onClick={e=>e.target===e.currentTarget&&setSuggestModal(null)}>
+          <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'26px 24px',maxWidth:500,width:'calc(100% - 24px)',margin:'auto',maxHeight:'88vh',overflowY:'auto',boxShadow:'var(--shadow)'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+              <div>
+                <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'var(--text)'}}>🤖 AI Suggestions</div>
+                <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>For: {suggestModal.chapterTitle}</div>
+              </div>
+              <button onClick={()=>setSuggestModal(null)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,padding:4}}>✕</button>
+            </div>
+            {suggestModal.error&&<div style={{color:'#f05050',fontSize:13,padding:'12px 14px',background:'rgba(240,80,80,.06)',borderRadius:8,marginBottom:14}}>{suggestModal.error}</div>}
+            {user.role===ROLE.SUPERUSER&&(
+              <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:8,padding:'8px 13px',marginBottom:16,fontSize:11,color:'#f9a84f'}}>
+                ⚡ As superuser you can submit any suggestion directly or dismiss it. All suggestions go to your Approvals tab.
+              </div>
+            )}
+            {!user.isPriv&&!(user.role===ROLE.SUPERUSER)&&(
+              <div style={{background:'rgba(79,156,249,.06)',border:'1px solid rgba(79,156,249,.2)',borderRadius:8,padding:'8px 13px',marginBottom:16,fontSize:11,color:'#4f9cf9'}}>
+                Submitted suggestions go to the superuser for review before any changes are made.
+              </div>
+            )}
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              {(suggestModal.suggestions||[]).map((s,i)=>{
+                const submitted=suggestModal.submitted?.[s.title];
+                return(
+                  <div key={i} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:'14px 16px'}}>
+                    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,marginBottom:6}}>
+                      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'#a8f94f',fontWeight:700,letterSpacing:.5}}>{s.type?.replace(/_/g,' ').toUpperCase()}</div>
+                      {submitted&&<span style={{fontSize:10,color:'#7fda96',fontFamily:"'IBM Plex Mono',monospace"}}>✓ SUBMITTED</span>}
+                    </div>
+                    <div style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:5}}>{s.title}</div>
+                    <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.6,marginBottom:10}}>{s.description}</div>
+                    <button onClick={()=>!submitted&&submitSuggestion(s)} disabled={!!submitted}
+                      style={{background:submitted?'var(--border)':'rgba(168,249,79,.1)',border:`1px solid ${submitted?'transparent':'rgba(168,249,79,.3)'}`,borderRadius:7,color:submitted?'var(--muted)':'#a8f94f',cursor:submitted?'not-allowed':'pointer',padding:'6px 14px',fontSize:11,fontWeight:600}}>
+                      {submitted?'Submitted ✓':'Submit for Review'}
+                    </button>
+                  </div>
+                );
+              })}
+              {!(suggestModal.suggestions?.length)&&!suggestModal.error&&(
+                <div style={{color:'var(--muted)',textAlign:'center',padding:30,fontSize:13}}>No suggestions generated.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="fade-up" style={{borderBottom:'1px solid var(--border)',paddingBottom:24,marginBottom:28}}>
@@ -3536,34 +3627,145 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       </div>
 
       {/* Tab content */}
-      {tab==='concepts'&&<div className="fade-up">
-        <SectionLabel>Key Concepts</SectionLabel>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))',gap:12}}>
-          {(d.keyConcepts||[]).map((c,i)=>{
-            const col=(COLOR_MAP[c.color]||COLOR_MAP.blue).bar;
-            return(
-              <div key={i} className={`stagger-${Math.min(i%4+1,4)}`}
-                style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 18px',borderLeft:`3px solid ${col}`,position:'relative',overflow:'hidden'}}>
-                <div style={{position:'absolute',top:0,right:0,width:60,height:60,borderRadius:'0 12px 0 60px',background:`${col}08`}}/>
-                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:col,marginBottom:6,letterSpacing:.5}}>{c.title}</div>
-                <p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.7,margin:0}}>{c.description}</p>
+
+      {tab==='updates'&&(
+        <div className="fade-up">
+          <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
+            {[
+              {id:'announcements',label:'📢 Announcements'},
+              {id:'assignments',  label:'📋 Assignments'},
+              {id:'ca',           label:'📝 CA / Tests'},
+            ].map(s=>(
+              <button key={s.id} onClick={()=>setUpdatesSection(s.id)}
+                style={{padding:'7px 16px',borderRadius:20,border:`1.5px solid ${updatesSection===s.id?'#f9a84f':'var(--border)'}`,background:updatesSection===s.id?'rgba(249,168,79,.1)':'var(--surface)',color:updatesSection===s.id?'#f9a84f':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:updatesSection===s.id?700:400,transition:'all .15s'}}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+          {updatesSection==='announcements'&&<AnnouncementsTab courseId={course.id} user={user} onNew={()=>{}}/>}
+          {updatesSection==='assignments'&&<AssignmentsTab courseId={course.id} user={user}/>}
+          {updatesSection==='ca'&&<CATab courseId={course.id} user={user}/>}
+        </div>
+      )}
+
+      {tab==='notes'&&(
+        <div className="fade-up">
+          <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
+            {[
+              {id:'concepts',   label:'💡 Concepts',   count:d.keyConcepts?.length||0},
+              {id:'definitions',label:'📖 Definitions',count:d.definitions?.length||0},
+              {id:'mechanisms', label:'⚙️ Mechanisms', count:d.mechanisms?.length||0},
+              ...(hasAlgo?[{id:'algorithms',label:'🔢 Algorithms',count:d.algorithms?.length||0}]:[]),
+              {id:'takeaways',  label:'✨ Takeaways',  count:d.chapters?.length||0},
+            ].map(s=>(
+              <button key={s.id} onClick={()=>setNotesSection(s.id)}
+                style={{padding:'7px 16px',borderRadius:20,border:`1.5px solid ${notesSection===s.id?'#4f9cf9':'var(--border)'}`,background:notesSection===s.id?'rgba(79,156,249,.1)':'var(--surface)',color:notesSection===s.id?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:notesSection===s.id?700:400,transition:'all .15s',display:'flex',alignItems:'center',gap:6}}>
+                {s.label}
+                {s.count>0&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:notesSection===s.id?'rgba(79,156,249,.2)':'var(--border)',color:notesSection===s.id?'#4f9cf9':'var(--muted)',borderRadius:10,padding:'1px 6px'}}>{s.count}</span>}
+              </button>
+            ))}
+          </div>
+          {notesSection==='concepts'&&<div className="fade-up">
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))',gap:12}}>
+              {(d.keyConcepts||[]).map((c,i)=>{const col=(COLOR_MAP[c.color]||COLOR_MAP.blue).bar;return(
+                <div key={i} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 18px',borderLeft:`3px solid ${col}`,position:'relative',overflow:'hidden'}}>
+                  <div style={{position:'absolute',top:0,right:0,width:60,height:60,borderRadius:'0 12px 0 60px',background:`${col}08`}}/>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:col,marginBottom:6,letterSpacing:.5}}>{c.title}</div>
+                  <p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.7,margin:0}}>{c.description}</p>
+                </div>);})
+              }
+              {!(d.keyConcepts?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,gridColumn:'1/-1'}}>No concepts yet.</div>}
+            </div>
+          </div>}
+          {notesSection==='definitions'&&<div className="fade-up">
+            <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+              {(d.definitions||[]).map((def,i)=><DefinitionRow key={i} def={def} isLast={i===d.definitions.length-1}/>)}
+            </div>
+            {!(d.definitions?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No definitions yet.</div>}
+          </div>}
+          {notesSection==='mechanisms'&&<div className="fade-up">
+            <div style={{display:'flex',flexDirection:'column',gap:13}}>
+              {(d.mechanisms||[]).map((m,i)=>(
+                <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'18px 22px'}}>
+                  <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:10}}>{m.title}</div>
+                  <p style={{fontSize:13,color:'var(--muted)',lineHeight:1.85,margin:0,whiteSpace:'pre-line'}}>{m.body}</p>
+                </div>))}
+              {!(d.mechanisms?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No mechanisms yet.</div>}
+            </div>
+          </div>}
+          {notesSection==='algorithms'&&hasAlgo&&<div className="fade-up">
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(228px,1fr))',gap:11}}>
+              {(d.algorithms||[]).map((a,i)=>(
+                <div key={i} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:8,padding:'13px 15px'}}>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'#da7ff0',fontWeight:600,marginBottom:5}}>{a.name}</div>
+                  <p style={{fontSize:12,color:'var(--muted)',lineHeight:1.65,margin:0}}>{a.description}</p>
+                  {a.note&&<p style={{fontSize:11,color:'#f9a84f',marginTop:5,marginBottom:0}}>{a.note}</p>}
+                </div>))}
+            </div>
+          </div>}
+          {notesSection==='takeaways'&&<div className="fade-up">
+            <div style={{display:'flex',flexDirection:'column',gap:15}}>
+              {(d.chapters||[]).map((ch,i)=>(
+                <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:'18px 22px'}}>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:2,textTransform:'uppercase',marginBottom:3}}>{ch.num}</div>
+                  <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:11}}>{ch.name}</div>
+                  <div style={{display:'flex',flexDirection:'column',gap:9}}>{(ch.takeaways||[]).map((t,j)=>(
+                    <div key={j} style={{display:'flex',gap:11,alignItems:'flex-start',fontSize:13,color:'var(--text)'}}>
+                      <span style={{color:'#da7ff0',flexShrink:0}}>-></span><span>{t}</span>
+                    </div>))}
+                  </div>
+                </div>))}
+              {!(d.chapters?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No takeaways yet.</div>}
+            </div>
+          </div>}
+        </div>
+      )}
+
+      {tab==='practice'&&(
+        <div className="fade-up">
+          <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
+            {[
+              {id:'qa',label:'❓ Q&A',count:totalQ},
+              ...(d.definitions?.length||d.keyConcepts?.length?[{id:'flashcards',label:'🃏 Flashcards'}]:[]),
+              ...(totalQ>=4?[{id:'quiz',label:'🎯 Quiz'}]:[]),
+            ].map(s=>(
+              <button key={s.id} onClick={()=>setPracticeSection(s.id)}
+                style={{padding:'7px 16px',borderRadius:20,border:`1.5px solid ${practiceSection===s.id?'#7fda96':'var(--border)'}`,background:practiceSection===s.id?'rgba(127,218,150,.1)':'var(--surface)',color:practiceSection===s.id?'#7fda96':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:practiceSection===s.id?700:400,transition:'all .15s',display:'flex',alignItems:'center',gap:6}}>
+                {s.label}
+                {s.count>0&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:practiceSection===s.id?'rgba(127,218,150,.2)':'var(--border)',color:practiceSection===s.id?'#7fda96':'var(--muted)',borderRadius:10,padding:'1px 6px'}}>{s.count}</span>}
+              </button>
+            ))}
+          </div>
+          {practiceSection==='qa'&&(
+
+        <div className="fade-up">
+          <SectionLabel>Practice Questions & Answers</SectionLabel>
+          {!isPriv&&<div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',marginBottom:14,display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:6,fontSize:12,color:'var(--muted)'}}>
+            <span>Click to reveal answers — progress saved automatically.</span>
+            <span style={{color:'#4f9cf9',fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>{cp.openedQs.length}/{totalQ} opened</span>
+          </div>}
+          <SearchBar value={filter} onChange={setFilter} placeholder="Search questions…"/>
+          <Mono color="var(--muted)" size={9}>SHOWING {filteredQ.length} OF {totalQ} QUESTIONS</Mono>
+          <div style={{display:'flex',flexDirection:'column',gap:9,marginTop:12}}>
+            {filteredQ.map(q=>{const ri=(d.questions||[]).indexOf(q);const isOpen=openQ===ri;const seen=cp.openedQs.includes(ri);return(
+              <div key={ri} className="fade-in" style={{background:'var(--card)',border:`1px solid ${seen?'rgba(127,218,150,.3)':'var(--border)'}`,borderRadius:10,overflow:'hidden'}}>
+                <div onClick={()=>revealQ(ri)} style={{padding:'13px 17px',display:'flex',alignItems:'flex-start',gap:12,cursor:'pointer'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:seen?'#7fda96':'#4f9cf9',color:'#000',borderRadius:4,padding:'2px 6px',flexShrink:0,marginTop:3}}>Q{ri+1}</span>
+                  <span style={{fontSize:13.5,color:'var(--text)',fontWeight:500,lineHeight:1.6,flex:1}}>{q.question}</span>
+                  <span style={{color:'var(--muted)',fontSize:18,flexShrink:0,lineHeight:1}}>{isOpen?'−':'+'}</span>
+                </div>
+                {isOpen&&<div className="fade-in" style={{borderTop:'1px solid var(--border)',padding:'14px 17px',background:'rgba(79,156,249,.03)'}}>
+                  <Mono color="#7fda96" size={9}>Answer</Mono>
+                  <p style={{fontSize:13,color:'var(--text)',lineHeight:1.8,margin:'8px 0 0',whiteSpace:'pre-line'}}>{q.answer}</p>
+                </div>}
               </div>
-            );
-          })}
+            );})}
+          </div>
         </div>
-        {!(d.keyConcepts?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No key concepts in this course.</div>}
-      </div>}
 
-      {tab==='definitions'&&<div className="fade-up">
-        <SectionLabel>Terms & Definitions</SectionLabel>
-        <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
-          {(d.definitions||[]).map((def,i)=><DefinitionRow key={i} def={def} isLast={i===d.definitions.length-1}/>)}
-        </div>
-        {!(d.definitions?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No definitions in this course.</div>}
-      </div>}
-
-      {/* ── Flashcards ───────────────────────────────────────────────── */}
-      {tab==='flashcards'&&<div className="fade-up">
+          )}
+          {practiceSection==='flashcards'&&
+<div className="fade-up">
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:10}}>
           <SectionLabel>Flashcards</SectionLabel>
           <div style={{display:'flex',gap:6}}>
@@ -3650,7 +3852,9 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       </div>}
 
       {/* ── Quiz mode ───────────────────────────────────────────────── */}
-      {tab==='quiz'&&<div className="fade-up">
+          }
+          {practiceSection==='quiz'&&
+<div className="fade-up">
 
         {/* ── Start screen ─────────────────────────────────────────── */}
         {!quizStarted&&!quizDone&&(
@@ -3891,43 +4095,10 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           );
         })()}
       </div>}
-
-      {tab==='mechanisms'&&<div className="fade-up"><SectionLabel>Mechanisms Explained</SectionLabel><div style={{display:'flex',flexDirection:'column',gap:13}}>{(d.mechanisms||[]).map((m,i)=><div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'18px 22px'}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:10}}>{m.title}</div><p style={{fontSize:13,color:'var(--muted)',lineHeight:1.85,margin:0,whiteSpace:'pre-line'}}>{m.body}</p></div>)}</div></div>}
-
-      {tab==='algorithms'&&hasAlgo&&<div className="fade-up"><SectionLabel>Algorithms & Methods</SectionLabel><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(228px,1fr))',gap:11}}>{(d.algorithms||[]).map((a,i)=><div key={i} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:8,padding:'13px 15px'}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'#da7ff0',fontWeight:600,marginBottom:5}}>{a.name}</div><p style={{fontSize:12,color:'var(--muted)',lineHeight:1.65,margin:0}}>{a.description}</p>{a.note&&<p style={{fontSize:11,color:'#f9a84f',marginTop:5,marginBottom:0}}>{a.note}</p>}</div>)}</div></div>}
-
-      {tab==='takeaways'&&<div className="fade-up"><SectionLabel>Takeaways Per Chapter</SectionLabel><div style={{display:'flex',flexDirection:'column',gap:15}}>{(d.chapters||[]).map((ch,i)=><div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:'18px 22px'}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:2,textTransform:'uppercase',marginBottom:3}}>{ch.num}</div><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:11}}>{ch.name}</div><div style={{display:'flex',flexDirection:'column',gap:9}}>{(ch.takeaways||[]).map((t,j)=><div key={j} style={{display:'flex',gap:11,alignItems:'flex-start',fontSize:13,color:'var(--text)'}}><span style={{color:'#da7ff0',flexShrink:0}}>→</span><span>{t}</span></div>)}</div></div>)}</div></div>}
-
-      {tab==='questions'&&(
-        <div className="fade-up">
-          <SectionLabel>Practice Questions & Answers</SectionLabel>
-          {!isPriv&&<div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',marginBottom:14,display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:6,fontSize:12,color:'var(--muted)'}}>
-            <span>Click to reveal answers — progress saved automatically.</span>
-            <span style={{color:'#4f9cf9',fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>{cp.openedQs.length}/{totalQ} opened</span>
-          </div>}
-          <SearchBar value={filter} onChange={setFilter} placeholder="Search questions…"/>
-          <Mono color="var(--muted)" size={9}>SHOWING {filteredQ.length} OF {totalQ} QUESTIONS</Mono>
-          <div style={{display:'flex',flexDirection:'column',gap:9,marginTop:12}}>
-            {filteredQ.map(q=>{const ri=(d.questions||[]).indexOf(q);const isOpen=openQ===ri;const seen=cp.openedQs.includes(ri);return(
-              <div key={ri} className="fade-in" style={{background:'var(--card)',border:`1px solid ${seen?'rgba(127,218,150,.3)':'var(--border)'}`,borderRadius:10,overflow:'hidden'}}>
-                <div onClick={()=>revealQ(ri)} style={{padding:'13px 17px',display:'flex',alignItems:'flex-start',gap:12,cursor:'pointer'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:seen?'#7fda96':'#4f9cf9',color:'#000',borderRadius:4,padding:'2px 6px',flexShrink:0,marginTop:3}}>Q{ri+1}</span>
-                  <span style={{fontSize:13.5,color:'var(--text)',fontWeight:500,lineHeight:1.6,flex:1}}>{q.question}</span>
-                  <span style={{color:'var(--muted)',fontSize:18,flexShrink:0,lineHeight:1}}>{isOpen?'−':'+'}</span>
-                </div>
-                {isOpen&&<div className="fade-in" style={{borderTop:'1px solid var(--border)',padding:'14px 17px',background:'rgba(79,156,249,.03)'}}>
-                  <Mono color="#7fda96" size={9}>Answer</Mono>
-                  <p style={{fontSize:13,color:'var(--text)',lineHeight:1.8,margin:'8px 0 0',whiteSpace:'pre-line'}}>{q.answer}</p>
-                </div>}
-              </div>
-            );})}
-          </div>
+          }
         </div>
       )}
 
-      {tab==='announcements'&&<AnnouncementsTab courseId={course.id} user={user} onNew={()=>{}}/>}
-      {tab==='assignments'&&<AssignmentsTab courseId={course.id} user={user}/>}
-      {tab==='ca'&&<CATab courseId={course.id} user={user}/>}
       {tab==='resources'&&<ResourcesTab courseId={course.id} user={user}/>}
       {tab==='community'&&<CommunityBoard courseId={course.id} user={user} subCfg={subCfg}/>}
     </div>
@@ -4007,10 +4178,12 @@ function AnalyticsTab({courses}){
 
 /* ═══════════════ APPROVALS TAB ═══════════════ */
 const ACTION_LABELS={
-  add_course:   {icon:'📚',label:'Add Course',    color:'#4f9cf9'},
-  delete_course:{icon:'🗑',label:'Delete Course', color:'#f05050'},
-  add_resource: {icon:'🔗',label:'Add Resource',  color:'#7fda96'},
-  delete_resource:{icon:'🗑',label:'Delete Resource',color:'#f9a84f'},
+  add_course:       {icon:'📚',label:'Add Course',        color:'#4f9cf9'},
+  delete_course:    {icon:'🗑', label:'Delete Course',     color:'#f05050'},
+  add_resource:     {icon:'🔗',label:'Add Resource',      color:'#7fda96'},
+  delete_resource:  {icon:'🗑', label:'Delete Resource',   color:'#f9a84f'},
+  ai_suggestion:    {icon:'🤖',label:'AI Suggestion',     color:'#a8f94f'},
+  duplicate_warning:{icon:'⚠️',label:'Duplicate Warning', color:'#f9a84f'},
 };
 
 function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
@@ -4038,6 +4211,8 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
       if(action.action_type==='delete_resource'){
         await dbDeleteResource(action.payload.id);
       }
+      // AI suggestion — no automated action on approval, superuser acknowledges it
+      // (implementing the suggestion is a separate manual or upload action)
       await dbReviewPending(action.id,'approved',reviewerUsername);
     }catch(e){console.error(e);}
     setBusy('');await load();
@@ -6398,7 +6573,8 @@ export default function App(){
         <Chatbot context={view==='course'&&active?{
           courseName:active.data?.courseName,
           chapterTitle:active.data?.chapterTitle,
-          summary:active.data?.keyConcepts?.slice(0,5).map(c=>c.title).join(', ')
+          summary:active.data?.keyConcepts?.slice(0,5).map(c=>c.title).join(', '),
+          isSuperuser:user?.role===ROLE.SUPERUSER
         }:null} courses={courses} user={user} subCfg={subCfg}/>
       )}
 
