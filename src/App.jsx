@@ -3711,7 +3711,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:11}}>{ch.name}</div>
                   <div style={{display:'flex',flexDirection:'column',gap:9}}>{(ch.takeaways||[]).map((t,j)=>(
                     <div key={j} style={{display:'flex',gap:11,alignItems:'flex-start',fontSize:13,color:'var(--text)'}}>
-                      <span style={{color:'#da7ff0',flexShrink:0}}>-></span><span>{t}</span>
+                      <span style={{color:'#da7ff0',flexShrink:0}}>→</span><span>{t}</span>
                     </div>))}
                   </div>
                 </div>))}
@@ -3852,7 +3852,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       </div>}
 
       {/* ── Quiz mode ───────────────────────────────────────────────── */}
-          }
           {practiceSection==='quiz'&&
 <div className="fade-up">
 
@@ -4095,7 +4094,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           );
         })()}
       </div>}
-          }
         </div>
       )}
 
