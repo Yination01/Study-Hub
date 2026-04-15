@@ -454,8 +454,14 @@ async function dbLoadSubConfig(){
 async function dbSaveSubConfig(key,value,updatedBy){
   try{await supabase.from('subscription_config').upsert({key,value,updated_by:updatedBy,updated_at:new Date().toISOString()},{onConflict:'key'});}catch(e){console.error(e);}
 }
-async function dbSetUserTier(username,tier){
-  try{await supabase.from('users').update({subscription_tier:tier}).eq('username',username);}catch(e){console.error(e);}
+async function dbSetUserTier(username,tier,expiresAt=null,plan=null){
+  try{
+    const update={subscription_tier:tier};
+    if(expiresAt) update.sub_expires_at=expiresAt;
+    if(plan) update.sub_plan=plan;
+    if(tier==='free'){update.sub_expires_at=null;update.sub_plan=null;}
+    await supabase.from('users').update(update).eq('username',username);
+  }catch(e){console.error(e);}
 }
 
 /* ═══════════════ CONFIG ═══════════════ */
@@ -1719,18 +1725,50 @@ function safeParse(raw){
 }
 
 const JSON_PROMPT=`Generate a StudyHub JSON study guide for this document.
+
+StudyHub has 5 tabs per course:
+• 📖 Study Notes  → keyConcepts, definitions, mechanisms, algorithms, chapters/takeaways
+• 🎓 Practice     → questions (used for Q&A reveal, Flashcards, and auto-generated Quiz)
+• 📢 Updates      → announcements, assignments, CA/tests (added separately by admins)
+• 🔗 Resources    → external links (added separately)
+• 💬 Community    → student discussion (added separately)
+
+Your job: generate the Study Notes and Practice content only.
+
 Return ONLY valid JSON with this exact structure:
 {
-  "courseName": "e.g. COS 341",
-  "chapterTitle": "full chapter title",
-  "keyConcepts": [{"title":"","description":"one sentence","color":"blue|orange|green|purple"}],
-  "definitions": [{"term":"","definition":""}],
-  "mechanisms": [{"title":"","body":"step-by-step; use \\n\\n for paragraph breaks"}],
-  "algorithms": [{"name":"","description":"","note":""}],
-  "chapters": [{"num":"Chapter X","name":"","takeaways":["","",""]}],
-  "questions": [{"question":"","answer":""}]
+  "courseName": "Course code only — e.g. COS 341 or MTH 201",
+  "chapterTitle": "Full descriptive chapter or topic title",
+  "keyConcepts": [
+    {"title": "Concept name", "description": "One clear sentence explaining what this concept is", "color": "blue|orange|green|purple"}
+  ],
+  "definitions": [
+    {"term": "Technical term", "definition": "Precise definition a student can memorise"}
+  ],
+  "mechanisms": [
+    {"title": "Process or mechanism name", "body": "Step-by-step explanation. Use \\n\\n between paragraphs for readability."}
+  ],
+  "algorithms": [
+    {"name": "Algorithm or method name", "description": "What it does and how", "note": "Time complexity or key caveat — leave empty string if not applicable"}
+  ],
+  "chapters": [
+    {"num": "Chapter 1", "name": "Chapter title", "takeaways": ["Key point 1", "Key point 2", "Key point 3"]}
+  ],
+  "questions": [
+    {"question": "Full exam-style question", "answer": "Complete worked answer with reasoning"}
+  ]
 }
-Rules: keyConcepts 12-18, definitions 20-35, mechanisms 4-7, algorithms [] if none, chapters 4-8 with EXACTLY 3 takeaways each, questions EXACTLY 25 exam-style with full worked answers. Return ONLY the JSON.`;
+
+Quality rules:
+- keyConcepts: 12–18 items covering all major topics
+- definitions: 20–35 terms, precise and exam-ready
+- mechanisms: 4–7 items for processes, workflows, or multi-step concepts
+- algorithms: empty array [] if the document has none
+- chapters: 4–8 chapters, EXACTLY 3 takeaways each — make them specific and memorable
+- questions: EXACTLY 25 exam-style questions spanning all difficulty levels, with complete worked answers
+- Use plain text only — no markdown symbols in any field
+- Return ONLY the JSON object, nothing else`;
+
 
 /* Format descriptions shown in the info card when a chip is selected */
 const FORMAT_INFO = {
@@ -4376,12 +4414,15 @@ const TIER_CONFIG={
   external:{label:'External',   color:'#a8f94f',icon:'🌐',badge:'Pro' },
 };
 
-function SubscriptionBadge({tier,role}){
+function SubscriptionBadge({tier,role,expiresAt}){
   if(role===ROLE.SUPERUSER) return null;
   const t=TIER_CONFIG[tier]||TIER_CONFIG.free;
+  const isExpired=expiresAt&&new Date(expiresAt)<new Date();
+  const daysLeft=expiresAt?Math.max(0,Math.ceil((new Date(expiresAt)-new Date())/(1000*60*60*24))):null;
+  const warn=tier==='pro'&&daysLeft!==null&&daysLeft<=7;
   return(
-    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:`${t.color}20`,color:t.color,border:`1px solid ${t.color}40`,borderRadius:4,padding:'1px 6px',letterSpacing:1,fontWeight:700}}>
-      {t.icon} {t.badge}
+    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:isExpired?'rgba(240,80,80,.15)':warn?'rgba(249,168,79,.2)':`${t.color}20`,color:isExpired?'#f05050':warn?'#f9a84f':t.color,border:`1px solid ${isExpired?'rgba(240,80,80,.4)':warn?'rgba(249,168,79,.4)':t.color+'40'}`,borderRadius:4,padding:'1px 6px',letterSpacing:1,fontWeight:700}}>
+      {isExpired?'⚠ EXPIRED':warn?`⭐ ${daysLeft}d left`:t.icon+' '+t.badge}
     </span>
   );
 }
@@ -4739,6 +4780,118 @@ function SettingsTab({onReload,superuserName}){
 }
 
 /* ═══════════════ USER ROW ═══════════════ */
+/* ─── Subscription Manager — shown inside UserRow for superuser ─── */
+function SubscriptionManager({u,onSaved}){
+  const PLANS=[
+    {id:'1month',  label:'1 Month',     months:1,  color:'#8892a4'},
+    {id:'semester',label:'Semester',    months:5,  color:'#4f9cf9'},
+    {id:'6month',  label:'6 Months',    months:6,  color:'#7fda96'},
+    {id:'yearly',  label:'Full Year',   months:12, color:'#f9a84f'},
+  ];
+
+  const currentTier = u.subscription_tier||'free';
+  const expiresAt   = u.sub_expires_at;
+  const currentPlan = u.sub_plan;
+
+  const[sel,setSel]=useState(currentPlan||'semester');
+  const[saving,setSaving]=useState(false);
+  const[saved,setSaved]=useState(false);
+
+  const isExpired = expiresAt && new Date(expiresAt)<new Date();
+  const daysLeft  = expiresAt
+    ? Math.max(0,Math.ceil((new Date(expiresAt)-new Date())/(1000*60*60*24)))
+    : null;
+
+  const activate=async()=>{
+    const plan=PLANS.find(p=>p.id===sel);if(!plan)return;
+    setSaving(true);
+    const expires=new Date();
+    expires.setMonth(expires.getMonth()+plan.months);
+    await dbSetUserTier(u.username,'pro',expires.toISOString(),plan.id);
+    setSaved(true);setSaving(false);
+    setTimeout(()=>setSaved(false),2500);
+    onSaved?.();
+  };
+
+  const revoke=async()=>{
+    setSaving(true);
+    await dbSetUserTier(u.username,'free',null,null);
+    setSaving(false);onSaved?.();
+  };
+
+  return(
+    <div style={{background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+
+      {/* Current status */}
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,letterSpacing:.5,
+          background:currentTier==='pro'?'rgba(249,168,79,.15)':'var(--border)',
+          color:currentTier==='pro'?'#f9a84f':'var(--muted)',
+          border:`1px solid ${currentTier==='pro'?'rgba(249,168,79,.4)':'transparent'}`,
+          borderRadius:5,padding:'2px 8px',fontWeight:700}}>
+          {currentTier==='pro'?'⭐ PRO':'🎓 FREE'}
+        </span>
+        {currentTier==='pro'&&expiresAt&&(
+          <span style={{fontSize:10,color:isExpired?'#f05050':daysLeft<=14?'#f9a84f':'var(--muted)'}}>
+            {isExpired
+              ?'⚠ Expired '+new Date(expiresAt).toLocaleDateString()
+              :`Expires ${new Date(expiresAt).toLocaleDateString()} · ${daysLeft}d left`}
+          </span>
+        )}
+        {currentTier==='pro'&&!expiresAt&&(
+          <span style={{fontSize:10,color:'var(--muted)'}}>No expiry set</span>
+        )}
+      </div>
+
+      {/* Plan selector */}
+      <div style={{marginBottom:10}}>
+        <div style={{fontSize:9,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1,marginBottom:6}}>
+          {currentTier==='pro'?'EXTEND / CHANGE PLAN':'ACTIVATE PRO — SELECT PLAN'}
+        </div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {PLANS.map(p=>(
+            <button key={p.id} onClick={()=>setSel(p.id)}
+              style={{padding:'6px 12px',borderRadius:8,fontSize:11,cursor:'pointer',fontWeight:sel===p.id?700:400,
+                border:`1.5px solid ${sel===p.id?p.color:'var(--border)'}`,
+                background:sel===p.id?`${p.color}14`:'transparent',
+                color:sel===p.id?p.color:'var(--muted)',transition:'all .15s'}}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Preview */}
+      {sel&&(()=>{
+        const plan=PLANS.find(p=>p.id===sel);
+        const exp=new Date();exp.setMonth(exp.getMonth()+plan.months);
+        return(
+          <div style={{fontSize:10,color:'var(--muted)',marginBottom:10,fontFamily:"'IBM Plex Mono',monospace"}}>
+            → Pro until <span style={{color:plan.color,fontWeight:700}}>{exp.toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}</span>
+          </div>
+        );
+      })()}
+
+      {/* Action buttons */}
+      <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
+        <button onClick={activate} disabled={saving||saved}
+          style={{background:saved?'rgba(127,218,150,.15)':'rgba(79,156,249,.12)',border:`1px solid ${saved?'rgba(127,218,150,.4)':'rgba(79,156,249,.3)'}`,
+            borderRadius:8,color:saved?'#7fda96':'#4f9cf9',cursor:saving||saved?'default':'pointer',
+            padding:'7px 14px',fontSize:11,fontWeight:700}}>
+          {saving?'Saving…':saved?'✓ Saved!':currentTier==='pro'?'Update Plan':'Activate Pro'}
+        </button>
+        {currentTier==='pro'&&(
+          <button onClick={revoke} disabled={saving}
+            style={{background:'rgba(240,80,80,.08)',border:'1px solid rgba(240,80,80,.25)',borderRadius:8,
+              color:'#f05050',cursor:saving?'default':'pointer',padding:'7px 14px',fontSize:11,fontWeight:600}}>
+            Revoke Pro
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
   const[expanded,setExpanded]=useState(false);
   const[busy,setBusy]=useState('');
@@ -4778,7 +4931,7 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
           </div>
         </div>
         <RolePill role={isAdm?ROLE.ADMIN:isExternal?ROLE.EXTERNAL:ROLE.USER} accountType={localAccountType}/>
-        <SubscriptionBadge tier={u.subscription_tier||'free'} role={isAdm?ROLE.ADMIN:isExternal?ROLE.EXTERNAL:ROLE.USER}/>
+        <SubscriptionBadge tier={u.subscription_tier||'free'} role={isAdm?ROLE.ADMIN:isExternal?ROLE.EXTERNAL:ROLE.USER} expiresAt={u.sub_expires_at}/>
         {!isExternal&&localYear>0&&(
           <div style={{background:YEAR_BG[localYear]||'transparent',border:`1px solid ${YEAR_COLORS[localYear]||'var(--border)'}40`,borderRadius:5,padding:'3px 9px'}}>
             <Mono color={YEAR_COLORS[localYear]||'var(--muted)'} size={9}>Yr {localYear}</Mono>
@@ -4841,29 +4994,11 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
             </div>
           )}
 
-          {/* Subscription tier — superuser only */}
+          {/* Subscription management — superuser only */}
           {isSU2&&(
             <div>
-              <div style={{fontSize:11,color:'var(--muted)',marginBottom:7,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>SUBSCRIPTION TIER</div>
-              <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
-                {[{k:'free',label:'🎓 Free',color:'#8892a4'},{k:'pro',label:'⭐ Pro',color:'#f9a84f'}].map(t=>{
-                  const active=(u.subscription_tier||'free')===t.k;
-                  return(
-                    <button key={t.k} onClick={async()=>{
-                      setBusy('tier');
-                      await supabase.from('users').update({subscription_tier:t.k}).eq('username',u.username);
-                      setBusy('');
-                    }} disabled={busy==='tier'}
-                      style={{padding:'7px 16px',borderRadius:8,cursor:'pointer',border:`1.5px solid ${active?t.color:t.color+'30'}`,background:active?`${t.color}14`:'var(--input-bg)',color:active?t.color:'var(--muted)',fontWeight:active?700:400,fontSize:12}}>
-                      {t.label}
-                    </button>
-                  );
-                })}
-                {busy==='tier'&&<Mono color="var(--muted)" size={9}>Saving…</Mono>}
-              </div>
-              <div style={{fontSize:10,color:'var(--muted)',marginTop:4}}>
-                Current: <span style={{color:TIER_CONFIG[u.subscription_tier||'free']?.color||'#8892a4',fontWeight:600}}>{TIER_CONFIG[u.subscription_tier||'free']?.label||'Free'}</span>
-              </div>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>SUBSCRIPTION</div>
+              <SubscriptionManager u={u} onSaved={()=>setBusy('')}/>
             </div>
           )}
 
@@ -4919,10 +5054,12 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
     const usernames=[...selectedUsers];
     try{
       if(bulkAction==='make_pro'){
-        await Promise.all(usernames.map(u=>supabase.from('users').update({subscription_tier:'pro'}).eq('username',u)));
-        flash(`✓ Set ${usernames.length} user(s) to Pro`);
+        // Set pro with 1-semester default when bulk-setting (superuser can refine per user)
+        const defExp=new Date();defExp.setMonth(defExp.getMonth()+5);
+        await Promise.all(usernames.map(u=>dbSetUserTier(u,'pro',defExp.toISOString(),'semester')));
+        flash(`✓ Set ${usernames.length} user(s) to Pro (semester plan)`);
       }else if(bulkAction==='make_free'){
-        await Promise.all(usernames.map(u=>supabase.from('users').update({subscription_tier:'free'}).eq('username',u)));
+        await Promise.all(usernames.map(u=>dbSetUserTier(u,'free')));
         flash(`✓ Set ${usernames.length} user(s) to Free`);
       }else if(bulkAction==='make_admin'){
         const current=await dbLoadAdmins();
@@ -5720,7 +5857,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
               <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3,flexWrap:'wrap'}}>
                 <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
-                {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'} role={user.role}/>}
+                {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'} role={user.role} expiresAt={user.sub_expires_at}/>}
                 {user.role===ROLE.USER&&!user.isGuest&&<Mono color="var(--muted)" size={9}>Yr {user.year} · @{user.username}</Mono>}
                 {isExternal&&<Mono color="#a8f94f" size={9}>@{user.username} · External</Mono>}
                 {user.isGuest&&<Mono color="var(--muted)" size={9}>Preview mode</Mono>}
@@ -5776,7 +5913,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
                 <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
                 <div style={{display:'flex',gap:6,marginTop:4,flexWrap:'wrap'}}>
                   <RolePill role={user.role} accountType={user.accountType}/>
-                  {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'} role={user.role}/>}
+                  {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'} role={user.role} expiresAt={user.sub_expires_at}/>}
                 </div>
                 {user.role===ROLE.USER&&!user.isGuest&&<div style={{fontSize:10,color:'var(--muted)',marginTop:3}}>Year {user.year} · @{user.username}</div>}
               </div>
