@@ -145,6 +145,8 @@ const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Di
   @keyframes slideUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
   @keyframes slideDown {from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
   @keyframes slideRight {from{opacity:0;transform:translateX(-100%)}to{opacity:1;transform:translateX(0)}}
+  @keyframes confettiFall{0%{transform:translateY(-10px) rotate(0deg);opacity:1}100%{transform:translateY(140px) rotate(720deg);opacity:0}}
+  .confetti-piece{position:fixed;width:9px;height:9px;border-radius:2px;animation:confettiFall 1s ease-out forwards;pointer-events:none;z-index:9999}
   .slide-up{animation:slideUp .28s cubic-bezier(.4,0,.2,1) both}
   .slide-down{animation:slideDown .28s cubic-bezier(.4,0,.2,1) both}
   .slide-right{animation:slideRight .28s cubic-bezier(.4,0,.2,1) both}
@@ -468,7 +470,48 @@ async function dbSetUserTier(username,tier,expiresAt=null,plan=null){
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '4.1.0';
+const APP_VERSION    = '4.2.0';
+
+/* ═══════════════ XP / GAMIFICATION ═══════════════ */
+const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5};
+const XP_LEVELS=[
+  {level:1,title:'Freshman',   min:0,    color:'#8892a4'},
+  {level:2,title:'Sophomore',  min:100,  color:'#4f9cf9'},
+  {level:3,title:'Junior',     min:300,  color:'#7fda96'},
+  {level:4,title:'Senior',     min:600,  color:'#f9a84f'},
+  {level:5,title:'Graduate',   min:1000, color:'#da7ff0'},
+  {level:6,title:'Scholar',    min:1500, color:'#a8f94f'},
+  {level:7,title:'Honors',     min:2200, color:'#f9a84f'},
+  {level:8,title:'Dean's List',min:3000,color:'#ff6b9d'},
+];
+function getLevel(xp){
+  let lvl=XP_LEVELS[0];
+  for(const l of XP_LEVELS){if(xp>=l.min)lvl=l;else break;}
+  return lvl;
+}
+function getXPProgress(xp){
+  const cur=getLevel(xp);
+  const idx=XP_LEVELS.indexOf(cur);
+  const next=XP_LEVELS[idx+1];
+  if(!next) return{pct:100,toNext:0};
+  const pct=Math.round(((xp-cur.min)/(next.min-cur.min))*100);
+  return{pct:Math.min(pct,100),toNext:next.min-xp,nextTitle:next.title};
+}
+function useXP(username){
+  const key=username?`sh-xp-${username}`:'sh-xp-guest';
+  const[xp,setXP]=useState(()=>{try{return parseInt(localStorage.getItem(key)||'0');}catch{return 0;}});
+  const awardXP=useCallback((action)=>{
+    const pts=XP_ACTIONS[action]||0;
+    if(!pts)return 0;
+    setXP(prev=>{
+      const newXP=prev+pts;
+      try{localStorage.setItem(key,String(newXP));}catch{}
+      return newXP;
+    });
+    return pts;
+  },[key]);
+  return[xp,awardXP];
+}
 const COPYRIGHT_YEAR = '2025';
 
 
@@ -546,12 +589,13 @@ function useTheme(){
   return [dark,()=>setDark(d=>!d)];
 }
 
-function useBookmarks(){
-  const [bm,setBm]=useState(()=>{try{return JSON.parse(localStorage.getItem('sh-bookmarks')||'[]');}catch{return [];}});
+function useBookmarks(username='guest'){
+  const bmKey=`sh-bookmarks-${username}`;
+  const [bm,setBm]=useState(()=>{try{return JSON.parse(localStorage.getItem(bmKey)||'[]');}catch{return [];}});
   const toggle=id=>{
     setBm(prev=>{
       const next=prev.includes(id)?prev.filter(x=>x!==id):[...prev,id];
-      localStorage.setItem('sh-bookmarks',JSON.stringify(next));
+      localStorage.setItem(bmKey,JSON.stringify(next));
       return next;
     });
   };
@@ -584,6 +628,18 @@ function useNotificationPermission(){
   return[perm,request];
 }
 
+
+function burstConfetti(){
+  const colors=['#4f9cf9','#7fda96','#f9a84f','#da7ff0','#a8f94f','#ff6b9d'];
+  const pieces=Array.from({length:30},(_,i)=>{
+    const el=document.createElement('div');
+    el.className='confetti-piece';
+    el.style.cssText=`left:${20+Math.random()*60}%;top:${20+Math.random()*30}%;background:${colors[i%colors.length]};animation-delay:${Math.random()*.4}s;animation-duration:${.7+Math.random()*.5}s`;
+    document.body.appendChild(el);
+    return el;
+  });
+  setTimeout(()=>pieces.forEach(p=>p.remove()),1500);
+}
 function pushNotification(title,body,icon='/icon-192.png'){
   if(Notification.permission!=='granted') return;
   try{new Notification(title,{body,icon,badge:'/icon-192.png'});}catch{}
@@ -1151,17 +1207,15 @@ function WelcomeModal({user,onClose}){
       cta:'Next',
     },
     {
-      icon:'📚',
-      title:'Everything in one place',
-      body: isExternal
-        ? `You have full access to all course materials across every year. Browse, study, bookmark and use StudyBot whenever you need.`
-        : `You're set up as a ${isExternal?'Visitor':'Year '+user.year+' student'}. Browse your courses, track your progress, and use StudyBot to get instant help on any topic.`,
+      icon:'📖',
+      title:'Study Notes + Practice',
+      body:`Each course has two key sections: Study Notes (Concepts, Definitions, Mechanisms) and Practice (Q&A, Flashcards, and a full AI-generated Quiz with multiple choice or fill-in-the-gap).`,
       cta:'Next',
     },
     {
       icon:'🤖',
       title:'Meet StudyBot',
-      body:`The 🤖 button in the corner is your AI tutor, powered by Groq. Ask it to explain anything, generate practice questions, or search for a course. It's always on.`,
+      body:`The 🤖 button is your AI tutor. Ask it anything, get practice questions, explanations for wrong answers, or suggestions to improve any course. It learns from the course content.`,
       cta:'Next',
     },
     {
@@ -1263,7 +1317,7 @@ const SearchBar=({value,onChange,placeholder='Search courses…'})=>(
 );
 
 /* ═══════════════ CHATBOT (persistent) ═══════════════ */
-const QUICK_PROMPTS=['Explain this topic simply','Give me 5 extra practice questions','What are the most important concepts?','Summarise this in bullet points','What might come up in an exam?'];
+const QUICK_PROMPTS=['Explain this simply','5 practice questions','Most important concepts','Summarise in bullet points','Likely exam questions','Compare key terms','Give a real-world example','What are common mistakes?'];
 const SEARCH_PREFIXES=['find ','search ','what is ','what are ','how do i ','how does ','explain ','show me ','list ','define ','describe '];
 const isSearchQuery=t=>SEARCH_PREFIXES.some(p=>t.toLowerCase().startsWith(p))||t.endsWith('?');
 
@@ -1282,6 +1336,13 @@ function Chatbot({context,courses,user,subCfg={}}){
   const bottomRef=useRef();const inputRef=useRef();
 
   const toggleOpen=v=>{const next=v!==undefined?v:!open;setOpen(next);try{localStorage.setItem('sh-bot-open',next?'1':'0');}catch{}};
+
+  // Escape closes chatbot
+  useEffect(()=>{
+    const h=e=>{if(e.key==='Escape'&&open)toggleOpen(false);};
+    document.addEventListener('keydown',h);
+    return()=>document.removeEventListener('keydown',h);
+  },[open]);
   const[assignmentCtx,setAssignmentCtx]=useState(null); // set when AI Help clicked
 
   // Listen for assignment help requests from AssignmentsTab
@@ -1328,7 +1389,7 @@ function Chatbot({context,courses,user,subCfg={}}){
     if(!msg||loading)return;
 
     // Rate limit free users (not admins/superusers, not assignment mode)
-    const isFree=!user?.isGuest&&(user?.subscription_tier||'free')==='free'&&user?.role!==ROLE.SUPERUSER;
+    const isFree=!user?.isGuest&&user?.role!==ROLE.SUPERUSER&&(user?.subscription_tier||'free')==='free';
     if(isFree&&!assignmentCtx){
       const limit=parseInt(subCfg?.free_ai_messages_per_day||'5');
       const getMonth=()=>new Date().toISOString().slice(0,7); // "2025-04"
@@ -1459,11 +1520,13 @@ function Chatbot({context,courses,user,subCfg={}}){
         <div style={{padding:'8px 10px',borderTop:'1px solid var(--border)',display:'flex',gap:7,alignItems:'flex-end',flexShrink:0}}>
           <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}
-            placeholder={tab==='search'?'Ask about a course or topic…':'Ask anything… (Enter to send)'}
+            placeholder={tab==='search'?'Ask about a course or topic…':'Ask anything… (Enter to send, Shift+Enter for new line)'}
+            maxLength={800}
             rows={1} style={{flex:1,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'7px 10px',color:'var(--text)',fontSize:12.5,fontFamily:"'DM Sans',sans-serif",resize:'none',maxHeight:80,lineHeight:1.5}}/>
           <button onClick={()=>send()} disabled={!input.trim()||loading}
             style={{width:36,height:36,borderRadius:'50%',border:'none',flexShrink:0,background:!input.trim()||loading?'var(--border)':'linear-gradient(135deg,#4f9cf9,#7f5ff9)',color:!input.trim()||loading?'var(--muted)':'#fff',cursor:!input.trim()||loading?'not-allowed':'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center'}}>↑</button>
         </div>
+        {input.length>600&&<div style={{padding:'0 12px 6px',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:input.length>750?'#f05050':'#f9a84f',textAlign:'right'}}>{800-input.length} chars left</div>}
       </>}
     </div>
   );
@@ -1494,7 +1557,7 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
       const users=await dbLoadUsers();const user=users.find(u=>u.username.toLowerCase()===f.username.toLowerCase());
       if(!user||user.pw_hash!==hashStr(f.password)){setErrs({password:'Incorrect username or password.'});setLoading(false);return;}
       const role=await resolveRole(user.username);
-      onLogin({username:user.username,displayName:user.display_name||user.username,year:user.year,role,accountType:user.account_type||'student',subscription_tier:user.subscription_tier||'free'});
+      onLogin({username:user.username,displayName:user.display_name||user.username,year:user.year,role,accountType:user.account_type||'student',subscription_tier:user.subscription_tier||'free',sub_expires_at:user.sub_expires_at||null,sub_plan:user.sub_plan||null});
     }catch{setErrs({password:'Connection error. Try again.'});setLoading(false);}
   };
 
@@ -3482,9 +3545,9 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   useEffect(()=>{try{localStorage.setItem(CACHE_KEY(course.id),JSON.stringify({data:d,year:course.year,semester:course.semester||1,department:course.department||'Computer Science',cachedAt:Date.now()}));}catch{};},[]);
   useEffect(()=>{if(!cp.viewed){const n={...progress,[course.id]:{...cp,viewed:true}};onProgressUpdate(n);}},[]);
 
-  const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!cp.openedQs.includes(idx)){const n={...progress,[course.id]:{...cp,openedQs:[...cp.openedQs,idx]}};onProgressUpdate(n);}};
+  const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!(cp.openedQs||[]).includes(idx)){const n={...progress,[course.id]:{...cp,openedQs:[...cp.openedQs,idx]}};onProgressUpdate(n);}};
 
-  const totalQ=d.questions?.length||0;const pct=totalQ===0?0:Math.round(cp.openedQs.length/totalQ*100);
+  const totalQ=(d.questions||[]).length;const pct=totalQ===0?0:Math.round((cp.openedQs||[]).length/totalQ*100);
   const hasAlgo=d.algorithms?.length>0;
   const tabs=ALL_TABS;
   const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways'].includes(initSection)?initSection:'concepts'));
@@ -3540,7 +3603,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
     setSuggestModal(prev=>({...prev,submitted:{...prev.submitted,[s.title]:true}}));
   };
 
-  const startQuiz=()=>{setQuizStarted(true);setQuizIdx(0);setQuizChoice(null);setFillInput('');setFillRevealed(false);setQuizScore(0);setQuizLog([]);setQuizDone(false);setExplainIdx(null);setExplainText({});if(quizMode==='mc')setQuizOpts(buildQuizOpts(0));};
+  const startQuiz=()=>{if(!d.questions?.length)return;setQuizStarted(true);setQuizIdx(0);setQuizChoice(null);setFillInput('');setFillRevealed(false);setQuizScore(0);setQuizLog([]);setQuizDone(false);setExplainIdx(null);setExplainText({});if(quizMode==='mc')setQuizOpts(buildQuizOpts(0));};
   const nextQuiz=()=>{
     if(quizChoice===null)return;
     const qs=d.questions||[];const correct=qs[quizIdx].answer;const isCorrect=quizChoice===correct;
@@ -3552,8 +3615,9 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const nextFill=()=>{
     if(!fillRevealed)return;
     const qs=d.questions||[];const correct=qs[quizIdx].answer;
-    const trimmed=fillInput.trim().toLowerCase();const correctTrim=correct.trim().toLowerCase();
-    const isCorrect=trimmed===correctTrim||correctTrim.includes(trimmed)&&trimmed.length>5;
+    const norm=s=>s.trim().toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ');
+    const trimmed=norm(fillInput);const correctTrim=norm(correct);
+    const isCorrect=trimmed===correctTrim||(correctTrim.includes(trimmed)&&trimmed.length>5)||(trimmed.includes(correctTrim)&&correctTrim.length>5);
     const newScore=quizScore+(isCorrect?1:0);
     const newLog=[...quizLog,{q:qs[quizIdx].question,correct,chosen:fillInput.trim()||'(no answer)',ok:isCorrect}];
     if(quizIdx+1>=qs.length){setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);}
@@ -3585,7 +3649,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
           <div style={{background:YEAR_BG[course.year],border:`1px solid ${accent}40`,borderRadius:6,padding:'4px 12px'}}><Mono color={accent} size={9}>Year {course.year} · Semester {course.semester||1}</Mono></div>
           {course.data?.department&&<div style={{background:`${DEPT_COLOR[course.data.department]||'#4f9cf9'}12`,border:`1px solid ${DEPT_COLOR[course.data.department]||'#4f9cf9'}30`,borderRadius:6,padding:'4px 12px'}}><Mono color={DEPT_COLOR[course.data.department]||'#4f9cf9'} size={9}>{DEPT_SHORT[course.data.department]||'CS'}</Mono></div>}
-          {!isPriv&&<div style={{fontSize:12,color:'var(--muted)'}}>{cp.openedQs.length}/{totalQ} revealed</div>}
+          {!isPriv&&<div style={{fontSize:12,color:'var(--muted)'}}>{(cp.openedQs||[]).length}/{totalQ} revealed</div>}
           <button onClick={()=>toggleBookmark(course.id)} title={isBookmarked?'Remove bookmark':'Bookmark'} style={{background:isBookmarked?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${isBookmarked?'#f9a84f':'var(--border)'}`,borderRadius:8,color:isBookmarked?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>
             {isBookmarked?'🔖':'🔖'}
           </button>
@@ -4123,7 +4187,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   style={{background:'rgba(79,156,249,.12)',border:'1px solid rgba(79,156,249,.35)',borderRadius:10,color:'#4f9cf9',cursor:'pointer',padding:'11px 24px',fontSize:13,fontWeight:700}}>
                   Retry Quiz
                 </button>
-                <button onClick={()=>{setQuizMode('mc');setQuizStarted(false);setQuizDone(false);}}
+                <button onClick={()=>{setQuizStarted(false);setQuizDone(false);}}
                   style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,color:'var(--muted)',cursor:'pointer',padding:'11px 20px',fontSize:13}}>
                   Change Type
                 </button>
@@ -4414,6 +4478,16 @@ const TIER_CONFIG={
   external:{label:'External',   color:'#a8f94f',icon:'🌐',badge:'Pro' },
 };
 
+function XPBadge({xp,size=9}){
+  const lvl=getLevel(xp);
+  const{pct}=getXPProgress(xp);
+  return(
+    <span title={`Level ${lvl.level} ${lvl.title} · ${xp} XP · ${pct}% to next level`}
+      style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:size,background:`${lvl.color}15`,color:lvl.color,border:`1px solid ${lvl.color}40`,borderRadius:4,padding:'1px 6px',letterSpacing:.5,fontWeight:700,cursor:'default'}}>
+      Lv{lvl.level} {lvl.title}
+    </span>
+  );
+}
 function SubscriptionBadge({tier,role,expiresAt}){
   if(role===ROLE.SUPERUSER) return null;
   const t=TIER_CONFIG[tier]||TIER_CONFIG.free;
@@ -4429,7 +4503,6 @@ function SubscriptionBadge({tier,role,expiresAt}){
 
 function PaymentPortal({user,subCfg,onClose}){
   const semPrice  = subCfg?.pro_price_semester||'1500';
-  const sixPrice  = subCfg?.pro_price_6month||'2500';
   const yearPrice = subCfg?.pro_price_yearly||'5000';
   const acctName  = subCfg?.payment_account_name||'StudyHUB';
   const acctNum   = subCfg?.payment_account_number||'0123456789';
@@ -4440,9 +4513,8 @@ function PaymentPortal({user,subCfg,onClose}){
   const[selPlan,setSelPlan]=useState('semester');
 
   const plans=[
-    {id:'semester',label:'Per Semester',duration:'~5 months',price:semPrice,badge:null,color:'#4f9cf9'},
-    {id:'6month',  label:'6 Months',    duration:'Best value',price:sixPrice, badge:'Save ₦'+(semPrice*2-sixPrice > 0 ? (parseInt(semPrice)*2-parseInt(sixPrice)) : '500'),color:'#7fda96'},
-    {id:'yearly',  label:'Full Year',   duration:'2 semesters',price:yearPrice,badge:'Most popular',color:'#f9a84f'},
+    {id:'semester',label:'1 Semester',  duration:'~5 months', price:semPrice,badge:null,color:'#4f9cf9'},
+    {id:'yearly',  label:'1 Year',      duration:'2 semesters',price:yearPrice,badge:'Most popular',color:'#f9a84f'},
   ];
   const sel=plans.find(p=>p.id===selPlan)||plans[0];
 
@@ -4468,6 +4540,29 @@ function PaymentPortal({user,subCfg,onClose}){
           </div>
           <button onClick={onClose} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:'50%',color:'#fff',cursor:'pointer',width:30,height:30,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,flexShrink:0,marginTop:2}}>✕</button>
         </div>
+
+        {/* Current subscription status banner */}
+        {user?.subscription_tier==='pro'&&user?.sub_expires_at&&(()=>{
+          const exp=new Date(user.sub_expires_at);
+          const daysLeft=Math.max(0,Math.ceil((exp-new Date())/(1000*60*60*24)));
+          const expired=exp<new Date();
+          return(
+            <div style={{background:expired?'rgba(240,80,80,.2)':daysLeft<=14?'rgba(249,168,79,.2)':'rgba(127,218,150,.15)',border:`1px solid ${expired?'rgba(240,80,80,.5)':daysLeft<=14?'rgba(249,168,79,.5)':'rgba(127,218,150,.4)'}`,borderRadius:10,padding:'10px 14px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
+              <span style={{fontSize:18}}>{expired?'⚠️':daysLeft<=14?'⏳':'⭐'}</span>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:'#fff',marginBottom:1}}>
+                  {expired?'Subscription expired':'Active Pro subscription'}
+                </div>
+                <div style={{fontSize:10,color:'rgba(255,255,255,.7)'}}>
+                  {expired
+                    ?`Expired on ${exp.toLocaleDateString()}`
+                    :`${daysLeft} day${daysLeft!==1?'s':''} remaining · expires ${exp.toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}`}
+                  {user.sub_plan&&<span style={{marginLeft:8,opacity:.7}}>{({'1month':'1 Month','semester':'1 Semester','yearly':'1 Year (2 Sems)'})[user.sub_plan]||''}</span>}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Tier comparison */}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:18}}>
@@ -4728,7 +4823,6 @@ function SettingsTab({onReload,superuserName}){
           {[
             {key:'free_ai_messages_per_month', label:'Free tier AI explanations / month', type:'number', hint:'How many AI messages a free user gets per month (default: 5)'},
             {key:'pro_price_semester',          label:'Premium — per semester (₦)',         type:'number', hint:'~5 months. Recommended: ₦500–₦1,000'},
-            {key:'pro_price_6month',            label:'Premium — 6 months bulk (₦)',        type:'number', hint:'Bulk discount. Recommended: ₦2,500'},
             {key:'pro_price_yearly',            label:'Premium — full year (₦)',            type:'number', hint:'2 semesters. Recommended: ₦5,000'},
             {key:'referral_credit',             label:'Referral credit per friend (₦)',     type:'number', hint:'₦ discount given for each friend who subscribes (default: ₦100)'},
             {key:'payment_account_name',        label:'OPay account name',                  type:'text',   hint:'Name shown on the payment card'},
@@ -4784,9 +4878,8 @@ function SettingsTab({onReload,superuserName}){
 function SubscriptionManager({u,onSaved}){
   const PLANS=[
     {id:'1month',  label:'1 Month',     months:1,  color:'#8892a4'},
-    {id:'semester',label:'Semester',    months:5,  color:'#4f9cf9'},
-    {id:'6month',  label:'6 Months',    months:6,  color:'#7fda96'},
-    {id:'yearly',  label:'Full Year',   months:12, color:'#f9a84f'},
+    {id:'semester',label:'1 Semester',  months:5,  color:'#4f9cf9'},
+    {id:'yearly',  label:'1 Year',      months:12, color:'#f9a84f'},
   ];
 
   const currentTier = u.subscription_tier||'free';
@@ -4998,7 +5091,10 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
           {isSU2&&(
             <div>
               <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>SUBSCRIPTION</div>
-              <SubscriptionManager u={u} onSaved={()=>setBusy('')}/>
+              <SubscriptionManager u={u} onSaved={async()=>{
+                const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
+                setAllUsers(users);setAdmins(adms);
+              }}/>
             </div>
           )}
 
@@ -5593,7 +5689,69 @@ function StudyTools({user}){
   const[pad,setPad]=useState(()=>{
     try{return localStorage.getItem(padKey)||'';}catch{return '';}
   });
-  const[activePanel,setActivePanel]=useState('tasks'); // 'tasks' | 'pad'
+  const[activePanel,setActivePanel]=useState('tasks'); // 'tasks' | 'pad' | 'pomodoro'
+
+  // Study streak — increment once per calendar day
+  const streakKey=user?.username?`sh-streak-${user.username}`:'sh-streak-guest';
+  const[streak,setStreak]=useState(()=>{
+    try{
+      const s=JSON.parse(localStorage.getItem(streakKey)||'{}');
+      const today=new Date().toDateString();
+      // If last study day was yesterday or today, streak is valid
+      const last=s.lastDay?new Date(s.lastDay):null;
+      const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+      if(!last) return{count:0,lastDay:null};
+      if(s.lastDay===today) return s;
+      if(last.toDateString()===yesterday.toDateString()) return s; // will increment on activity
+      return{count:0,lastDay:null}; // streak broken
+    }catch{return{count:0,lastDay:null};}
+  });
+
+  // Increment streak when panel opens (counts as a study session)
+  useEffect(()=>{
+    if(!open) return;
+    const today=new Date().toDateString();
+    setStreak(prev=>{
+      if(prev.lastDay===today) return prev; // already counted today
+      const newStreak={count:(prev.lastDay?prev.count:0)+1,lastDay:today};
+      try{localStorage.setItem(streakKey,JSON.stringify(newStreak));}catch{}
+      return newStreak;
+    });
+  },[open]);
+
+  // Pomodoro state
+  const[pomMode,setPomMode]=useState('work'); // 'work'|'break'
+  const[pomRunning,setPomRunning]=useState(false);
+  const[pomSecs,setPomSecs]=useState(25*60);
+  // Session counter — how many 25-min focus blocks completed today
+  const[pomLog,setPomLog]=useState(()=>{try{const s=JSON.parse(localStorage.getItem('sh-pom-log')||'{}');return s.date===new Date().toDateString()?s.count||0:0;}catch{return 0;}});
+  const POM_WORK=25*60;const POM_BREAK=5*60;
+  const pomRef=useRef(null);
+
+  useEffect(()=>{
+    if(pomRunning){
+      pomRef.current=setInterval(()=>{
+        setPomSecs(s=>{
+          if(s<=1){
+            clearInterval(pomRef.current);setPomRunning(false);
+            const next=pomMode==='work'?'break':'work';
+            if(pomMode==='work'){
+              setPomLog(n=>{const newN=n+1;try{localStorage.setItem('sh-pom-log',JSON.stringify({date:new Date().toDateString(),count:newN}));}catch{} return newN;});
+            }
+            setPomMode(next);setPomSecs(next==='work'?POM_WORK:POM_BREAK);
+            pushNotification(next==='break'?'🍅 Break time!':'🍅 Back to work!',next==='break'?'Take a 5 minute break.':'25 minute focus session starting.');
+            return 0;
+          }
+          return s-1;
+        });
+      },1000);
+    }else{clearInterval(pomRef.current);}
+    return()=>clearInterval(pomRef.current);
+  },[pomRunning,pomMode]);
+
+  const pomMins=String(Math.floor(pomSecs/60)).padStart(2,'0');
+  const pomSec2=String(pomSecs%60).padStart(2,'0');
+  const pomPct=(pomMode==='work'?(POM_WORK-pomSecs)/POM_WORK:(POM_BREAK-pomSecs)/POM_BREAK)*100;
 
   // Persist tasks
   useEffect(()=>{
@@ -5628,6 +5786,11 @@ function StudyTools({user}){
       <button onClick={()=>setOpen(o=>!o)}
         style={{display:'flex',alignItems:'center',gap:8,background:'none',border:'none',cursor:'pointer',padding:'4px 0',width:'100%',textAlign:'left',marginBottom:open?10:0}}>
         <Mono color="var(--muted)" size={9}>STUDY TOOLS</Mono>
+        {streak.count>0&&(
+          <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#f9a84f',background:'rgba(249,168,79,.1)',border:'1px solid rgba(249,168,79,.3)',borderRadius:10,padding:'1px 7px',marginLeft:4}}>
+            🔥 {streak.count}d streak
+          </span>
+        )}
         <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginLeft:'auto'}}>
           {open?'▲ hide':'▼ show'}
         </span>
@@ -5638,9 +5801,9 @@ function StudyTools({user}){
 
           {/* Sub-tabs */}
           <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
-            {[{id:'tasks',label:'✅ Focus List'},{id:'pad',label:'📝 Scratchpad'}].map(p=>(
+            {[{id:'tasks',label:'✅ Focus List'},{id:'pad',label:'📝 Scratchpad'},{id:'pomodoro',label:'🍅 Timer'}].map(p=>(
               <button key={p.id} onClick={()=>setActivePanel(p.id)}
-                style={{flex:1,padding:'10px 0',border:'none',borderBottom:activePanel===p.id?'2px solid #4f9cf9':'2px solid transparent',background:'none',color:activePanel===p.id?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:activePanel===p.id?700:400,transition:'all .15s'}}>
+                style={{flex:1,padding:'10px 4px',border:'none',borderBottom:activePanel===p.id?'2px solid #4f9cf9':'2px solid transparent',background:'none',color:activePanel===p.id?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:11,fontWeight:activePanel===p.id?700:400,transition:'all .15s',whiteSpace:'nowrap'}}>
                 {p.label}
               </button>
             ))}
@@ -5746,6 +5909,61 @@ function StudyTools({user}){
                     clear
                   </button>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Pomodoro Timer ── */}
+          {activePanel==='pomodoro'&&(
+            <div style={{padding:'20px 16px',textAlign:'center'}}>
+              {/* Mode label */}
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,letterSpacing:2,color:pomMode==='work'?'#f05050':'#7fda96',marginBottom:12,fontWeight:700}}>
+                {pomMode==='work'?'FOCUS SESSION':'BREAK TIME'}
+              </div>
+
+              {/* Circular progress + timer */}
+              <div style={{position:'relative',width:120,height:120,margin:'0 auto 16px'}}>
+                <svg width="120" height="120" style={{transform:'rotate(-90deg)'}}>
+                  <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="6"/>
+                  <circle cx="60" cy="60" r="52" fill="none"
+                    stroke={pomMode==='work'?'#f05050':'#7fda96'} strokeWidth="6"
+                    strokeDasharray={`${2*Math.PI*52}`}
+                    strokeDashoffset={`${2*Math.PI*52*(1-pomPct/100)}`}
+                    strokeLinecap="round"
+                    style={{transition:'stroke-dashoffset .9s linear'}}
+                  />
+                </svg>
+                <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:24,fontWeight:700,color:'var(--text)',lineHeight:1}}>{pomMins}:{pomSec2}</div>
+                  <div style={{fontSize:9,color:'var(--muted)',marginTop:3}}>{pomMode==='work'?'focus':'break'}</div>
+                </div>
+              </div>
+
+              {/* Controls */}
+              <div style={{display:'flex',gap:8,justifyContent:'center',marginBottom:12}}>
+                <button onClick={()=>setPomRunning(r=>!r)}
+                  style={{background:pomRunning?'rgba(240,80,80,.12)':'rgba(127,218,150,.12)',border:`1px solid ${pomRunning?'rgba(240,80,80,.3)':'rgba(127,218,150,.3)'}`,borderRadius:10,color:pomRunning?'#f05050':'#7fda96',cursor:'pointer',padding:'9px 22px',fontSize:13,fontWeight:700}}>
+                  {pomRunning?'⏸ Pause':'▶ Start'}
+                </button>
+                <button onClick={()=>{setPomRunning(false);setPomMode('work');setPomSecs(POM_WORK);}}
+                  style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,color:'var(--muted)',cursor:'pointer',padding:'9px 14px',fontSize:13}}>
+                  ↺ Reset
+                </button>
+              </div>
+
+              {/* Mode switcher */}
+              <div style={{display:'flex',gap:6,justifyContent:'center'}}>
+                {[{id:'work',label:'🔴 Focus 25m'},{id:'break',label:'🟢 Break 5m'}].map(m=>(
+                  <button key={m.id} onClick={()=>{setPomRunning(false);setPomMode(m.id);setPomSecs(m.id==='work'?POM_WORK:POM_BREAK);}}
+                    style={{background:pomMode===m.id?'var(--card)':'none',border:`1px solid ${pomMode===m.id?'var(--border)':'transparent'}`,borderRadius:8,color:pomMode===m.id?'var(--text)':'var(--muted)',cursor:'pointer',padding:'5px 12px',fontSize:10}}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{marginTop:10,fontSize:10,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace",display:'flex',gap:16,justifyContent:'center'}}>
+                <span>🔥 {streak.count} day{streak.count!==1?'s':''} streak</span>
+                <span title="Completed focus sessions">🍅 {pomLog} session{pomLog!==1?'s':''} today</span>
               </div>
             </div>
           )}
@@ -6158,14 +6376,22 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         </div>
       )}
 
-      {isFreeUser&&!freeAllYears&&<div className="fade-in" style={{background:'linear-gradient(135deg,rgba(249,168,79,.08),rgba(249,168,79,.03))',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'10px 16px',marginBottom:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
-        <div style={{fontSize:12,color:'rgba(249,168,79,.9)',lineHeight:1.5}}>
-          🎓 <strong>Free plan:</strong> Year {user.year||1} only · {subCfg?.free_ai_messages_per_month||'5'} AI msgs/month
-        </div>
-        <button onClick={()=>setShowPayment(true)} style={{background:'rgba(249,168,79,.15)',border:'1px solid rgba(249,168,79,.4)',borderRadius:7,color:'#f9a84f',cursor:'pointer',padding:'5px 12px',fontSize:11,fontWeight:700,whiteSpace:'nowrap',flexShrink:0}}>
-          ⭐ Upgrade
-        </button>
-      </div>}
+      {isFreeUser&&!freeAllYears&&(()=>{
+        const aiLimit=parseInt(subCfg?.free_ai_messages_per_month||'5');
+        const aiUsed=(()=>{try{const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const m=new Date().toISOString().slice(0,7);return s.month===m?s.count||0:0;}catch{return 0;}})();
+        const aiLeft=Math.max(0,aiLimit-aiUsed);
+        return(
+          <div className="fade-in" style={{background:'linear-gradient(135deg,rgba(249,168,79,.08),rgba(249,168,79,.03))',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'10px 16px',marginBottom:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+            <div>
+              <div style={{fontSize:12,color:'rgba(249,168,79,.9)',fontWeight:600,marginBottom:2}}>🎓 Free plan · Year {user.year||1} only</div>
+              <div style={{fontSize:10,color:'var(--muted)'}}>{aiLeft}/{aiLimit} AI messages left this month · <span style={{color:'#4f9cf9',cursor:'pointer',textDecoration:'underline'}} onClick={()=>setShowPayment(true)}>Upgrade to Pro</span> for unlimited access</div>
+            </div>
+            <button onClick={()=>setShowPayment(true)} style={{background:'rgba(249,168,79,.15)',border:'1px solid rgba(249,168,79,.4)',borderRadius:7,color:'#f9a84f',cursor:'pointer',padding:'5px 12px',fontSize:11,fontWeight:700,whiteSpace:'nowrap',flexShrink:0}}>
+              ⭐ Upgrade
+            </button>
+          </div>
+        );
+      })()}
       <Mono color="var(--muted)" size={9}>{visible.length} COURSE{visible.length!==1?'S':''}{activeYear==='all'?` · ALL YEARS`:` · YEAR ${activeYear} · SEM ${activeSemester}`}{activeDept!=='all'?` · ${DEPT_SHORT[activeDept]}`:''}{search?` · "${search}"`:''}</Mono>
 
       {visible.length===0?(
@@ -6330,6 +6556,7 @@ class ErrorBoundary extends React.Component{
           <div style={{maxWidth:420,width:'100%',background:'#1a1e27',border:'1px solid rgba(240,80,80,.3)',borderRadius:16,padding:'32px 28px',textAlign:'center'}}>
             <div style={{fontSize:40,marginBottom:16}}>⚠️</div>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'#e2e6f0',marginBottom:10}}>Something went wrong</div>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'rgba(255,255,255,.3)',marginBottom:10,letterSpacing:1}}>v{APP_VERSION}</div>
             <p style={{fontSize:13,color:'#8892a4',lineHeight:1.7,marginBottom:20}}>
               {this.state.msg?.includes('map')||this.state.msg?.includes('undefined')
                 ?'A course was saved with missing data. The rest of your courses are safe — reload to continue.'
@@ -6349,7 +6576,7 @@ class ErrorBoundary extends React.Component{
 
 export default function App(){
   const[dark,toggleTheme]=useTheme();
-  const[bookmarks,toggleBookmark]=useBookmarks();
+  const[bookmarks,toggleBookmark]=useBookmarks(user?.username||'guest');
   const online=useOnline();
   const[errMsg,setErrMsg]=useErrorToast();
   const[confirm,ConfirmModal]=useConfirm();
@@ -6359,6 +6586,16 @@ export default function App(){
 
   // Restore session from localStorage on mount
   const savedSession=loadSession();
+  // Auto-downgrade expired subscription on startup before setting user state
+  if(savedSession&&savedSession.role!==ROLE.SUPERUSER&&savedSession.subscription_tier==='pro'&&savedSession.sub_expires_at){
+    if(new Date(savedSession.sub_expires_at)<new Date()){
+      savedSession.subscription_tier='free';
+      savedSession.sub_expires_at=null;
+      savedSession.sub_plan=null;
+      // Silently update DB — don't block startup
+      dbSetUserTier(savedSession.username,'free').catch(()=>{});
+    }
+  }
   const savedNav=savedSession?loadNav():null;
   const[view,setView]=useState(savedSession?(savedNav?.view||'home'):'auth');
   const[user,setUser]=useState(savedSession||null);
@@ -6447,7 +6684,8 @@ export default function App(){
               setActive({id:meta.id,data:courseData,year:meta.year,semester:meta.semester||1,department:meta.department||'Computer Science',initialTab:null});
               setView('course');
             } else {
-              setView('home');saveNav('home');
+              // Course was deleted or unavailable — go home cleanly
+              setView('home');saveNav('home',null,null);
             }
           }catch{setView('home');saveNav('home');}
         }
@@ -6470,9 +6708,9 @@ export default function App(){
     }
   },[]);
 
-  // ── Real-time Supabase subscriptions ─────────────────────────────────
+  // ── Real-time: stable channels — mount once, never torn down ────────────
   useEffect(()=>{
-    // Courses channel — when any course is added/removed/updated
+    // Courses — any role needs this
     const coursesCh=supabase.channel('rt-courses')
       .on('postgres_changes',{event:'*',schema:'public',table:'courses'},()=>{
         setSyncing(true);
@@ -6486,15 +6724,15 @@ export default function App(){
         }).catch(()=>setSyncing(false));
       }).subscribe();
 
-    // Announcements — force GlobalAnnouncementStrip to remount by bumping a counter
+    // Announcements
     const annCh=supabase.channel('rt-announcements')
       .on('postgres_changes',{event:'*',schema:'public',table:'announcements'},()=>{
         setSyncing(true);
-        setAnnounceKey(k=>k+1); // triggers GlobalAnnouncementStrip to re-fetch
+        setAnnounceKey(k=>k+1);
         setTimeout(()=>setSyncing(false),600);
       }).subscribe();
 
-    // Assignments — push + notification badge refresh
+    // Assignments
     const assignCh=supabase.channel('rt-assignments')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'assignments'},(payload)=>{
         setSyncing(true);setTimeout(()=>setSyncing(false),600);
@@ -6508,43 +6746,7 @@ export default function App(){
         if(payload.new) pushNotification(`📝 New ${payload.new.type}: ${payload.new.title}`,payload.new.date?`On ${new Date(payload.new.date).toLocaleDateString()}`:'Check StudyHub for details');
       }).subscribe();
 
-    // Pending approvals
-    const pendingCh=supabase.channel('rt-pending')
-      .on('postgres_changes',{event:'INSERT',schema:'public',table:'pending_actions'},()=>{
-        setSyncing(true);setTimeout(()=>setSyncing(false),600);
-        if(user?.role===ROLE.SUPERUSER) pushNotification('⚡ New Approval Request','An admin has submitted a request for your approval on StudyHub.');
-      }).subscribe();
-
-    // Status change requests
-    const statusCh=supabase.channel('rt-status-requests')
-      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'status_change_requests'},async(payload)=>{
-        if(!user||user.isGuest)return;
-        const row=payload.new;
-        if(row.username!==user.username)return;
-        if(row.status==='approved'){
-          const newRole=await resolveRole(user.username);
-          const updated={...user,role:newRole,accountType:newRole===ROLE.EXTERNAL?'external':'student'};
-          setUser(updated);saveSession(updated);
-          pushNotification('✅ Status change approved',`Your account is now "${row.to_type}". Changes are live.`);
-        } else if(row.status==='rejected'){
-          pushNotification('❌ Status change rejected',row.note||'Your request was declined.');
-        }
-      }).subscribe();
-
-    // Users table — detect when superuser changes year/account_type for the current user
-    const usersCh=supabase.channel('rt-users')
-      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'users'},async(payload)=>{
-        if(!user||user.isGuest)return;
-        if(payload.new?.username!==user.username)return;
-        // Our own user row changed — re-resolve role and update session
-        const row=payload.new;
-        const newRole=await resolveRole(user.username);
-        const updated={...user,role:newRole,year:row.year||user.year,accountType:row.account_type||user.accountType};
-        setUser(updated);saveSession(updated);
-        if(newRole!==user.role) pushNotification('✅ Account updated','Your account type has been changed. Changes are live.');
-      }).subscribe();
-
-    // Subscription config changes
+    // Subscription config
     const subCfgCh=supabase.channel('rt-sub-config')
       .on('postgres_changes',{event:'*',schema:'public',table:'subscription_config'},()=>{
         supabase.from('subscription_config').select('*').then(({data})=>{
@@ -6557,55 +6759,117 @@ export default function App(){
       supabase.removeChannel(annCh);
       supabase.removeChannel(assignCh);
       supabase.removeChannel(caCh);
+      supabase.removeChannel(subCfgCh);
+    };
+  },[]); // empty deps — mount once, stay alive
+
+  // ── Real-time: user-specific channels — rebuild only when role changes ───
+  useEffect(()=>{
+    if(!user||user.isGuest) return;
+
+    // Pending approvals (superuser only)
+    const pendingCh=supabase.channel('rt-pending')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'pending_actions'},()=>{
+        setSyncing(true);setTimeout(()=>setSyncing(false),600);
+        if(user?.role===ROLE.SUPERUSER) pushNotification('⚡ New Approval Request','An admin has submitted a request for your approval on StudyHub.');
+      }).subscribe();
+
+    // Status change requests
+    const statusCh=supabase.channel('rt-status-requests')
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'status_change_requests'},async(payload)=>{
+        const row=payload.new;
+        if(row.username!==user.username)return;
+        if(row.status==='approved'){
+          const newRole=await resolveRole(user.username);
+          const updated={...user,role:newRole,accountType:newRole===ROLE.EXTERNAL?'external':'student'};
+          setUser(updated);saveSession(updated);
+          pushNotification('✅ Status change approved',`Your account is now "${row.to_type}". Changes are live.`);
+        } else if(row.status==='rejected'){
+          pushNotification('❌ Status change rejected',row.note||'Your request was declined.');
+        }
+      }).subscribe();
+
+    // Users table — detect when our own row changes
+    const usersCh=supabase.channel('rt-users')
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'users'},async(payload)=>{
+        if(payload.new?.username!==user.username)return;
+        const row=payload.new;
+        const newRole=await resolveRole(user.username);
+        // Also pick up subscription changes pushed by superuser
+        const updated={...user,role:newRole,year:row.year||user.year,accountType:row.account_type||user.accountType,
+          subscription_tier:row.subscription_tier||user.subscription_tier,
+          sub_expires_at:row.sub_expires_at||null,sub_plan:row.sub_plan||null};
+        setUser(updated);saveSession(updated);
+        if(newRole!==user.role) pushNotification('✅ Account updated','Your account type has been changed. Changes are live.');
+        // Notify if subscription was just activated
+        if(row.subscription_tier==='pro'&&user.subscription_tier!=='pro'){
+          pushNotification('⭐ Pro activated!','Your StudyHub Pro subscription is now active.');
+        }
+      }).subscribe();
+
+    return()=>{
       supabase.removeChannel(pendingCh);
       supabase.removeChannel(statusCh);
       supabase.removeChannel(usersCh);
-      supabase.removeChannel(subCfgCh);
     };
-  },[user?.role]);
+  },[user?.role,user?.username]);
 
-  // ── Periodic silent background refresh (every 90s) ────────────────────
+  // ── Re-fetch on reconnect (replaces 90s polling) ────────────────────────
+  // Realtime handles live updates. This only fires once when coming back online.
+  const prevOnlineRef=useRef(online);
   useEffect(()=>{
-    if(!online)return;
-    const tick=setInterval(async()=>{
-      // Fully silent — no toast, no flicker, no interruption
-      try{
-        const [newCourses] = await Promise.all([
-          dbLoadCourseIndex(),
-          loadDepartments(),
-          loadUserTypes(),
-          ...(user&&!user.isGuest?[dbLoadProgress(user.username).then(setProgress)]:[]),
-        ]);
-        // Only update courses state if something actually changed (avoids re-renders)
-        setCourses(prev=>{
-          const prevIds=prev.map(c=>c.id+c.addedAt).join('|');
-          const newIds=newCourses.map(c=>c.id+c.addedAt).join('|');
-          return prevIds===newIds?prev:newCourses;
-        });
-        // Re-check role in case a status change was approved
-        if(user&&!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)){
-          const newRole=await resolveRole(user.username);
-          if(newRole!==user.role){
-            const updated={...user,role:newRole,accountType:newRole===ROLE.EXTERNAL?'external':'student'};
-            setUser(updated);
-            saveSession(updated);
-            pushNotification('✅ Account status updated','Your account type has been changed on StudyHub.');
-          }
+    if(!online||prevOnlineRef.current===online){prevOnlineRef.current=online;return;}
+    prevOnlineRef.current=online;
+    // Just came back online — do a single silent refresh
+    Promise.all([
+      dbLoadCourseIndex().then(data=>setCourses(data)).catch(()=>{}),
+      loadDepartments().catch(()=>{}),
+      loadUserTypes().catch(()=>{}),
+      user&&!user.isGuest?dbLoadProgress(user.username).then(setProgress).catch(()=>{}):Promise.resolve(),
+    ]);
+  },[online]);
+
+  // ── Subscription expiry check — runs every 5 minutes ────────────────────
+  // (separate from realtime — needs periodic check as expiry is time-based)
+  useEffect(()=>{
+    if(!user||user.isGuest||user.role===ROLE.SUPERUSER) return;
+    const check=()=>{
+      if(user.subscription_tier==='pro'&&user.sub_expires_at){
+        if(new Date(user.sub_expires_at)<new Date()){
+          const updated={...user,subscription_tier:'free',sub_expires_at:null,sub_plan:null};
+          dbSetUserTier(user.username,'free').catch(()=>{});
+          setUser(updated);saveSession(updated);
+          pushNotification('📋 Subscription ended','Your Pro subscription has expired. Renew in Settings.');
         }
-      }catch{}
-    },90_000);
-    return()=>clearInterval(tick);
-  },[online,user?.username,user?.role]);
+      }
+    };
+    check(); // check immediately on mount
+    const t=setInterval(check,5*60*1000); // then every 5 mins
+    return()=>clearInterval(t);
+  },[user?.username,user?.subscription_tier,user?.sub_expires_at]);
 
   // ── Auth handlers ─────────────────────────────────────────────────────
   const handleLogin=useCallback(async u=>{
-    setUser(u);
-    saveSession(u);
-    if(u.role===ROLE.USER&&!u.isGuest){
-      const p=await dbLoadProgress(u.username).catch(()=>({}));
+    // Auto-downgrade if subscription expired
+    const effectiveTier=(()=>{
+      if(u.role===ROLE.SUPERUSER) return 'pro';
+      if(u.subscription_tier==='pro'&&u.sub_expires_at){
+        if(new Date(u.sub_expires_at)<new Date()){
+          // Expired — silently downgrade in DB too
+          dbSetUserTier(u.username,'free').catch(()=>{});
+          return 'free';
+        }
+      }
+      return u.subscription_tier||'free';
+    })();
+    const resolved={...u,subscription_tier:effectiveTier};
+    setUser(resolved);
+    saveSession(resolved);
+    if(resolved.role===ROLE.USER&&!resolved.isGuest){
+      const p=await dbLoadProgress(resolved.username).catch(()=>({}));
       setProgress(p);
     }
-    if(u.isNew) setShowWelcome(true);
+    if(resolved.isNew) setShowWelcome(true);
     setView('home');
   },[]);
 
