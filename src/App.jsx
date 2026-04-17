@@ -200,6 +200,22 @@ function incAiMsgCount(){
 
 /* ═══════════════ DATABASE ═══════════════ */
 async function dbLoadUsers(){const{data}=await supabase.from('users').select('*');return data||[];}
+async function dbDeleteUser(username){
+  try{
+    // Delete all user data across tables
+    await Promise.all([
+      supabase.from('progress').delete().eq('username',username),
+      supabase.from('notification_log').delete().eq('username',username),
+      supabase.from('community_votes').delete().eq('username',username),
+      supabase.from('status_change_requests').delete().eq('username',username),
+    ]);
+    // Remove from admins list if present
+    const admins=await dbLoadAdmins();
+    if(admins.includes(username.toLowerCase())) await dbSetAdmins(admins.filter(a=>a!==username.toLowerCase()));
+    // Delete the user record itself
+    await supabase.from('users').delete().eq('username',username);
+  }catch(e){console.error('dbDeleteUser:',e);}
+}
 async function dbSaveUser(u){await supabase.from('users').upsert(u,{onConflict:'username'});}
 async function dbLoadAdmins(){const{data}=await supabase.from('admins').select('username');return(data||[]).map(r=>r.username.toLowerCase());}
 async function dbSetAdmins(list){await supabase.from('admins').delete().neq('username','__none__');if(list.length>0)await supabase.from('admins').insert(list.map(u=>({username:u.toLowerCase()})));}
@@ -482,7 +498,7 @@ const XP_LEVELS=[
   {level:5,title:'Graduate',   min:1000, color:'#da7ff0'},
   {level:6,title:'Scholar',    min:1500, color:'#a8f94f'},
   {level:7,title:'Honors',     min:2200, color:'#f9a84f'},
-  {level:8,title:'Dean's List',min:3000,color:'#ff6b9d'},
+  {level:8,title:"Dean's List",min:3000,color:'#ff6b9d'},
 ];
 function getLevel(xp){
   let lvl=XP_LEVELS[0];
@@ -2077,11 +2093,12 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
   const visitedCount=chapters.filter(c=>progress[c.id]?.viewed).length;
 
   const sections=[
-    {id:'chapters',   label:'📚 Chapters',    count:chapters.length},
-    {id:'assignments',label:'📋 Assignments', count:tabData.assignments.length},
-    {id:'cas',        label:'📝 CAs & Tests', count:tabData.cas.length},
-    {id:'resources',  label:'🔗 Resources',   count:tabData.resources.length},
-    {id:'announcements',label:'📣 Notices',   count:tabData.announcements.length},
+    {id:'chapters',     label:'📚 Chapters',    count:chapters.length},
+    {id:'assignments',  label:'📋 Assignments', count:tabData.assignments.length},
+    {id:'cas',          label:'📝 CAs & Tests', count:tabData.cas.length},
+    {id:'announcements',label:'📣 Notices',     count:tabData.announcements.length},
+    {id:'resources',    label:'🔗 Resources',   count:tabData.resources.length},
+    {id:'community',    label:'💬 Community'},
   ];
 
   return(
@@ -2266,6 +2283,13 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
               })}
             </div>
           }
+        </div>
+      )}
+
+      {/* Community board — course-level shared discussion */}
+      {activeSection==='community'&&(
+        <div className="fade-in">
+          <CommunityBoard courseId={chapters[0]?.id||courseCode} user={user}/>
         </div>
       )}
     </div>
@@ -3501,29 +3525,36 @@ function DefinitionRow({def,isLast}){
   );
 }
 
+// Course-level tabs (CourseTabView: COS341 overview)
+const COURSE_TABS=[
+  {id:'chapters',     label:'📚 Chapters'},
+  {id:'assignments',  label:'📋 Assignments'},
+  {id:'cas',          label:'📝 CAs & Tests'},
+  {id:'announcements',label:'📣 Notices'},
+  {id:'resources',    label:'🔗 Resources'},
+  {id:'community',    label:'💬 Community'},
+];
+
+// PDF-level tabs (CourseView: individual study note)
 const ALL_TABS=[
-  {id:'updates',  label:'📢 Updates'},
   {id:'notes',    label:'📖 Study Notes'},
   {id:'practice', label:'🎓 Practice'},
   {id:'resources',label:'🔗 Resources'},
-  {id:'community',label:'💬 Community'},
 ];
 
 function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses,subCfg={}}){
-  // Map legacy initialTab values to new merged tab IDs
+  // Map legacy initialTab values to new PDF-level tab IDs
   const resolveInitialTab=(t)=>{
-    if(!t) return 'updates';
-    if(['announcements','assignments','ca'].includes(t)) return 'updates';
+    if(!t) return 'notes';
+    if(['announcements','assignments','ca','updates'].includes(t)) return 'notes'; // these live at course level now
     if(['concepts','definitions','mechanisms','algorithms','takeaways'].includes(t)) return 'notes';
-    if(['questions','flashcards','quiz'].includes(t)) return 'practice';
-    return t; // resources, community — unchanged
+    if(['questions','flashcards','quiz','practice'].includes(t)) return 'practice';
+    if(t==='resources') return 'resources';
+    return 'notes';
   };
   const resolveInitialSection=(t)=>{
-    if(['assignments','ca'].includes(t)) return t;
     if(['concepts','definitions','mechanisms','algorithms','takeaways'].includes(t)) return t;
-    if(['questions','flashcards','quiz'].includes(t)){
-      return t==='questions'?'qa':t;
-    }
+    if(['questions','flashcards','quiz'].includes(t)) return t==='questions'?'qa':t;
     return null;
   };
   const initTab=resolveInitialTab(course.initialTab);
@@ -3536,6 +3567,8 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' = fill the gap
   const[fillInput,setFillInput]=useState('');const[fillRevealed,setFillRevealed]=useState(false);
   const[explainIdx,setExplainIdx]=useState(null);const[explainText,setExplainText]=useState({});const[explainLoading,setExplainLoading]=useState(false);
+  // AI fresh questions state
+  const[aiFreshQs,setAiFreshQs]=useState([]);const[aiFreshLoading,setAiFreshLoading]=useState(false);const[openFreshQ,setOpenFreshQ]=useState(null);
   // AI suggestions state
   const[suggestLoading,setSuggestLoading]=useState(false);const[suggestModal,setSuggestModal]=useState(null);
   const d=course.data;const cp=progress[course.id]||{viewed:false,openedQs:[]};const isPriv=user.role!==ROLE.USER;
@@ -3552,7 +3585,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const tabs=ALL_TABS;
   const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways'].includes(initSection)?initSection:'concepts'));
   const[practiceSection,setPracticeSection]=useState((['qa','flashcards','quiz'].includes(initSection)?initSection:'qa'));
-  const[updatesSection,setUpdatesSection]=useState((['announcements','assignments','ca'].includes(initSection)?initSection:'announcements'));
   const filteredQ=(d.questions||[]).filter(q=>!filter||q.question.toLowerCase().includes(filter.toLowerCase()));
   const accent=YEAR_COLORS[course.year]||'#4f9cf9';
   const chatCtx={courseName:d.courseName,chapterTitle:d.chapterTitle,summary:[d.keyConcepts?.slice(0,5).map(c=>c.title).join(', '),d.chapters?.map(c=>c.name).join(', ')].filter(Boolean).join(' | ')};
@@ -3730,28 +3762,13 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
       {/* Tab content */}
 
-      {tab==='updates'&&(
-        <div className="fade-up">
-          <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
-            {[
-              {id:'announcements',label:'📢 Announcements'},
-              {id:'assignments',  label:'📋 Assignments'},
-              {id:'ca',           label:'📝 CA / Tests'},
-            ].map(s=>(
-              <button key={s.id} onClick={()=>setUpdatesSection(s.id)}
-                style={{padding:'7px 16px',borderRadius:20,border:`1.5px solid ${updatesSection===s.id?'#f9a84f':'var(--border)'}`,background:updatesSection===s.id?'rgba(249,168,79,.1)':'var(--surface)',color:updatesSection===s.id?'#f9a84f':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:updatesSection===s.id?700:400,transition:'all .15s'}}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-          {updatesSection==='announcements'&&<AnnouncementsTab courseId={course.id} user={user} onNew={()=>{}}/>}
-          {updatesSection==='assignments'&&<AssignmentsTab courseId={course.id} user={user}/>}
-          {updatesSection==='ca'&&<CATab courseId={course.id} user={user}/>}
-        </div>
-      )}
-
       {tab==='notes'&&(
         <div className="fade-up">
+          {/* Info banner — assignments/community live at course level */}
+          <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.12)',borderRadius:8,padding:'8px 14px',marginBottom:16,display:'flex',gap:8,alignItems:'center',fontSize:12,color:'var(--muted)'}}>
+            <span>ℹ️</span>
+            <span>This is the study guide for <strong style={{color:'var(--text)'}}>{d.chapterTitle}</strong>. Assignments, CA/Tests and Community for <strong style={{color:'var(--text)'}}>{d.courseName}</strong> are on the course page. <button onClick={onBack} style={{background:'none',border:'none',color:'#4f9cf9',cursor:'pointer',padding:0,fontSize:12,textDecoration:'underline'}}>← Back to {d.courseName}</button></span>
+          </div>
           <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
             {[
               {id:'concepts',   label:'💡 Concepts',   count:d.keyConcepts?.length||0},
@@ -3839,17 +3856,74 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
             ))}
           </div>
           {practiceSection==='qa'&&(
-
         <div className="fade-up">
-          <SectionLabel>Practice Questions & Answers</SectionLabel>
-          {!isPriv&&<div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',marginBottom:14,display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:6,fontSize:12,color:'var(--muted)'}}>
-            <span>Click to reveal answers — progress saved automatically.</span>
-            <span style={{color:'#4f9cf9',fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>{cp.openedQs.length}/{totalQ} opened</span>
-          </div>}
+          {/* Header with actions */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:10}}>
+            <SectionLabel>Practice Q&A</SectionLabel>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              {!isPriv&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#4f9cf9'}}>{(cp.openedQs||[]).length}/{totalQ} opened</span>}
+              {/* AI fresh questions button */}
+              <button onClick={async()=>{
+                setAiFreshLoading(true);
+                try{
+                  const existingQs=(d.questions||[]).map(q=>q.question).join('\n');
+                  const prompt=`Generate 5 fresh, unique exam-style practice questions for the topic "${d.chapterTitle}" (${d.courseName}).
+
+These questions already exist — do NOT repeat them or ask the same thing differently:
+${existingQs}
+
+Requirements:
+- Questions must test different concepts not covered in the existing questions
+- Mix difficulty: 2 easy recall, 2 application, 1 analysis
+- Include full worked answers
+- Plain text only
+
+Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
+                  const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:prompt}],context:{mode:'tutor',chapterTitle:d.chapterTitle,courseName:d.courseName,isSuperuser:user.role===ROLE.SUPERUSER}})});
+                  const data=await res.json();
+                  const raw=data.reply||'{}';
+                  const parsed=JSON.parse(raw.replace(/```json|```/g,'').trim());
+                  setAiFreshQs(parsed.questions||[]);
+                }catch(e){setAiFreshQs([{question:'Could not generate questions',answer:e.message}]);}
+                setAiFreshLoading(false);
+              }} disabled={aiFreshLoading}
+                style={{display:'flex',alignItems:'center',gap:6,background:'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.25)',borderRadius:8,color:'#a8f94f',cursor:aiFreshLoading?'not-allowed':'pointer',padding:'6px 12px',fontSize:11,fontWeight:600,opacity:aiFreshLoading?.7:1}}>
+                {aiFreshLoading?<><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Generating…</>:<>🤖 Fresh Questions</>}
+              </button>
+            </div>
+          </div>
+
+          {/* AI-generated fresh questions panel */}
+          {aiFreshQs.length>0&&(
+            <div className="fade-in" style={{background:'rgba(168,249,79,.04)',border:'1px solid rgba(168,249,79,.2)',borderRadius:12,padding:'14px 16px',marginBottom:16}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <Mono color="#a8f94f" size={9}>🤖 AI FRESH QUESTIONS — {aiFreshQs.length} NEW</Mono>
+                <button onClick={()=>setAiFreshQs([])} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:12,opacity:.5}}>✕ close</button>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {aiFreshQs.map((q,i)=>(
+                  <div key={i} style={{background:'var(--card)',border:'1px solid rgba(168,249,79,.15)',borderRadius:9,overflow:'hidden'}}>
+                    <div onClick={()=>setOpenFreshQ(openFreshQ===i?null:i)} style={{padding:'11px 14px',display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer'}}>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(168,249,79,.2)',color:'#a8f94f',borderRadius:4,padding:'2px 6px',flexShrink:0,marginTop:2}}>NEW</span>
+                      <span style={{fontSize:13,color:'var(--text)',fontWeight:500,lineHeight:1.6,flex:1}}>{q.question}</span>
+                      <span style={{color:'var(--muted)',fontSize:16,flexShrink:0}}>{openFreshQ===i?'−':'+'}</span>
+                    </div>
+                    {openFreshQ===i&&(
+                      <div className="fade-in" style={{borderTop:'1px solid rgba(168,249,79,.15)',padding:'12px 14px',background:'rgba(168,249,79,.03)'}}>
+                        <Mono color="#7fda96" size={9}>Answer</Mono>
+                        <p style={{fontSize:13,color:'var(--text)',lineHeight:1.8,margin:'6px 0 0',whiteSpace:'pre-line'}}>{q.answer}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <SearchBar value={filter} onChange={setFilter} placeholder="Search questions…"/>
           <Mono color="var(--muted)" size={9}>SHOWING {filteredQ.length} OF {totalQ} QUESTIONS</Mono>
           <div style={{display:'flex',flexDirection:'column',gap:9,marginTop:12}}>
-            {filteredQ.map(q=>{const ri=(d.questions||[]).indexOf(q);const isOpen=openQ===ri;const seen=cp.openedQs.includes(ri);return(
+            {filteredQ.map(q=>{const ri=(d.questions||[]).indexOf(q);const isOpen=openQ===ri;const seen=(cp.openedQs||[]).includes(ri);return(
               <div key={ri} className="fade-in" style={{background:'var(--card)',border:`1px solid ${seen?'rgba(127,218,150,.3)':'var(--border)'}`,borderRadius:10,overflow:'hidden'}}>
                 <div onClick={()=>revealQ(ri)} style={{padding:'13px 17px',display:'flex',alignItems:'flex-start',gap:12,cursor:'pointer'}}>
                   <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:seen?'#7fda96':'#4f9cf9',color:'#000',borderRadius:4,padding:'2px 6px',flexShrink:0,marginTop:3}}>Q{ri+1}</span>
@@ -4200,7 +4274,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       )}
 
       {tab==='resources'&&<ResourcesTab courseId={course.id} user={user}/>}
-      {tab==='community'&&<CommunityBoard courseId={course.id} user={user} subCfg={subCfg}/>}
     </div>
   );
 }
@@ -4400,36 +4473,82 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
           const meta=ACTION_LABELS[a.action_type]||{icon:'❓',label:a.action_type,color:'#8892a4'};
           const isPending=a.status==='pending';
           const isApproved=a.status==='approved';
+          // Build detail sections based on action type
+          const details=[];
+          if(a.action_type==='add_course'&&a.payload?.entry){
+            const e=a.payload.entry;const d=a.payload.courseData;
+            details.push({label:'Course',value:`${e.courseName} — ${e.chapterTitle}`});
+            details.push({label:'Location',value:`Year ${e.year} · Semester ${e.semester||1} · ${DEPT_SHORT[e.department]||e.department||'CS'}`});
+            if(d){
+              details.push({label:'Content',value:`${d.keyConcepts?.length||0} concepts · ${d.definitions?.length||0} terms · ${d.questions?.length||0} questions · ${d.mechanisms?.length||0} mechanisms`});
+              if(d.chapters?.length) details.push({label:'Chapters',value:d.chapters.map(c=>c.name||c.num).join(' · ')});
+            }
+          }
+          if(a.action_type==='delete_course'){
+            const course=courses.find(c=>c.id===a.payload?.id);
+            details.push({label:'Course to delete',value:course?`${course.courseName} — ${course.chapterTitle}`:`ID: ${a.payload?.id}`});
+            details.push({label:'Warning',value:'This will permanently remove all course data including notes, questions, and student progress.',danger:true});
+          }
+          if(a.action_type==='add_resource'||a.action_type==='delete_resource'){
+            if(a.payload?.title) details.push({label:'Resource',value:a.payload.title});
+            if(a.payload?.url) details.push({label:'URL',value:a.payload.url});
+            if(a.payload?._table) details.push({label:'Type',value:a.payload._table==='assignments'?'Assignment':a.payload._table==='course_cas'?'CA / Test':'Resource'});
+          }
+          if(a.action_type==='ai_suggestion'&&a.payload?.suggestion){
+            const s=a.payload.suggestion;
+            details.push({label:'Course',value:`${a.payload.courseName||''} — ${a.payload.chapterTitle||''}`});
+            details.push({label:'Suggestion',value:s.title,highlight:true});
+            details.push({label:'Type',value:(s.type||'').replace(/_/g,' ')});
+            details.push({label:'Details',value:s.description});
+            details.push({label:'Action required',value:'This is an AI suggestion only. Approve to acknowledge it — implement it manually via the Upload panel if you agree.',info:true});
+          }
+          if(a.action_type==='duplicate_warning'||a.note?.includes('DUPLICATE')){
+            details.push({label:'⚠️ Duplicate flag',value:a.note||'Possible duplicate content detected.',danger:true});
+          }
+          // Generic note
+          if(a.note&&!details.some(d=>d.value===a.note)) details.push({label:'Note',value:a.note});
+
           return(
-            <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${isPending?`${meta.color}30`:isApproved?'rgba(127,218,150,.2)':'rgba(240,80,80,.2)'}`,borderRadius:12,padding:'16px 18px'}}>
-              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+            <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`}
+              style={{background:'var(--card)',border:`1px solid ${isPending?`${meta.color}30`:isApproved?'rgba(127,218,150,.2)':'rgba(240,80,80,.2)'}`,borderRadius:12,padding:'16px 18px'}}>
+              {/* Header row */}
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:details.length?12:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:12,flex:1,minWidth:200}}>
                   <div style={{width:40,height:40,borderRadius:10,background:`${meta.color}15`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>{meta.icon}</div>
                   <div>
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3,flexWrap:'wrap'}}>
-                      <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{meta.label}</span>
-                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${meta.color}15`,color:meta.color,borderRadius:4,padding:'2px 7px',letterSpacing:1}}>{a.action_type}</span>
-                      {!isPending&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:isApproved?'rgba(127,218,150,.15)':'rgba(240,80,80,.15)',color:isApproved?'#7fda96':'#f05050',borderRadius:4,padding:'2px 7px',letterSpacing:1}}>{a.status.toUpperCase()}</span>}
+                      <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{meta.label}</span>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:`${meta.color}15`,color:meta.color,borderRadius:4,padding:'2px 7px',letterSpacing:.5}}>{a.action_type}</span>
+                      {!isPending&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:isApproved?'rgba(127,218,150,.15)':'rgba(240,80,80,.15)',color:isApproved?'#7fda96':'#f05050',borderRadius:4,padding:'2px 7px',letterSpacing:.5}}>{a.status.toUpperCase()}</span>}
                     </div>
-                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)',letterSpacing:1}}>
-                      Requested by <span style={{color:'var(--text)',fontWeight:600}}>@{a.requested_by}</span> · {new Date(a.requested_at).toLocaleString()}
+                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>
+                      By <span style={{color:'var(--text)',fontWeight:600}}>@{a.requested_by}</span> · {new Date(a.requested_at).toLocaleString()}
+                      {!isPending&&a.reviewed_by&&<span> · Reviewed by @{a.reviewed_by}</span>}
                     </div>
-                    {/* Payload summary */}
-                    {a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.entry.chapterTitle}</span> — Yr {a.payload.entry.year} · Sem {a.payload.entry.semester||1} · {DEPT_SHORT[a.payload.entry.department]||'CS'}</div>}
-                    {a.payload?.chapterTitle&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Course: <span style={{color:'var(--text)'}}>{a.payload.chapterTitle}</span></div>}
-                    {a.payload?.title&&!a.payload?.entry&&<div style={{fontSize:12,color:'var(--muted)',marginTop:4}}>Resource: <span style={{color:'var(--text)'}}>{a.payload.title}</span></div>}
-                    {!isPending&&a.note&&<div style={{fontSize:11,color:'var(--muted)',marginTop:5,fontStyle:'italic'}}>Note: {a.note}</div>}
                   </div>
                 </div>
                 {isPending&&(
                   <div style={{display:'flex',gap:8,flexShrink:0}}>
-                    <button onClick={()=>approve(a)} disabled={busy===a.id} style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:700}}>
+                    <button onClick={()=>approve(a)} disabled={busy===a.id}
+                      style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'8px 16px',fontSize:12,fontWeight:700}}>
                       {busy===a.id?'…':'✓ Approve'}
                     </button>
-                    <button onClick={()=>setRejectModal(a)} disabled={busy===a.id} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:700}}>✕ Reject</button>
+                    <button onClick={()=>setRejectModal(a)} disabled={busy===a.id}
+                      style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'8px 14px',fontSize:12,fontWeight:700}}>✕ Reject</button>
                   </div>
                 )}
               </div>
+              {/* Detail rows */}
+              {details.length>0&&(
+                <div style={{borderTop:'1px solid var(--border)',paddingTop:10,display:'flex',flexDirection:'column',gap:6}}>
+                  {details.map((d,di)=>(
+                    <div key={di} style={{display:'flex',gap:8,alignItems:'flex-start',background:d.danger?'rgba(240,80,80,.06)':d.info?'rgba(79,156,249,.06)':d.highlight?'rgba(168,249,79,.06)':'transparent',borderRadius:6,padding:d.danger||d.info||d.highlight?'5px 8px':0}}>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:d.danger?'#f05050':d.info?'#4f9cf9':d.highlight?'#a8f94f':'var(--muted)',letterSpacing:.5,flexShrink:0,minWidth:80,paddingTop:1}}>{d.label}</span>
+                      <span style={{fontSize:12,color:d.danger?'#f05050':d.highlight?'#a8f94f':'var(--text)',lineHeight:1.5,wordBreak:'break-word'}}>{d.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -5134,6 +5253,9 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
   const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[statusPendingCount,setStatusPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
   const[selectedUsers,setSelectedUsers]=useState(new Set());
   const[bulkAction,setBulkAction]=useState('');const[bulkBusy,setBulkBusy]=useState(false);
+  const[userSort,setUserSort]=useState('recent'); // 'recent'|'name'|'year'|'tier'
+  const[courseSort,setCourseSort]=useState('year'); // 'year'|'recent'|'name'
+  const[deleteConfirm,setDeleteConfirm]=useState(null); // username to delete
 
   useEffect(()=>{
     Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});
@@ -5278,10 +5400,22 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
                 <button key={d} onClick={()=>setFilterDept(d)} style={{background:filterDept===d?`${color}15`:'none',border:`1px solid ${filterDept===d?color+'60':'var(--border)'}`,borderRadius:20,color:filterDept===d?color:'var(--muted)',cursor:'pointer',padding:'5px 14px',fontSize:12,fontWeight:filterDept===d?600:400}}>{label}</button>
               ))}
               <SearchBar value={search} onChange={setSearch} placeholder="Search courses…"/>
+              <select value={courseSort} onChange={e=>setCourseSort(e.target.value)}
+                style={{background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,color:'var(--text)',padding:'5px 10px',fontSize:11,marginLeft:'auto'}}>
+                <option value="year">By Year</option>
+                <option value="recent">Newest first</option>
+                <option value="name">A → Z</option>
+                <option value="questions">Most questions</option>
+              </select>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:9}}>
               {filtered.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12}}>No courses here yet.</div>}
-              {filtered.map(c=>(
+              {[...filtered].sort((a,b)=>{
+                if(courseSort==='recent') return new Date(b.addedAt||0)-new Date(a.addedAt||0);
+                if(courseSort==='name') return(a.chapterTitle||'').localeCompare(b.chapterTitle||'');
+                if(courseSort==='questions') return(b.qCount||0)-(a.qCount||0);
+                return(a.year-b.year)||((a.semester||1)-(b.semester||1));
+              }).map(c=>(
                 <div key={c.id} className="fade-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'13px 17px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
                   <div style={{display:'flex',flexDirection:'column',gap:4}}>
                     <div style={{background:YEAR_BG[c.year],border:`1px solid ${YEAR_COLORS[c.year]}40`,borderRadius:5,padding:'3px 9px'}}><Mono color={YEAR_COLORS[c.year]} size={9}>Yr {c.year}</Mono></div>
@@ -5304,9 +5438,17 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
               {onlineUsers.size>0&&<span style={{marginLeft:8,color:'#7fda96'}}>🟢 {onlineUsers.size} online now</span>}
             </div>}
 
-            {/* Search + select all */}
-            <div style={{marginBottom:10,display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+            {/* Search + sort + select all */}
+            <div style={{marginBottom:10,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
               <SearchBar value={search} onChange={setSearch} placeholder="Search users…"/>
+              {/* Sort */}
+              <select value={userSort} onChange={e=>setUserSort(e.target.value)}
+                style={{background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,color:'var(--text)',padding:'7px 10px',fontSize:11}}>
+                <option value="recent">↓ Newest</option>
+                <option value="name">A → Z</option>
+                <option value="year">By Year</option>
+                <option value="tier">By Tier</option>
+              </select>
               {isSU2&&(
                 <button onClick={()=>{
                   const filtered=allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase()));
@@ -5318,6 +5460,33 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
               )}
               <Mono color="var(--muted)" size={9}>{allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).length} USERS</Mono>
             </div>
+
+            {/* Delete account confirm modal */}
+            {deleteConfirm&&(
+              <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setDeleteConfirm(null)}>
+                <div className="scale-in" style={{background:'var(--card)',border:'1px solid rgba(240,80,80,.4)',borderRadius:14,padding:'24px 26px',maxWidth:400,width:'100%',boxShadow:'var(--shadow)'}}>
+                  <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'#f05050',marginBottom:8}}>⚠️ Permanently Delete Account</div>
+                  <p style={{fontSize:13,color:'var(--muted)',lineHeight:1.6,marginBottom:8}}>
+                    You are about to permanently delete <strong style={{color:'var(--text)'}}>@{deleteConfirm}</strong>.
+                  </p>
+                  <div style={{background:'rgba(240,80,80,.06)',border:'1px solid rgba(240,80,80,.2)',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#f05050',marginBottom:16,lineHeight:1.6}}>
+                    This will delete: their account, all progress, notification history, votes, and status requests. This cannot be undone.
+                  </div>
+                  <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                    <button onClick={()=>setDeleteConfirm(null)} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13}}>Cancel</button>
+                    <button onClick={async()=>{
+                      await dbDeleteUser(deleteConfirm);
+                      setDeleteConfirm(null);
+                      const[u,a]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
+                      setAllUsers(u);setAdmins(a);
+                      flash(`✓ Account @${deleteConfirm} permanently deleted.`);
+                    }} style={{background:'rgba(240,80,80,.15)',border:'1px solid rgba(240,80,80,.4)',borderRadius:8,color:'#f05050',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>
+                      Delete Permanently
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Bulk action toolbar — appears when users are selected */}
             {isSU2&&selectedUsers.size>0&&(
@@ -5353,13 +5522,21 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
             )}
 
             <div style={{display:'flex',flexDirection:'column',gap:9}}>
-              {allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())).map((u,i)=>{
+              {(()=>{
+                const filtered=allUsers.filter(u=>!search||u.username.toLowerCase().includes(search.toLowerCase())||u.display_name?.toLowerCase().includes(search.toLowerCase()));
+                const sortedUsers=[...filtered].sort((a,b)=>{
+                  if(userSort==='name') return(a.display_name||a.username).localeCompare(b.display_name||b.username);
+                  if(userSort==='year') return(a.year||0)-(b.year||0);
+                  if(userSort==='tier') return(b.subscription_tier==='pro'?1:0)-(a.subscription_tier==='pro'?1:0);
+                  return new Date(b.created_at||0)-new Date(a.created_at||0); // recent first
+                });
+                return sortedUsers.map((u,i)=>{
                 const isAdm=admins.includes(u.username.toLowerCase());
                 const role=isAdm?ROLE.ADMIN:u.account_type==='external'?ROLE.EXTERNAL:ROLE.USER;
                 const isOnline=onlineUsers.has(u.username);
                 const uTier=u.subscription_tier||'free';
                 return(
-                  <div key={i} style={{display:'flex',alignItems:'flex-start',gap:8}}>
+                  <div key={u.username} style={{display:'flex',alignItems:'flex-start',gap:8}}>
                     {/* Checkbox */}
                     {isSU2&&(
                       <button onClick={()=>{
@@ -5391,11 +5568,22 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
                         }}
                       />
                     </div>
+                    {/* Delete button — superuser only */}
+                    {isSU2&&u.username!==user.username&&(
+                      <button onClick={()=>setDeleteConfirm(u.username)} title="Permanently delete account"
+                        style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:14,padding:'8px 4px',flexShrink:0,opacity:.4,lineHeight:1}}
+                        onMouseEnter={e=>{e.currentTarget.style.color='#f05050';e.currentTarget.style.opacity='1';}}
+                        onMouseLeave={e=>{e.currentTarget.style.color='var(--muted)';e.currentTarget.style.opacity='.4';}}>
+                        🗑
+                      </button>
+                    )}
                   </div>
                 );
-              })}
+              });
+              })()}
               {allUsers.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12}}>No users yet.</div>}
             </div>
+
           </div>
         )}
 
