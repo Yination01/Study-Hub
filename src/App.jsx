@@ -273,13 +273,18 @@ async function dbLoadSeen(username){
 }
 
 // Fetch all recent notifiable items for a user
-async function dbLoadNotifications(username){
+async function dbLoadNotifications(username,accessibleCourseIds=null){
   try{
-    const[assignments,cas,announcements]=await Promise.all([
-      supabase.from('assignments').select('id,title,course_id,added_at,due_date').order('added_at',{ascending:false}).limit(30),
-      supabase.from('course_cas').select('id,title,course_id,type,added_at,date').order('added_at',{ascending:false}).limit(30),
-      supabase.from('announcements').select('*').order('posted_at',{ascending:false}).limit(30),
-    ]);
+    // Build queries — optionally filter to accessible courses
+    let aQ=supabase.from('assignments').select('id,title,course_id,added_at,due_date').order('added_at',{ascending:false}).limit(40);
+    let cQ=supabase.from('course_cas').select('id,title,course_id,type,added_at,date').order('added_at',{ascending:false}).limit(40);
+    let anQ=supabase.from('announcements').select('*').order('posted_at',{ascending:false}).limit(40);
+    if(accessibleCourseIds&&accessibleCourseIds.length>0){
+      aQ=aQ.in('course_id',accessibleCourseIds);
+      cQ=cQ.in('course_id',accessibleCourseIds);
+      anQ=anQ.or(`course_id.in.(${accessibleCourseIds.join(',')}),course_id.is.null`);
+    }
+    const[assignments,cas,announcements]=await Promise.all([aQ,cQ,anQ]);
     const seen=await dbLoadSeen(username);
     const items=[
       ...(announcements.data||[]).map(a=>({id:a.id,type:'announcement',title:a.title,body:a.body,priority:a.priority,time:a.posted_at,courseId:a.course_id,pinned:a.pinned})),
@@ -482,14 +487,61 @@ async function dbSetUserTier(username,tier,expiresAt=null,plan=null){
   }catch(e){console.error(e);}
 }
 
+// Referral system helpers
+function genReferralCode(username){
+  // Deterministic code based on username — no DB column needed
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let hash=0;for(const c of username){hash=(hash*31+c.charCodeAt(0))&0xffffffff;}
+  let code='SH';for(let i=0;i<5;i++){code+=chars[Math.abs(hash>>(i*5))%chars.length];}
+  return code;
+}
+async function dbAddReferralCredit(username,amount,note=''){
+  try{
+    await supabase.from('users').update({
+      referral_credits:supabase.rpc('increment_credits',{x:amount,uname:username})||0
+    }).eq('username',username);
+    // Fallback: read-then-write
+    const{data}=await supabase.from('users').select('referral_credits').eq('username',username).single();
+    const current=(data?.referral_credits||0);
+    await supabase.from('users').update({referral_credits:current+amount}).eq('username',username);
+  }catch(e){console.error('referral credit:',e);}
+}
+async function dbGetReferralCredits(username){
+  try{const{data}=await supabase.from('users').select('referral_credits').eq('username',username).single();return data?.referral_credits||0;}catch{return 0;}
+}
+
+// Promo code helpers
+async function dbLoadPromos(){
+  try{const{data}=await supabase.from('promo_codes').select('*').order('created_at',{ascending:false});return data||[];}catch{return[];}
+}
+async function dbSavePromo(promo){
+  try{await supabase.from('promo_codes').upsert(promo,{onConflict:'code'});}catch(e){console.error(e);}
+}
+async function dbDeletePromo(code){
+  try{await supabase.from('promo_codes').delete().eq('code',code);}catch(e){console.error(e);}
+}
+async function dbValidatePromo(code){
+  try{
+    const{data}=await supabase.from('promo_codes').select('*').eq('code',code.toUpperCase().trim()).single();
+    if(!data) return{valid:false,error:'Code not found'};
+    if(!data.active) return{valid:false,error:'This code is no longer active'};
+    if(data.expires_at&&new Date(data.expires_at)<new Date()) return{valid:false,error:'Code has expired'};
+    if(data.max_uses>0&&(data.uses_count||0)>=data.max_uses) return{valid:false,error:`Code limit reached (${data.max_uses} uses max)`};
+    return{valid:true,promo:data};
+  }catch{return{valid:false,error:'Invalid code'};}
+}
+async function dbRedeemPromo(code){
+  try{await supabase.from('promo_codes').update({uses_count:supabase.rpc('inc',{x:1})||1}).eq('code',code.toUpperCase());}catch{}
+}
+
 /* ═══════════════ CONFIG ═══════════════ */
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '4.2.0';
+const APP_VERSION    = '4.3.0';
 
 /* ═══════════════ XP / GAMIFICATION ═══════════════ */
-const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5};
+const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5,question_reveal:2};
 const XP_LEVELS=[
   {level:1,title:'Freshman',   min:0,    color:'#8892a4'},
   {level:2,title:'Sophomore',  min:100,  color:'#4f9cf9'},
@@ -620,6 +672,16 @@ function useBookmarks(username='guest'){
 
 function useOnline(){
   const [online,setOnline]=useState(navigator.onLine);
+  useEffect(()=>{
+    const on=()=>setOnline(true);const off=()=>setOnline(false);
+    window.addEventListener('online',on);window.addEventListener('offline',off);
+    return()=>{window.removeEventListener('online',on);window.removeEventListener('offline',off);};
+  },[]);
+  return online;
+}
+
+function useOnlineStatus(){
+  const[online,setOnline]=useState(()=>navigator.onLine);
   useEffect(()=>{
     const on=()=>setOnline(true);const off=()=>setOnline(false);
     window.addEventListener('online',on);window.addEventListener('offline',off);
@@ -1235,9 +1297,15 @@ function WelcomeModal({user,onClose}){
       cta:'Next',
     },
     {
+      icon:'🎁',
+      title:'Refer friends, earn discounts',
+      body:`You have a unique referral code in the side menu. Share it with classmates — when they subscribe to Pro, you earn ₦ credits that reduce your own subscription cost.`,
+      cta:'Next',
+    },
+    {
       icon:'📲',
       title:'Install on your phone',
-      body:`StudyHub works as an app too. Look out for the "Install StudyHub" prompt, or on iPhone tap Share → Add to Home Screen. It works offline once installed.`,
+      body:`StudyHub works as an app too. Look for the Install prompt at the bottom, or on iPhone tap Share → Add to Home Screen. It works offline once installed.`,
       cta:"Let's go →",
     },
   ];
@@ -1407,7 +1475,7 @@ function Chatbot({context,courses,user,subCfg={}}){
     // Rate limit free users (not admins/superusers, not assignment mode)
     const isFree=!user?.isGuest&&user?.role!==ROLE.SUPERUSER&&(user?.subscription_tier||'free')==='free';
     if(isFree&&!assignmentCtx){
-      const limit=parseInt(subCfg?.free_ai_messages_per_day||'5');
+      const limit=parseInt(subCfg?.free_ai_messages_per_month||'5');
       const getMonth=()=>new Date().toISOString().slice(0,7); // "2025-04"
       const getCount=()=>{try{const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const m=getMonth();return s.month===m?s.count||0:0;}catch{return 0;}};
       const incCount=()=>{try{const m=getMonth();const s=JSON.parse(localStorage.getItem('sh-ai-msgs')||'{}');const count=(s.month===m?s.count||0:0)+1;localStorage.setItem('sh-ai-msgs',JSON.stringify({month:m,count}));}catch{}};
@@ -1544,6 +1612,93 @@ function Chatbot({context,courses,user,subCfg={}}){
         </div>
         {input.length>600&&<div style={{padding:'0 12px 6px',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:input.length>750?'#f05050':'#f9a84f',textAlign:'right'}}>{800-input.length} chars left</div>}
       </>}
+    </div>
+  );
+}
+
+
+/* ═══════════════ PROFILE MODAL ═══════════════ */
+function ProfileModal({user,onClose,onUpdate}){
+  const[tab,setTab]=useState('name'); // 'name' | 'password'
+  const[displayName,setDisplayName]=useState(user.displayName||user.username);
+  const[currentPw,setCurrentPw]=useState('');const[newPw,setNewPw]=useState('');const[confirmPw,setConfirmPw]=useState('');
+  const[msg,setMsg]=useState('');const[error,setError]=useState('');const[saving,setSaving]=useState(false);
+  const flash=(m,isErr=false)=>{if(isErr)setError(m);else setMsg(m);setTimeout(()=>{setMsg('');setError('');},3000);};
+
+  const saveName=async()=>{
+    if(!displayName.trim())return flash('Name cannot be empty.',true);
+    if(displayName.trim()===user.displayName)return flash('No changes made.');
+    setSaving(true);
+    try{
+      await supabase.from('users').update({display_name:displayName.trim()}).eq('username',user.username);
+      onUpdate({...user,displayName:displayName.trim()});
+      flash('✓ Display name updated!');
+    }catch{flash('Failed to save.',true);}
+    setSaving(false);
+  };
+
+  const savePw=async()=>{
+    if(!currentPw||!newPw||!confirmPw)return flash('All fields required.',true);
+    if(newPw!==confirmPw)return flash("New passwords don't match.",true);
+    if(newPw.length<6)return flash('Password must be at least 6 characters.',true);
+    // Verify current password
+    const{data}=await supabase.from('users').select('pw_hash').eq('username',user.username).single();
+    if(data?.pw_hash!==hashStr(currentPw))return flash('Current password is incorrect.',true);
+    setSaving(true);
+    try{
+      await supabase.from('users').update({pw_hash:hashStr(newPw)}).eq('username',user.username);
+      flash('✓ Password changed!');setCurrentPw('');setNewPw('');setConfirmPw('');
+    }catch{flash('Failed to save.',true);}
+    setSaving(false);
+  };
+
+  return(
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:18,padding:'28px 26px',maxWidth:420,width:'calc(100% - 32px)',margin:'auto',boxShadow:'var(--shadow)'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>Edit Profile</div>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,lineHeight:1}}>✕</button>
+        </div>
+        {/* Tab picker */}
+        <div style={{display:'flex',background:'var(--input-bg)',borderRadius:10,padding:3,marginBottom:20,gap:4}}>
+          {[{id:'name',label:'Display Name'},{id:'password',label:'Change Password'}].map(t=>(
+            <button key={t.id} onClick={()=>{setTab(t.id);setMsg('');setError('');}}
+              style={{flex:1,padding:'8px 0',borderRadius:8,border:'none',background:tab===t.id?'var(--card)':'transparent',color:tab===t.id?'var(--text)':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:tab===t.id?600:400,transition:'all .15s'}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {msg&&<div style={{background:'rgba(127,218,150,.1)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'8px 14px',fontSize:12,color:'#7fda96',marginBottom:14}}>{msg}</div>}
+        {error&&<div style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:8,padding:'8px 14px',fontSize:12,color:'#f05050',marginBottom:14}}>{error}</div>}
+        {tab==='name'&&(
+          <div>
+            <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5}}>DISPLAY NAME</div>
+            <input value={displayName} onChange={e=>setDisplayName(e.target.value)} maxLength={30}
+              onKeyDown={e=>e.key==='Enter'&&saveName()}
+              style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:9,padding:'10px 13px',color:'var(--text)',fontSize:14,marginBottom:6}}/>
+            <div style={{fontSize:10,color:'var(--muted)',marginBottom:14}}>This is how your name appears to other students.</div>
+            <button onClick={saveName} disabled={saving}
+              style={{width:'100%',background:'#4f9cf9',border:'none',borderRadius:9,color:'#fff',cursor:saving?'not-allowed':'pointer',padding:'11px 0',fontSize:13,fontWeight:700}}>
+              {saving?'Saving…':'Save Name'}
+            </button>
+          </div>
+        )}
+        {tab==='password'&&(
+          <div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {[{label:'CURRENT PASSWORD',val:currentPw,set:setCurrentPw},{label:'NEW PASSWORD',val:newPw,set:setNewPw},{label:'CONFIRM NEW PASSWORD',val:confirmPw,set:setConfirmPw}].map(f=>(
+              <div key={f.label}>
+                <div style={{fontSize:11,color:'var(--muted)',marginBottom:5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5}}>{f.label}</div>
+                <input type="password" value={f.val} onChange={e=>f.set(e.target.value)} maxLength={72}
+                  style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:9,padding:'10px 13px',color:'var(--text)',fontSize:14}}/>
+              </div>
+            ))}
+            <button onClick={savePw} disabled={saving}
+              style={{background:'#4f9cf9',border:'none',borderRadius:9,color:'#fff',cursor:saving?'not-allowed':'pointer',padding:'11px 0',fontSize:13,fontWeight:700,marginTop:4}}>
+              {saving?'Saving…':'Change Password'}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2077,6 +2232,7 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
   const[tabData,setTabData]=useState({assignments:[],cas:[],resources:[],announcements:[]});
   const[activeSection,setActiveSection]=useState('chapters');
   const[dataLoaded,setDataLoaded]=useState(false);
+  const[chapterSort,setChapterSort]=useState('default');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
   const dominantYear=chapters[0]?.year||1;
   const accent=YEAR_COLORS[dominantYear]||'#4f9cf9';
@@ -2136,10 +2292,27 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
       {/* CHAPTERS */}
       {activeSection==='chapters'&&(
         <div className="fade-in">
+          {/* Chapter sort */}
+          {chapters.length>1&&(
+            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+              <select value={chapterSort} onChange={e=>setChapterSort(e.target.value)}
+                style={{background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,color:'var(--text)',padding:'6px 10px',fontSize:11}}>
+                <option value="default">Default order</option>
+                <option value="progress">By progress</option>
+                <option value="unseen">Unseen first</option>
+                <option value="name">A → Z</option>
+              </select>
+            </div>
+          )}
           {chapters.length===0
-            ?<div style={{textAlign:'center',padding:50,color:'var(--muted)',fontSize:13,border:'1px dashed var(--border)',borderRadius:12}}>No chapters yet for {courseCode}.</div>
+            ?<div style={{textAlign:'center',padding:50,color:'var(--muted)',fontSize:13,border:'1px dashed var(--border)',borderRadius:12}}>No chapters here yet — they'll appear once the superuser uploads study guides for {courseCode}.</div>
             :<div style={{display:'flex',flexDirection:'column',gap:10}}>
-              {chapters.map((c,i)=>{
+              {[...chapters].sort((a,b)=>{
+                if(chapterSort==='progress'){const pa=(progress[a.id]?.openedQs||[]).length/(a.qCount||1);const pb=(progress[b.id]?.openedQs||[]).length/(b.qCount||1);return pb-pa;}
+                if(chapterSort==='unseen'){const va=progress[a.id]?.viewed?1:0;const vb=progress[b.id]?.viewed?1:0;return va-vb;}
+                if(chapterSort==='name') return(a.chapterTitle||'').localeCompare(b.chapterTitle||'');
+                return 0;
+              }).map((c,i)=>{
                 const cp=progress[c.id];const pct=c.qCount>0?Math.round(((cp?.openedQs?.length||0)/c.qCount)*100):0;
                 const viewed=cp?.viewed;const isBookmarked=bookmarks.includes(c.id);
                 return(
@@ -2264,7 +2437,7 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
       {activeSection==='announcements'&&dataLoaded&&(
         <div className="fade-in">
           {tabData.announcements.length===0
-            ?<div style={{textAlign:'center',padding:40,color:'var(--muted)',border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>No announcements for {courseCode} yet.</div>
+            ?<div style={{textAlign:'center',padding:40,color:'var(--muted)',border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>No announcements for this course yet. Check back later!</div>
             :<div style={{display:'flex',flexDirection:'column',gap:10}}>
               {tabData.announcements.map((a,i)=>{
                 const p=PRIORITY[a.priority]||PRIORITY.info;
@@ -2899,14 +3072,22 @@ function NotificationBell({user,courses,onNavigate}){
   const bellRef=useRef();
   const dropRef=useRef();
 
+  const prevUnseenRef=useRef(0);
   const load=useCallback(async()=>{
     if(!user||user.isGuest)return;
-    const n=await dbLoadNotifications(user.username);
+    const accessibleIds=courses.filter(c=>!!c.id).map(c=>c.id);
+    const n=await dbLoadNotifications(user.username,accessibleIds.length>0?accessibleIds:null);
     setNotifs(n);
+    // Show in-app badge pulse when unseen count increases
+    if(n.unseenCount>prevUnseenRef.current&&prevUnseenRef.current>0){
+      // New notifications arrived — also try OS push
+      pushNotification('🔔 New notification',`You have ${n.unseenCount} unread update${n.unseenCount!==1?'s':''}`);
+    }
+    prevUnseenRef.current=n.unseenCount;
     if(permState==='default'&&!localStorage.getItem('sh-notif-asked')&&n.unseenCount>0){
       setShowPermBanner(true);
     }
-  },[user,permState]);
+  },[user,permState,courses]);
 
   useEffect(()=>{load();},[]);
   useEffect(()=>{if(open)load();},[open]);
@@ -3051,6 +3232,15 @@ function NotificationBell({user,courses,onNavigate}){
                 {count>0&&<span style={{marginLeft:8,background:'#f05050',color:'#fff',borderRadius:10,padding:'1px 7px',fontSize:9}}>{count}</span>}
               </div>
               <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                {notifs.unseenCount>0&&(
+                  <button onClick={async()=>{
+                    const unseen=notifs.items.filter(n=>!notifs.seen.has(n.id));
+                    await Promise.all(unseen.map(n=>dbMarkSeen(user.username,n.id,n.type)));
+                    await load();
+                  }} style={{background:'none',border:'none',color:'#4f9cf9',cursor:'pointer',fontSize:10,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5,padding:0,whiteSpace:'nowrap'}}>
+                    Mark all read
+                  </button>
+                )}
                 {permState==='default'&&(
                   <button onClick={e=>askPermission(e)}
                     style={{background:'rgba(249,168,79,.12)',border:'1px solid rgba(249,168,79,.35)',
@@ -3347,6 +3537,7 @@ function CommunityBoard({courseId,user,subCfg={}}){
   const isPriv=user.role!==ROLE.USER;
   const isGuest=user.isGuest===true;
   const freePosting=(subCfg?.free_community_posting||'false')==='true';
+  const maxPostsPerDay=parseInt(subCfg?.max_community_posts||'5');
   const isFree=!isGuest&&user.role!==ROLE.SUPERUSER&&(user.subscription_tier||'free')==='free';
   const canPost=!isGuest&&(!isFree||freePosting||isPriv);
 
@@ -3578,7 +3769,8 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   useEffect(()=>{try{localStorage.setItem(CACHE_KEY(course.id),JSON.stringify({data:d,year:course.year,semester:course.semester||1,department:course.department||'Computer Science',cachedAt:Date.now()}));}catch{};},[]);
   useEffect(()=>{if(!cp.viewed){const n={...progress,[course.id]:{...cp,viewed:true}};onProgressUpdate(n);}},[]);
 
-  const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!(cp.openedQs||[]).includes(idx)){const n={...progress,[course.id]:{...cp,openedQs:[...cp.openedQs,idx]}};onProgressUpdate(n);}};
+  const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!(cp.openedQs||[]).includes(idx)){
+      awardXP('qa_reveal');const n={...progress,[course.id]:{...cp,openedQs:[...cp.openedQs,idx]}};onProgressUpdate(n);}};
 
   const totalQ=(d.questions||[]).length;const pct=totalQ===0?0:Math.round((cp.openedQs||[]).length/totalQ*100);
   const hasAlgo=d.algorithms?.length>0;
@@ -3641,7 +3833,12 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
     const qs=d.questions||[];const correct=qs[quizIdx].answer;const isCorrect=quizChoice===correct;
     const newScore=quizScore+(isCorrect?1:0);
     const newLog=[...quizLog,{q:qs[quizIdx].question,correct,chosen:quizChoice,ok:isCorrect}];
-    if(quizIdx+1>=qs.length){setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);}
+    if(quizIdx+1>=qs.length){
+      setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);
+      onProgressUpdate(course.id,{viewed:true,openedQs:cp.openedQs||[]});
+      if(newScore===qs.length) awardXP('quiz_perfect');
+      else if(newScore>=Math.ceil(qs.length*0.7)) awardXP('quiz_complete');
+    }
     else{setQuizScore(newScore);setQuizLog(newLog);setQuizIdx(quizIdx+1);setQuizChoice(null);if(quizMode==='mc')setQuizOpts(buildQuizOpts(quizIdx+1));}
   };
   const nextFill=()=>{
@@ -3652,7 +3849,12 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
     const isCorrect=trimmed===correctTrim||(correctTrim.includes(trimmed)&&trimmed.length>5)||(trimmed.includes(correctTrim)&&correctTrim.length>5);
     const newScore=quizScore+(isCorrect?1:0);
     const newLog=[...quizLog,{q:qs[quizIdx].question,correct,chosen:fillInput.trim()||'(no answer)',ok:isCorrect}];
-    if(quizIdx+1>=qs.length){setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);}
+    if(quizIdx+1>=qs.length){
+      setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);
+      onProgressUpdate(course.id,{viewed:true,openedQs:cp.openedQs||[]});
+      if(newScore===qs.length) awardXP('quiz_perfect');
+      else if(newScore>=Math.ceil(qs.length*0.7)) awardXP('quiz_complete');
+    }
     else{setQuizScore(newScore);setQuizLog(newLog);setQuizIdx(quizIdx+1);setFillInput('');setFillRevealed(false);}
   };
   const askExplanation=async(logItem,idx)=>{
@@ -3972,7 +4174,7 @@ Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
             <div onClick={()=>setFcFlipped(f=>!f)}
               style={{cursor:'pointer',minHeight:200,background:'var(--card)',border:`2px solid ${fcCard?.color||'#4f9cf9'}40`,borderRadius:16,padding:'32px 28px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center',position:'relative',userSelect:'none',boxShadow:`0 4px 24px ${fcCard?.color||'#4f9cf9'}18`,transition:'all .2s'}}>
               <div style={{position:'absolute',top:12,right:14,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>
-                {fcFlipped?'BACK — tap to flip':'FRONT — tap to flip'}
+                {fcFlipped?'← BACK — tap to flip':'FRONT — tap to flip →'}
               </div>
               {!fcFlipped?(
                 <>
@@ -4202,7 +4404,8 @@ Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
               {/* Score card */}
               <div style={{textAlign:'center',padding:'32px 16px 24px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,marginBottom:20}}>
                 <div style={{fontSize:52,marginBottom:10}}>{pctScore>=80?'🏆':pctScore>=60?'⭐':'📚'}</div>
-                <div style={{fontFamily:"'DM Serif Display',serif",fontSize:32,color:'var(--text)',marginBottom:4}}>{quizScore}<span style={{fontSize:18,color:'var(--muted)'}}>/{total}</span></div>
+                {quizScore===total&&total>0&&<div style={{fontSize:36,textAlign:'center',animation:'scale-in .4s ease',marginBottom:4}}>🎉</div>}
+                <div style={{fontFamily:"'DM Serif Display',serif",fontSize:36,color:quizScore===total?'#7fda96':quizScore>=Math.ceil(total*0.7)?'#f9a84f':'var(--text)',marginBottom:4,textAlign:'center'}}>{quizScore}<span style={{fontSize:20,color:'var(--muted)'}}>/{total}</span></div>
                 <div style={{fontSize:14,color:pctScore>=80?'#7fda96':pctScore>=60?'#f9a84f':'#f05050',fontWeight:700,marginBottom:4}}>{pctScore}%</div>
                 <div style={{fontSize:13,color:'var(--muted)'}}>{grade}</div>
                 <div style={{marginTop:10,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:1}}>
@@ -4260,6 +4463,14 @@ Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
                 <button onClick={startQuiz}
                   style={{background:'rgba(79,156,249,.12)',border:'1px solid rgba(79,156,249,.35)',borderRadius:10,color:'#4f9cf9',cursor:'pointer',padding:'11px 24px',fontSize:13,fontWeight:700}}>
                   Retry Quiz
+                </button>
+                <button onClick={()=>{
+                    const pct=Math.round(quizScore/(qs.length||1)*100);
+                    const msg=`I scored ${quizScore}/${qs.length} (${pct}%) on "${d.chapterTitle}" — StudyHub 📚`;
+                    if(navigator.share)navigator.share({text:msg});
+                    else navigator.clipboard.writeText(msg);
+                  }} style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:10,color:'#4f9cf9',cursor:'pointer',padding:'11px 20px',fontSize:13,fontWeight:600}}>
+                  📤 Share Result
                 </button>
                 <button onClick={()=>{setQuizStarted(false);setQuizDone(false);}}
                   style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,color:'var(--muted)',cursor:'pointer',padding:'11px 20px',fontSize:13}}>
@@ -4360,7 +4571,7 @@ const ACTION_LABELS={
 };
 
 function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
-  const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[bulkBusy,setBulkBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');
+  const[pending,setPending]=useState([]);const[history,setHistory]=useState([]);const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);const[busy,setBusy]=useState('');const[bulkBusy,setBulkBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);const[rejectNote,setRejectNote]=useState('');const[histSort,setHistSort]=useState('recent');const[histFilter,setHistFilter]=useState('all');
 
   const load=async()=>{setLoading(true);const[p,h]=await Promise.all([dbLoadPending('pending'),dbLoadAllPending()]);setPending(p);setHistory(h.filter(a=>a.status!=='pending'));setLoading(false);};
   useEffect(()=>{load();},[]);
@@ -4421,7 +4632,16 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
     setRejectModal(null);setRejectNote('');setBusy('');await load();
   };
 
-  const list=tab==='pending'?pending:history;
+  // Sort and filter the list
+  const list=useMemo(()=>{
+    const base=tab==='pending'?pending:history;
+    let filtered=histFilter==='all'?base:base.filter(a=>a.action_type===histFilter);
+    return [...filtered].sort((a,b)=>{
+      if(histSort==='oldest') return new Date(a.requested_at)-new Date(b.requested_at);
+      if(histSort==='type') return a.action_type.localeCompare(b.action_type);
+      return new Date(b.requested_at)-new Date(a.requested_at); // recent first
+    });
+  },[tab,pending,history,histSort,histFilter]);
 
   if(loading)return<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>Loading approvals…</div>;
 
@@ -4442,11 +4662,29 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
         </div>
       )}
 
-      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',gap:10,alignItems:'center'}}>
-        <span style={{fontSize:20}}>⚡</span>
-        <div>
-          <div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Superuser Approval Queue</div>
-          <div style={{color:'var(--muted)',fontSize:12}}>All admin actions require your approval before taking effect.</div>
+      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',marginBottom:16}}>
+        <div style={{display:'flex',gap:10,alignItems:'flex-start',marginBottom:10}}>
+          <span style={{fontSize:20}}>⚡</span>
+          <div>
+            <div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Superuser Approval Queue</div>
+            <div style={{color:'var(--muted)',fontSize:12}}>Admin actions queue here for your approval before taking effect.</div>
+          </div>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+          {[
+            {icon:'📚',label:'Add Course',desc:'Admin uploaded a new study guide. Approve to publish it for students.'},
+            {icon:'🗑',label:'Delete Course',desc:'Admin requested deletion. Approve to permanently remove it.'},
+            {icon:'🔗',label:'Add/Remove Resource',desc:'Admin added a link or file to a course. Approve to make it visible.'},
+            {icon:'🤖',label:'AI Suggestion',color:'#a8f94f',desc:'StudyBot noticed something that could improve a course — e.g. missing concepts or weak questions. This is informational. Approving just marks it as reviewed. To act on it, upload an updated study guide manually.'},
+          ].map(t=>(
+            <div key={t.label} style={{display:'flex',gap:8,alignItems:'flex-start',padding:'6px 8px',background:'rgba(0,0,0,.15)',borderRadius:7}}>
+              <span style={{fontSize:14,flexShrink:0}}>{t.icon}</span>
+              <div>
+                <span style={{fontSize:11,fontWeight:700,color:t.color||'var(--text)',marginRight:6}}>{t.label}</span>
+                <span style={{fontSize:11,color:'var(--muted)'}}>{t.desc}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -4455,6 +4693,24 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
         {[{id:'pending',label:`Pending${pending.length>0?` (${pending.length})`:''}`,color:pending.length>0?'#f9a84f':undefined},{id:'history',label:'History'}].map(t=>(
           <button key={t.id} onClick={()=>setTab(t.id)} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
         ))}
+        {tab==='history'&&(
+          <div style={{marginLeft:'auto',display:'flex',gap:6,paddingBottom:4,alignItems:'center',flexWrap:'wrap'}}>
+            <select value={histFilter} onChange={e=>setHistFilter(e.target.value)}
+              style={{background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,color:'var(--text)',padding:'5px 8px',fontSize:11}}>
+              <option value="all">All types</option>
+              <option value="add_course">Add Course</option>
+              <option value="delete_course">Delete Course</option>
+              <option value="ai_suggestion">AI Suggestion</option>
+              <option value="add_resource">Add Resource</option>
+            </select>
+            <select value={histSort} onChange={e=>setHistSort(e.target.value)}
+              style={{background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,color:'var(--text)',padding:'5px 8px',fontSize:11}}>
+              <option value="recent">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="type">By type</option>
+            </select>
+          </div>
+        )}
         {tab==='pending'&&pending.length>1&&(
           <div style={{marginLeft:'auto',display:'flex',gap:8,paddingBottom:4}}>
             <button onClick={approveAll} disabled={bulkBusy!==''} style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.35)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'6px 14px',fontSize:12,fontWeight:700}}>
@@ -4468,7 +4724,7 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
       </div>
 
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
-        {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?'✅ No pending requests — all clear.':'No history yet.'}</div>}
+        {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?'✅ You're all caught up — no pending requests.':'No reviewed actions yet — approvals and rejections will show here.'}</div>}
         {list.map((a,i)=>{
           const meta=ACTION_LABELS[a.action_type]||{icon:'❓',label:a.action_type,color:'#8892a4'};
           const isPending=a.status==='pending';
@@ -4621,23 +4877,56 @@ function SubscriptionBadge({tier,role,expiresAt}){
 }
 
 function PaymentPortal({user,subCfg,onClose}){
+  const onePrice  = subCfg?.pro_price_1month||'500';
   const semPrice  = subCfg?.pro_price_semester||'1500';
   const yearPrice = subCfg?.pro_price_yearly||'5000';
   const acctName  = subCfg?.payment_account_name||'StudyHUB';
   const acctNum   = subCfg?.payment_account_number||'0123456789';
   const bank      = subCfg?.payment_bank||'OPay';
   const wa        = subCfg?.payment_whatsapp||'';
-  const aiLimit   = subCfg?.free_ai_messages_per_day||'5';
+  const aiLimit   = subCfg?.free_ai_messages_per_month||'5';
+  const referralCredit=parseInt(subCfg?.referral_credit||'100');
   const[copied,setCopied]=useState(false);
   const[selPlan,setSelPlan]=useState('semester');
+  const[promoCode,setPromoCode]=useState('');
+  const[promoResult,setPromoResult]=useState(null); // {valid,promo,error}
+  const[promoChecking,setPromoChecking]=useState(false);
+  const[userCredits,setUserCredits]=useState(0);
+  const myReferralCode=genReferralCode(user?.username||'');
+  const[refCopied,setRefCopied]=useState(false);
+
+  useEffect(()=>{
+    if(user?.username)dbGetReferralCredits(user.username).then(setUserCredits);
+  },[user?.username]);
+
+  const checkPromo=async()=>{
+    if(!promoCode.trim())return;
+    setPromoChecking(true);setPromoResult(null);
+    const result=await dbValidatePromo(promoCode);
+    setPromoResult(result);setPromoChecking(false);
+  };
 
   const plans=[
-    {id:'semester',label:'1 Semester',  duration:'~5 months', price:semPrice,badge:null,color:'#4f9cf9'},
-    {id:'yearly',  label:'1 Year',      duration:'2 semesters',price:yearPrice,badge:'Most popular',color:'#f9a84f'},
+    {id:'1month', label:'1 Month',    duration:'30 days',    price:onePrice, badge:null,        color:'#8892a4'},
+    {id:'semester',label:'1 Semester',duration:'~5 months', price:semPrice, badge:null,        color:'#4f9cf9'},
+    {id:'yearly',  label:'1 Year',    duration:'2 semesters',price:yearPrice,badge:'Best value', color:'#f9a84f'},
   ];
   const sel=plans.find(p=>p.id===selPlan)||plans[0];
 
+  // Calculate final price with credits and promo
+  const basePrice=parseInt(sel.price)||0;
+  const creditDiscount=Math.min(userCredits,basePrice);
+  const promoDiscount=(()=>{
+    if(!promoResult?.valid)return 0;
+    const p=promoResult.promo;
+    if(p.discount_type==='percent') return Math.round(basePrice*p.discount_value/100);
+    if(p.discount_type==='flat') return Math.min(p.discount_value,basePrice);
+    return 0;
+  })();
+  const finalPrice=Math.max(0,basePrice-creditDiscount-promoDiscount);
+
   const copyAcct=()=>{navigator.clipboard.writeText(acctNum).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});};
+  const copyRef=()=>{navigator.clipboard.writeText(myReferralCode).then(()=>{setRefCopied(true);setTimeout(()=>setRefCopied(false),2000);});};
 
   return(
     <div className="modal-overlay" style={{zIndex:9960}} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -4745,9 +5034,63 @@ function PaymentPortal({user,subCfg,onClose}){
           </div>
         </div>
 
+        {/* ── Referral credits banner ── */}
+        {userCredits>0&&(
+          <div style={{background:'rgba(127,218,150,.12)',border:'1px solid rgba(127,218,150,.3)',borderRadius:10,padding:'10px 14px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:18}}>🎁</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'#7fda96'}}>₦{userCredits} referral credits</div>
+              <div style={{fontSize:10,color:'rgba(255,255,255,.55)'}}>Auto-applied to your next payment</div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Promo code input ── */}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:9,color:'rgba(255,255,255,.45)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:6}}>PROMO CODE (OPTIONAL)</div>
+          <div style={{display:'flex',gap:8}}>
+            <input value={promoCode} onChange={e=>setPromoCode(e.target.value.toUpperCase())}
+              onKeyDown={e=>e.key==='Enter'&&checkPromo()}
+              placeholder="e.g. WELCOME50"
+              style={{flex:1,background:'rgba(255,255,255,.08)',border:`1px solid ${promoResult?.valid?'rgba(127,218,150,.6)':promoResult?.error?'rgba(240,80,80,.6)':'rgba(255,255,255,.2)'}`,borderRadius:8,padding:'9px 12px',color:'#fff',fontSize:12,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}/>
+            <button onClick={checkPromo} disabled={promoChecking||!promoCode.trim()}
+              style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:8,color:'#fff',cursor:'pointer',padding:'9px 14px',fontSize:11,fontWeight:700,flexShrink:0}}>
+              {promoChecking?'…':'Apply'}
+            </button>
+          </div>
+          {promoResult&&(
+            <div style={{marginTop:6,fontSize:11,color:promoResult.valid?'#7fda96':'#f05050'}}>
+              {promoResult.valid
+                ?`✓ ${promoResult.promo.description||'Discount applied!'} — saves ₦${promoDiscount}`
+                :`✕ ${promoResult.error}`}
+            </div>
+          )}
+        </div>
+
+        {/* ── Price breakdown ── */}
+        {(creditDiscount>0||promoDiscount>0)&&(
+          <div style={{background:'rgba(0,0,0,.2)',borderRadius:10,padding:'10px 14px',marginBottom:14}}>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'rgba(255,255,255,.6)',marginBottom:4}}>
+              <span>Base price</span><span>₦{basePrice}</span>
+            </div>
+            {creditDiscount>0&&<div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'#7fda96',marginBottom:4}}>
+              <span>🎁 Referral credits</span><span>−₦{creditDiscount}</span>
+            </div>}
+            {promoDiscount>0&&<div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'#7fda96',marginBottom:4}}>
+              <span>🏷 Promo code</span><span>−₦{promoDiscount}</span>
+            </div>}
+            <div style={{borderTop:'1px solid rgba(255,255,255,.15)',marginTop:6,paddingTop:6,display:'flex',justifyContent:'space-between',fontSize:14,fontWeight:700,color:'#fff'}}>
+              <span>You pay</span><span>₦{finalPrice}</span>
+            </div>
+          </div>
+        )}
+
         {/* Payment details */}
         <div style={{background:'rgba(0,0,0,.3)',border:'1px solid rgba(255,255,255,.1)',borderRadius:12,padding:'12px 14px',marginBottom:16}}>
-          <div style={{fontSize:9,color:'rgba(255,255,255,.4)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:8}}>PAY ₦{sel.price} — {sel.label.toUpperCase()}</div>
+          <div style={{fontSize:9,color:'rgba(255,255,255,.4)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:8}}>
+            PAY ₦{finalPrice>0?finalPrice:0} — {sel.label.toUpperCase()}
+            {finalPrice===0&&<span style={{color:'#7fda96',marginLeft:8}}>FREE WITH CREDITS!</span>}
+          </div>
           <div style={{fontSize:12,color:'rgba(255,255,255,.7)',marginBottom:8}}>{acctName}</div>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
             <div>
@@ -4760,10 +5103,25 @@ function PaymentPortal({user,subCfg,onClose}){
           </div>
         </div>
 
+        {/* ── Your referral code ── */}
+        <div style={{background:'rgba(168,249,79,.06)',border:'1px solid rgba(168,249,79,.2)',borderRadius:10,padding:'12px 14px',marginBottom:14}}>
+          <div style={{fontSize:9,color:'rgba(168,249,79,.7)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,marginBottom:6}}>YOUR REFERRAL CODE</div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+            <div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:20,color:'#a8f94f',letterSpacing:3,fontWeight:700}}>{myReferralCode}</div>
+              <div style={{fontSize:10,color:'rgba(255,255,255,.45)',marginTop:3}}>Share with friends — earn ₦{referralCredit} credit per subscriber</div>
+            </div>
+            <button onClick={copyRef} style={{background:refCopied?'rgba(168,249,79,.2)':'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.3)',borderRadius:8,color:'#a8f94f',cursor:'pointer',padding:'8px 14px',fontSize:11,fontWeight:600,flexShrink:0}}>
+              {refCopied?'✓ Copied':'Copy'}
+            </button>
+          </div>
+        </div>
+
         {/* WhatsApp CTA */}
         <div style={{textAlign:'center',marginBottom:10}}>
           <div style={{fontSize:11,color:'rgba(255,255,255,.55)',marginBottom:10,lineHeight:1.5}}>
-            Send proof of payment on WhatsApp to activate Pro
+            Send proof of payment on WhatsApp to activate Pro.<br/>
+            <span style={{color:'rgba(168,249,79,.8)'}}>Include your referral code to track credits</span>
           </div>
           {wa?(
             <a href={wa} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:8,background:'#1fff02',color:'#000',padding:'11px 26px',borderRadius:12,fontSize:14,fontWeight:700,textDecoration:'none',boxShadow:'0 4px 20px rgba(31,255,2,.3)'}}>
@@ -4774,8 +5132,151 @@ function PaymentPortal({user,subCfg,onClose}){
           )}
         </div>
         <div style={{fontSize:10,color:'rgba(255,255,255,.25)',textAlign:'center',lineHeight:1.6}}>
-          Activated within 24 hrs · No auto-renewal · Pay per semester
+          Activated within 24 hrs · No auto-renewal · Pay per plan
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ PROMO CODES TAB ═══════════════ */
+function PromoCodesTab({superuserName}){
+  const BLANK={code:'',description:'',discount_type:'percent',discount_value:10,max_uses:0,expires_at:'',active:true};
+  const[promos,setPromos]=useState([]);const[loading,setLoading]=useState(true);
+  const[form,setForm]=useState(BLANK);const[saving,setSaving]=useState(false);
+  const[msg,setMsg]=useState('');
+
+  const load=async()=>{setLoading(true);const p=await dbLoadPromos();setPromos(p);setLoading(false);};
+  useEffect(()=>{load();},[]);
+  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
+
+  const save=async()=>{
+    if(!form.code.trim()||!form.description.trim()){flash('❌ Code and description are required');return;}
+    setSaving(true);
+    const promo={
+      code:form.code.trim().toUpperCase(),
+      description:form.description.trim(),
+      discount_type:form.discount_type,
+      discount_value:parseInt(form.discount_value)||0,
+      max_uses:parseInt(form.max_uses)||0,
+      uses_count:0,
+      active:true,
+      expires_at:form.expires_at||null,
+      created_by:superuserName,
+      created_at:new Date().toISOString(),
+    };
+    await dbSavePromo(promo);await load();setForm(BLANK);
+    flash('✓ Promo code saved');setSaving(false);
+  };
+
+  const toggle=async(code,active)=>{
+    await supabase.from('promo_codes').update({active}).eq('code',code);
+    await load();
+  };
+
+  const remove=async(code)=>{
+    if(!window.confirm(`Delete promo "${code}"?`))return;
+    await dbDeletePromo(code);await load();flash('Deleted.');
+  };
+
+  return(
+    <div>
+      {msg&&<div style={{background:'rgba(168,249,79,.1)',border:'1px solid rgba(168,249,79,.3)',borderRadius:8,padding:'8px 14px',fontSize:12,color:'#a8f94f',marginBottom:14}}>{msg}</div>}
+      <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'12px 16px',marginBottom:20}}>
+        <div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:4}}>🏷 Promo Codes</div>
+        <div style={{color:'var(--muted)',fontSize:12}}>Create discount codes for special offers. Users enter these in the payment portal.</div>
+      </div>
+
+      {/* Create form */}
+      <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:'16px',marginBottom:20}}>
+        <Mono color="var(--muted)" size={9}>CREATE NEW CODE</Mono>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:10}}>
+          <div>
+            <div style={{fontSize:10,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>CODE</div>
+            <input value={form.code} onChange={e=>setForm(f=>({...f,code:e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'')}))} placeholder="e.g. WELCOME50" maxLength={20}
+              style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',color:'var(--text)',fontSize:13,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}/>
+          </div>
+          <div>
+            <div style={{fontSize:10,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>DESCRIPTION</div>
+            <input value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="e.g. 50% off first month"
+              style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',color:'var(--text)',fontSize:13}}/>
+          </div>
+          <div>
+            <div style={{fontSize:10,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>DISCOUNT TYPE</div>
+            <select value={form.discount_type} onChange={e=>setForm(f=>({...f,discount_type:e.target.value}))}
+              style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',color:'var(--text)',fontSize:13}}>
+              <option value="percent">% Off (e.g. 50% off)</option>
+              <option value="flat">Flat amount (e.g. ₦500 off)</option>
+            </select>
+          </div>
+          <div>
+            <div style={{fontSize:10,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>
+              DISCOUNT VALUE ({form.discount_type==='percent'?'%':'₦'})
+            </div>
+            <input type="number" value={form.discount_value} onChange={e=>setForm(f=>({...f,discount_value:e.target.value}))} min="1" max={form.discount_type==='percent'?100:99999}
+              style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',color:'var(--text)',fontSize:13}}/>
+          </div>
+          <div>
+            <div style={{fontSize:10,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>MAX USES (0 = unlimited)</div>
+            <input type="number" value={form.max_uses} onChange={e=>setForm(f=>({...f,max_uses:e.target.value}))} min="0"
+              style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',color:'var(--text)',fontSize:13}}/>
+            <div style={{fontSize:10,color:'var(--muted)',marginTop:3}}>e.g. 100 for "first 100 users"</div>
+          </div>
+          <div>
+            <div style={{fontSize:10,color:'var(--muted)',marginBottom:4,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>EXPIRES (leave blank = never)</div>
+            <input type="date" value={form.expires_at} onChange={e=>setForm(f=>({...f,expires_at:e.target.value}))}
+              style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',color:'var(--text)',fontSize:13}}/>
+          </div>
+        </div>
+        <button onClick={save} disabled={saving||!form.code.trim()}
+          style={{marginTop:14,background:'#f9a84f',border:'none',borderRadius:8,color:'#000',cursor:saving?'not-allowed':'pointer',padding:'10px 22px',fontSize:13,fontWeight:700}}>
+          {saving?'Saving…':'+ Create Promo Code'}
+        </button>
+      </div>
+
+      {/* Existing promos */}
+      {loading&&<div style={{color:'var(--muted)',textAlign:'center',padding:24}}>Loading…</div>}
+      {!loading&&promos.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:24,border:'1px dashed var(--border)',borderRadius:12}}>No promo codes yet.</div>}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {promos.map(p=>{
+          const isExpired=p.expires_at&&new Date(p.expires_at)<new Date();
+          const isFull=p.max_uses>0&&(p.uses_count||0)>=p.max_uses;
+          return(
+            <div key={p.code} style={{background:'var(--card)',border:`1px solid ${p.active&&!isExpired&&!isFull?'var(--border)':'rgba(240,80,80,.2)'}`,borderRadius:10,padding:'14px 16px'}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+                <div>
+                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4,flexWrap:'wrap'}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:14,fontWeight:700,color:p.active?'#a8f94f':'var(--muted)',letterSpacing:1}}>{p.code}</span>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:p.active&&!isExpired&&!isFull?'rgba(168,249,79,.1)':'rgba(240,80,80,.1)',color:p.active&&!isExpired&&!isFull?'#a8f94f':'#f05050',borderRadius:4,padding:'2px 7px'}}>
+                      {!p.active?'DISABLED':isExpired?'EXPIRED':isFull?'LIMIT REACHED':'ACTIVE'}
+                    </span>
+                    <span style={{fontSize:11,color:'var(--muted)'}}>
+                      {p.discount_type==='percent'?`${p.discount_value}% off`:`₦${p.discount_value} off`}
+                    </span>
+                  </div>
+                  <div style={{fontSize:12,color:'var(--text)',marginBottom:4}}>{p.description}</div>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',display:'flex',gap:12,flexWrap:'wrap'}}>
+                    <span>Used: {p.uses_count||0}{p.max_uses>0?`/${p.max_uses}`:''}</span>
+                    {p.expires_at&&<span>Expires: {new Date(p.expires_at).toLocaleDateString()}</span>}
+                    <span>By @{p.created_by}</span>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:8,flexShrink:0}}>
+                  <button onClick={()=>toggle(p.code,!p.active)}
+                    style={{background:p.active?'rgba(240,80,80,.1)':'rgba(127,218,150,.1)',border:`1px solid ${p.active?'rgba(240,80,80,.3)':'rgba(127,218,150,.3)'}`,borderRadius:7,color:p.active?'#f05050':'#7fda96',cursor:'pointer',padding:'6px 12px',fontSize:11,fontWeight:700}}>
+                    {p.active?'Disable':'Enable'}
+                  </button>
+                  <button onClick={()=>remove(p.code)}
+                    style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',padding:'6px',fontSize:16,opacity:.5}}
+                    onMouseEnter={e=>{e.currentTarget.style.color='#f05050';e.currentTarget.style.opacity='1';}}
+                    onMouseLeave={e=>{e.currentTarget.style.color='var(--muted)';e.currentTarget.style.opacity='.5';}}>
+                    🗑
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -4837,13 +5338,13 @@ function SettingsTab({onReload,superuserName}){
     <div className="fade-up">
       <div style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'11px 15px',marginBottom:20,display:'flex',gap:10,alignItems:'center'}}>
         <span style={{fontSize:18}}>⚙️</span>
-        <div><div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Platform Settings</div><div style={{color:'var(--muted)',fontSize:12}}>Add departments and user types. Changes take effect immediately across the site.</div></div>
+        <div><div style={{color:'#f9a84f',fontSize:13,fontWeight:600,marginBottom:2}}>Platform Settings</div><div style={{color:'var(--muted)',fontSize:12}}>Every setting here is live — changes apply immediately for all users across StudyHub.</div></div>
       </div>
       {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:14}}>{msg}</div>}
 
       {/* Sub-tabs */}
       <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:20}}>
-        {[{id:'depts',label:'🏫 Departments'},{id:'types',label:'👥 User Types'},{id:'subscription',label:'💳 Subscription'}].map(t=>(
+        {[{id:'depts',label:'🏫 Departments'},{id:'types',label:'👥 User Types'},{id:'subscription',label:'💳 Subscription'},{id:'promos',label:'🏷 Promo Codes'}].map(t=>(
           <button key={t.id} onClick={()=>setSection(t.id)} style={{background:'none',border:'none',borderBottom:section===t.id?'2px solid #f9a84f':'2px solid transparent',color:section===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:section===t.id?600:400}}>{t.label}</button>
         ))}
       </div>
@@ -4940,10 +5441,13 @@ function SettingsTab({onReload,superuserName}){
             <div style={{color:'var(--muted)',fontSize:12}}>Only you can change these. Students see updates immediately.</div>
           </div>
           {[
-            {key:'free_ai_messages_per_month', label:'Free tier AI explanations / month', type:'number', hint:'How many AI messages a free user gets per month (default: 5)'},
+            {key:'free_ai_messages_per_month', label:'Free tier AI messages / month',       type:'number', hint:'AI messages free users get per month. Default: 5'},
+            {key:'max_focus_tasks',              label:'Max focus list tasks per user',      type:'number', hint:'Max items in Focus List widget. Default: 3'},
+            {key:'max_community_posts',          label:'Max community posts per user/day',   type:'number', hint:'Spam guard for Community tab. 0 = unlimited. Default: 5'},
+            {key:'pro_price_1month',             label:'Premium — 1 month (₦)',              type:'number', hint:'30 days access. Recommended: ₦300–₦500'},
             {key:'pro_price_semester',          label:'Premium — per semester (₦)',         type:'number', hint:'~5 months. Recommended: ₦500–₦1,000'},
             {key:'pro_price_yearly',            label:'Premium — full year (₦)',            type:'number', hint:'2 semesters. Recommended: ₦5,000'},
-            {key:'referral_credit',             label:'Referral credit per friend (₦)',     type:'number', hint:'₦ discount given for each friend who subscribes (default: ₦100)'},
+            {key:'referral_credit',             label:'Referral credit per friend (₦)',     type:'number', hint:'₦ credited to referrer per paying subscriber (default: ₦100)'},
             {key:'payment_account_name',        label:'OPay account name',                  type:'text',   hint:'Name shown on the payment card'},
             {key:'payment_account_number',      label:'OPay account number',                type:'text',   hint:'Account number students copy to pay'},
             {key:'payment_bank',                label:'Bank name',                          type:'text',   hint:'e.g. OPay'},
@@ -4988,13 +5492,17 @@ function SettingsTab({onReload,superuserName}){
           </button>
         </div>
       )}
+
+      {/* ── PROMO CODES ── */}
+      {section==='promos'&&<PromoCodesTab superuserName={superuserName}/>}
     </div>
   );
 }
 
 /* ═══════════════ USER ROW ═══════════════ */
 /* ─── Subscription Manager — shown inside UserRow for superuser ─── */
-function SubscriptionManager({u,onSaved}){
+function SubscriptionManager({u,onSaved,subCfg={}}){
+  const[referredBy,setReferredBy]=useState('');
   const PLANS=[
     {id:'1month',  label:'1 Month',     months:1,  color:'#8892a4'},
     {id:'semester',label:'1 Semester',  months:5,  color:'#4f9cf9'},
@@ -5020,6 +5528,20 @@ function SubscriptionManager({u,onSaved}){
     const expires=new Date();
     expires.setMonth(expires.getMonth()+plan.months);
     await dbSetUserTier(u.username,'pro',expires.toISOString(),plan.id);
+    // Credit the referrer if a code was entered
+    if(referredBy.trim()){
+      try{
+        const{data:allUsers}=await supabase.from('users').select('username');
+        const codeMap=(allUsers||[]).reduce((acc,row)=>({...acc,[genReferralCode(row.username)]:row.username}),{});
+        const referrerUsername=codeMap[referredBy.trim().toUpperCase()];
+        if(referrerUsername&&referrerUsername!==u.username){
+          const{data:ref}=await supabase.from('users').select('referral_credits').eq('username',referrerUsername).single();
+          const cur=ref?.referral_credits||0;
+          const creditAmt=parseInt(subCfg?.referral_credit||'100');
+          await supabase.from('users').update({referral_credits:cur+creditAmt}).eq('username',referrerUsername);
+        }
+      }catch(e){console.error('referral credit:',e);}
+    }
     setSaved(true);setSaving(false);
     setTimeout(()=>setSaved(false),2500);
     onSaved?.();
@@ -5078,11 +5600,18 @@ function SubscriptionManager({u,onSaved}){
         const plan=PLANS.find(p=>p.id===sel);
         const exp=new Date();exp.setMonth(exp.getMonth()+plan.months);
         return(
-          <div style={{fontSize:10,color:'var(--muted)',marginBottom:10,fontFamily:"'IBM Plex Mono',monospace"}}>
+          <div style={{fontSize:10,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace"}}>
             → Pro until <span style={{color:plan.color,fontWeight:700}}>{exp.toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}</span>
           </div>
         );
       })()}
+
+      {/* Referred by */}
+      <div style={{marginBottom:10}}>
+        <div style={{fontSize:9,color:'var(--muted)',marginBottom:3,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5}}>REFERRED BY (optional — auto-credits referrer ₦100)</div>
+        <input value={referredBy} onChange={e=>setReferredBy(e.target.value.toUpperCase())} placeholder="e.g. SHXYZ12"
+          style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px',color:'var(--text)',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}/>
+      </div>
 
       {/* Action buttons */}
       <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
@@ -5109,6 +5638,8 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
   const[busy,setBusy]=useState('');
   const[localYear,setLocalYear]=useState(u.year||1);
   const[localAccountType,setLocalAccountType]=useState(u.account_type||'student');
+  // Sync local state when the user prop changes (sort/filter re-uses component instances)
+  useEffect(()=>{setLocalYear(u.year||1);setLocalAccountType(u.account_type||'student');},[u.username,u.year,u.account_type]);
   const accentColor=ROLE_COLOR[role]||ROLE_COLOR.user;
 
   const doRoleChange=async(accountType)=>{
@@ -5210,7 +5741,7 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
           {isSU2&&(
             <div>
               <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>SUBSCRIPTION</div>
-              <SubscriptionManager u={u} onSaved={async()=>{
+              <SubscriptionManager u={u} subCfg={subCfg} onSaved={async()=>{
                 const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
                 setAllUsers(users);setAdmins(adms);
               }}/>
@@ -5250,6 +5781,7 @@ function UserStatusHistory({username}){
 /* ═══════════════ ADMIN PANEL ═══════════════ */
 function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}){
   const isSU2=user.role===ROLE.SUPERUSER;
+  const[subCfg,setSubCfg]=useState({});
   const[tab,setTab]=useState('courses');const[allUsers,setAllUsers]=useState([]);const[admins,setAdmins]=useState([]);const[filterY,setFilterY]=useState(0);const[filterSem,setFilterSem]=useState(0);const[filterDept,setFilterDept]=useState('all');const[showUpload,setShowUpload]=useState(false);const[search,setSearch]=useState('');const[pendingCount,setPendingCount]=useState(0);const[statusPendingCount,setStatusPendingCount]=useState(0);const[actionMsg,setActionMsg]=useState('');
   const[selectedUsers,setSelectedUsers]=useState(new Set());
   const[bulkAction,setBulkAction]=useState('');const[bulkBusy,setBulkBusy]=useState(false);
@@ -5258,7 +5790,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
   const[deleteConfirm,setDeleteConfirm]=useState(null); // username to delete
 
   useEffect(()=>{
-    Promise.all([dbLoadUsers(),dbLoadAdmins()]).then(([u,a])=>{setAllUsers(u);setAdmins(a);});
+    Promise.all([dbLoadUsers(),dbLoadAdmins(),dbLoadSubConfig()]).then(([u,a,sc])=>{setAllUsers(u);setAdmins(a);const cfg={};(sc||[]).forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);});
     if(isSU2)dbCountPending().then(setPendingCount);
     dbCountPendingStatusRequests().then(setStatusPendingCount);
   },[]);
@@ -5362,7 +5894,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
 
         {/* Stats */}
         <div className="stagger-1" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:24}}>
-          {[{label:'Total Courses',val:courses.length,color:'#4f9cf9'},{label:'Users',val:allUsers.length,color:'#7fda96'},{label:'Admins',val:admins.length,color:'#da7ff0'},...(isSU2&&pendingCount>0?[{label:'Pending Approval',val:pendingCount,color:'#f9a84f'}]:[]),...YEARS.map(y=>({label:`Year ${y}`,val:courses.filter(c=>c.year===y).length,color:YEAR_COLORS[y]}))].map((s,i)=>(
+          {(()=>{const proU=allUsers.filter(u=>(u.subscription_tier||'free')==='pro').length;return[{label:'Courses',val:courses.length,color:'#4f9cf9'},{label:'Total Users',val:allUsers.length,color:'#7fda96'},{label:'⭐ Pro',val:proU,color:'#f9a84f'},{label:'Free',val:allUsers.length-proU,color:'#8892a4'},{label:'Admins',val:admins.length,color:'#da7ff0'},...(isSU2&&pendingCount>0?[{label:'⚡ Pending',val:pendingCount,color:'#f9a84f'}]:[]),{label:'Online Now',val:onlineUsers.size,color:'#7fda96'},...YEARS.map(y=>({label:`Year ${y}`,val:courses.filter(c=>c.year===y).length,color:YEAR_COLORS[y]}))];})().map((s,i)=>(
             <div key={i} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:22,color:s.color,fontWeight:600}}>{s.val}</div>
               <div style={{fontSize:11,color:'var(--muted)',marginTop:3}}>{s.label}</div>
@@ -5409,7 +5941,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
               </select>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:9}}>
-              {filtered.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12}}>No courses here yet.</div>}
+              {filtered.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12}}>No courses found. Try adjusting your filters or check back later.</div>}
               {[...filtered].sort((a,b)=>{
                 if(courseSort==='recent') return new Date(b.addedAt||0)-new Date(a.addedAt||0);
                 if(courseSort==='name') return(a.chapterTitle||'').localeCompare(b.chapterTitle||'');
@@ -5752,7 +6284,16 @@ function StatusChangesTab({reviewerUsername}){
     setRejectModal(null);setRejectNote('');setBusy('');await load();
   };
 
-  const list=tab==='pending'?pending:history;
+  // Sort and filter the list
+  const list=useMemo(()=>{
+    const base=tab==='pending'?pending:history;
+    let filtered=histFilter==='all'?base:base.filter(a=>a.action_type===histFilter);
+    return [...filtered].sort((a,b)=>{
+      if(histSort==='oldest') return new Date(a.requested_at)-new Date(b.requested_at);
+      if(histSort==='type') return a.action_type.localeCompare(b.action_type);
+      return new Date(b.requested_at)-new Date(a.requested_at); // recent first
+    });
+  },[tab,pending,history,histSort,histFilter]);
 
   if(loading)return<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>Loading…</div>;
 
@@ -5785,7 +6326,7 @@ function StatusChangesTab({reviewerUsername}){
       </div>
 
       <div style={{display:'flex',flexDirection:'column',gap:11}}>
-        {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?'✅ No pending requests.':'No history yet.'}</div>}
+        {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?'✅ No pending requests.':'No reviewed actions yet — approvals and rejections will show here.'}</div>}
         {list.map((r,i)=>{
           const fromUT=USER_TYPES.find(t=>t.id===r.from_type||t.roleKey===r.from_type);
           const toUT=USER_TYPES.find(t=>t.id===r.to_type||t.roleKey===r.to_type);
@@ -5862,7 +6403,7 @@ const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarke
 });
 
 /* ═══════════════ STUDY TOOLS ═══════════════ */
-function StudyTools({user}){
+function StudyTools({user,subCfg={}}){
   const storageKey = user?.username ? `sh-studytools-${user.username}` : 'sh-studytools-guest';
   const padKey     = user?.username ? `sh-scratchpad-${user.username}` : 'sh-scratchpad-guest';
 
@@ -5953,7 +6494,7 @@ function StudyTools({user}){
 
   const addTask=()=>{
     const t=input.trim();
-    if(!t||tasks.length>=3)return;
+    const maxT=parseInt(subCfg?.max_focus_tasks||'3');if(!t||tasks.length>=maxT)return;
     setTasks(prev=>[...prev,{id:Date.now(),text:t,done:false}]);
     setInput('');
   };
@@ -5966,7 +6507,7 @@ function StudyTools({user}){
     try{localStorage.setItem(padKey,val);}catch{}
   };
 
-  const full=tasks.length>=3;
+  const maxT=parseInt(subCfg?.max_focus_tasks||'3');const full=tasks.length>=maxT;
 
   return(
     <div style={{marginBottom:18}}>
@@ -6162,7 +6703,7 @@ function StudyTools({user}){
 }
 
 /* ═══════════════ HOME ═══════════════ */
-function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab}){
+function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab,onUserUpdate}){
   const isExternal=user.role===ROLE.EXTERNAL;
   const[activeYear,setActiveYear]=useState(isExternal?'all':(user.year||1));
   const[activeSemester,setActiveSemester]=useState(1);
@@ -6170,10 +6711,13 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[deptOpen,setDeptOpen]=useState(false);
   const[searchRaw,setSearchRaw]=useState('');
   const[search,setSearch]=useState('');
+  // Debounce: only update active search 300ms after typing stops
+  useEffect(()=>{const t=setTimeout(()=>setSearch(searchRaw),300);return()=>clearTimeout(t);},[searchRaw]);
   const[showBookmarks,setShowBookmarks]=useState(false);
   const[showStatusModal,setShowStatusModal]=useState(false);
   const[showPWADebug,setShowPWADebug]=useState(false);
   const[showPayment,setShowPayment]=useState(false);
+  const[showProfile,setShowProfile]=useState(false);
   const[subCfg,setSubCfg]=useState({});
   const[drawerOpen,setDrawerOpen]=useState(false);
   const[browseMode,setBrowseMode]=useState('year'); // 'year' | 'course'
@@ -6218,7 +6762,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
     const matchSem=activeYear==='all'||c.semester===activeSemester;
     const matchDept=activeDept==='all'||c.department===activeDept;
     const lq=search.toLowerCase();
-    const matchSearch=!search||c.chapterTitle.toLowerCase().includes(lq)||c.courseName.toLowerCase().includes(lq);
+    const matchSearch=!search||c.chapterTitle.toLowerCase().includes(lq)||c.courseName.toLowerCase().includes(lq)||(c.department||"").toLowerCase().includes(lq)||(DEPT_SHORT[c.department]||"").toLowerCase().includes(lq)||String(c.year).includes(lq);
     const matchTier=!accessibleYears||accessibleYears.has(c.year);
     return matchYear&&matchSem&&matchDept&&matchSearch&&matchTier;
   }),[courses,activeYear,activeSemester,activeDept,search,accessibleYears]);
@@ -6333,7 +6877,8 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
                 ...(bookmarks.length>0?[{icon:'🔖',label:`Bookmarks (${bookmarks.length})`,action:()=>{setShowBookmarks(s=>!s);setDrawerOpen(false);}}]:[]),
                 ...(isPriv?[{icon:user.role===ROLE.SUPERUSER?'⚡':'⚙️',label:'Admin Panel',action:()=>{onShowAdmin();setDrawerOpen(false);}}]:[]),
                 ...(!user.isGuest&&(user.role===ROLE.USER||user.role===ROLE.EXTERNAL)?[{icon:'🔄',label:'Change Status',action:()=>{setShowStatusModal(true);setDrawerOpen(false);}}]:[]),
-                ...(!user.isGuest&&(user.subscription_tier||'free')==='free'&&user.role!==ROLE.SUPERUSER?[{icon:'⭐',label:'Upgrade to Pro',action:()=>{setShowPayment(true);setDrawerOpen(false);},highlight:true}]:[]),
+                ...(!user.isGuest?[{icon:'✏️',label:'Edit Profile',action:()=>{setShowProfile(true);setDrawerOpen(false);}}]:[]),
+            ...(!user.isGuest&&(user.subscription_tier||'free')==='free'&&user.role!==ROLE.SUPERUSER?[{icon:'⭐',label:'Upgrade to Pro',action:()=>{setShowPayment(true);setDrawerOpen(false);},highlight:true}]:[]),
               ].map((item,i)=>(
                 <button key={i} onClick={item.action}
                   style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'11px 12px',borderRadius:10,border:'none',background:item.active?'rgba(79,156,249,.08)':item.highlight?'rgba(249,168,79,.08)':'transparent',color:item.highlight?'#f9a84f':item.active?'#4f9cf9':'var(--text)',cursor:'pointer',textAlign:'left',fontSize:13,fontWeight:item.active||item.highlight?600:400,marginBottom:2}}>
@@ -6364,6 +6909,20 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               )}
             </div>
 
+            {/* Referral code — quick access for logged-in users */}
+            {!user.isGuest&&(
+              <div style={{padding:'0 12px 8px'}}>
+                <div style={{background:'rgba(168,249,79,.06)',border:'1px solid rgba(168,249,79,.15)',borderRadius:10,padding:'10px 12px'}}>
+                  <div style={{fontSize:9,color:'rgba(168,249,79,.6)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1,marginBottom:4}}>YOUR REFERRAL CODE</div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:15,fontWeight:700,color:'#a8f94f',letterSpacing:2}}>{genReferralCode(user.username)}</span>
+                    <button onClick={()=>navigator.clipboard.writeText(genReferralCode(user.username))}
+                      style={{background:'rgba(168,249,79,.12)',border:'1px solid rgba(168,249,79,.3)',borderRadius:6,color:'#a8f94f',cursor:'pointer',padding:'3px 10px',fontSize:10,fontWeight:700}}>Copy</button>
+                  </div>
+                  <div style={{fontSize:9,color:'var(--muted)',marginTop:3}}>Share · earn ₦ credit per subscribing friend</div>
+                </div>
+              </div>
+            )}
             {/* Sign out */}
             <div style={{padding:'12px 12px',borderTop:'1px solid var(--border)'}}>
               <button onClick={()=>{setDrawerOpen(false);onLogout();}}
@@ -6381,6 +6940,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
 
       {/* Payment portal */}
       {showPayment&&<PaymentPortal user={user} subCfg={subCfg} onClose={()=>setShowPayment(false)}/>}
+      {showProfile&&<ProfileModal user={user} onClose={()=>setShowProfile(false)} onUpdate={updated=>{onUserUpdate&&onUserUpdate(updated);setShowProfile(false);}}/>}
 
       {/* Status change modal */}
       {showStatusModal&&<StatusChangeModal user={user} onClose={()=>setShowStatusModal(false)} onSubmitted={()=>{setStatusMsg('✓ Request submitted — an admin will review it shortly.');setTimeout(()=>setStatusMsg(''),4000);}}/>}
@@ -6507,7 +7067,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       </div>}
 
       {/* ── Study Tools: Top 3 Tasks + Scratchpad ───────────────── */}
-      <StudyTools user={user}/>
+      <StudyTools user={user} subCfg={subCfg}/>
 
       {/* Search */}
       <div className="stagger-3" style={{marginBottom:16}}>
@@ -6785,7 +7345,8 @@ export default function App(){
     }
   }
   const savedNav=savedSession?loadNav():null;
-  const[view,setView]=useState(savedSession?(savedNav?.view||'home'):'auth');
+  // Start as 'home' for course view — will switch once data loads async
+  const[view,setView]=useState(savedSession?(savedNav?.view==='course'?'home':(savedNav?.view||'home')):'auth');
   const[user,setUser]=useState(savedSession||null);
   const[courses,setCourses]=useState([]);
   const[active,setActive]=useState(null);
@@ -7121,7 +7682,12 @@ export default function App(){
         </div>
       )}
 
-      {view==='coursetab'&&activeCourseCode&&user&&(
+      {view==='coursetab'&&activeCourseCode&&user&&courses.length===0&&(
+        <div style={{position:'fixed',inset:0,background:'var(--bg)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{color:'#4f9cf9',fontSize:32,animation:'spin 1s linear infinite'}}>⟳</div>
+        </div>
+      )}
+      {view==='coursetab'&&activeCourseCode&&user&&courses.length>0&&(
         <div style={{paddingTop:user?.isGuest?48:0}}>
           <CourseTabView
             courseCode={activeCourseCode}
@@ -7135,6 +7701,12 @@ export default function App(){
         </div>
       )}
 
+      {view==='course'&&!active&&user&&(
+        <div style={{position:'fixed',inset:0,background:'var(--bg)',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:16}}>
+          <div style={{color:'#4f9cf9',fontSize:32,animation:'spin 1s linear infinite'}}>⟳</div>
+          <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'var(--muted)',letterSpacing:2}}>LOADING COURSE…</div>
+        </div>
+      )}
       {view==='course'&&active&&user&&(
         <div style={{paddingTop:user?.isGuest?48:0}}>
           <CourseView course={active} user={user} progress={progress}
