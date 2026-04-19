@@ -7293,7 +7293,6 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           ))}
         </div>
       </>)}
-      </>)}
     </div>
   );
 }
