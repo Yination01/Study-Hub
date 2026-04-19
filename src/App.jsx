@@ -538,7 +538,7 @@ async function dbRedeemPromo(code){
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '4.3.0';
+const APP_VERSION    = '4.5.0';
 
 /* ═══════════════ XP / GAMIFICATION ═══════════════ */
 const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5,question_reveal:2};
@@ -727,7 +727,7 @@ function pushNotification(title,body,icon='/icon-192.png'){
 const Tag=({children,color='#4f9cf9'})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,background:`${color}18`,color,borderRadius:4,padding:'2px 8px',marginRight:5,display:'inline-block'}}>{children}</span>);
 const Mono=({children,color='#4f9cf9',size=10})=>(<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:size,color,letterSpacing:2,textTransform:'uppercase'}}>{children}</span>);
 const SectionLabel=({children})=>(<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:3,textTransform:'uppercase',color:'#f9a84f',marginBottom:20,display:'flex',alignItems:'center',gap:10}}>{children}<div style={{flex:1,height:1,background:'var(--border)'}}/></div>);
-const Field=({label,type='text',value,onChange,placeholder,error,disabled,onKeyDown})=>(<div style={{marginBottom:14}}>{label&&<div style={{fontSize:11,color:'var(--muted)',marginBottom:5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{label}</div>}<input type={type} value={value} onChange={onChange} onKeyDown={onKeyDown} placeholder={placeholder} disabled={disabled} style={{width:'100%',background:disabled?'rgba(0,0,0,.2)':'var(--input-bg)',border:`1px solid ${error?'#f05050':'var(--border)'}`,borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>{error&&<div style={{color:'#f05050',fontSize:11,marginTop:4}}>{error}</div>}</div>);
+const Field=({label,type='text',value,onChange,placeholder,error,disabled,onKeyDown,maxLength})=>(<div style={{marginBottom:14}}>{label&&<div style={{fontSize:11,color:'var(--muted)',marginBottom:5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{label}</div>}<input type={type} value={value} onChange={onChange} onKeyDown={onKeyDown} placeholder={placeholder} disabled={disabled} style={{width:'100%',background:disabled?'rgba(0,0,0,.2)':'var(--input-bg)',border:`1px solid ${error?'#f05050':'var(--border)'}`,borderRadius:8,padding:'11px 14px',color:'var(--text)',fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>{error&&<div style={{color:'#f05050',fontSize:11,marginTop:4}}>{error}</div>}</div>);
 const Avatar=({name,size=32})=>{const ini=name?name.slice(0,2).toUpperCase():'??';const hue=name?name.split('').reduce((a,c)=>a+c.charCodeAt(0),0)%360:200;return<div style={{width:size,height:size,borderRadius:'50%',background:`hsl(${hue},55%,25%)`,border:`2px solid hsl(${hue},55%,45%)`,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'IBM Plex Mono',monospace",fontSize:size*.33,color:`hsl(${hue},80%,80%)`,flexShrink:0}}>{ini}</div>;};
 const RoleBadge=({role,accountType})=>{
   const col=ROLE_COLOR[role]||ROLE_COLOR.user;
@@ -1620,6 +1620,7 @@ function Chatbot({context,courses,user,subCfg={}}){
 /* ═══════════════ PROFILE MODAL ═══════════════ */
 function ProfileModal({user,onClose,onUpdate}){
   const[tab,setTab]=useState('name'); // 'name' | 'password'
+  const[nameSaved,setNameSaved]=useState(false);
   const[displayName,setDisplayName]=useState(user.displayName||user.username);
   const[currentPw,setCurrentPw]=useState('');const[newPw,setNewPw]=useState('');const[confirmPw,setConfirmPw]=useState('');
   const[msg,setMsg]=useState('');const[error,setError]=useState('');const[saving,setSaving]=useState(false);
@@ -1633,6 +1634,7 @@ function ProfileModal({user,onClose,onUpdate}){
       await supabase.from('users').update({display_name:displayName.trim()}).eq('username',user.username);
       onUpdate({...user,displayName:displayName.trim()});
       flash('✓ Display name updated!');
+      setNameSaved(true);
     }catch{flash('Failed to save.',true);}
     setSaving(false);
   };
@@ -1641,6 +1643,7 @@ function ProfileModal({user,onClose,onUpdate}){
     if(!currentPw||!newPw||!confirmPw)return flash('All fields required.',true);
     if(newPw!==confirmPw)return flash("New passwords don't match.",true);
     if(newPw.length<6)return flash('Password must be at least 6 characters.',true);
+    if(newPw===user.username)return flash('Password cannot be the same as your username.',true);
     // Verify current password
     const{data}=await supabase.from('users').select('pw_hash').eq('username',user.username).single();
     if(data?.pw_hash!==hashStr(currentPw))return flash('Current password is incorrect.',true);
@@ -1707,6 +1710,7 @@ function ProfileModal({user,onClose,onUpdate}){
 function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
   const[tab,setTab]=useState('signin');
   const[f,setF]=useState({username:'',password:'',confirm:'',year:3,accountType:'student'});
+  const[showPw,setShowPw]=useState(false);
   const[errs,setErrs]=useState({});const[loading,setLoading]=useState(false);
   const set=(k,v)=>{setF(p=>({...p,[k]:v}));setErrs(p=>({...p,[k]:''}));};
 
@@ -1774,7 +1778,8 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
           {tab==='signin'?(
             <div className="fade-in">
               <Field label="USERNAME" value={f.username} onChange={e=>set('username',e.target.value)} placeholder="your_username" error={errs.username}/>
-              <Field label="PASSWORD" type="password" value={f.password} onChange={e=>set('password',e.target.value)} placeholder="••••••••" error={errs.password} onKeyDown={e=>e.key==='Enter'&&signIn()}/>
+              <Field label="PASSWORD" type={showPw?'text':'password'} value={f.password} onChange={e=>set('password',e.target.value)} placeholder="••••••••" error={errs.password} onKeyDown={e=>e.key==='Enter'&&signIn()}/>
+              <button type="button" onClick={()=>setShowPw(v=>!v)} style={{background:'none',border:'none',color:'#4f9cf9',cursor:'pointer',fontSize:11,padding:'2px 0',textAlign:'left'}}>{showPw?'🙈 Hide password':'👁 Show password'}</button>
               <button onClick={signIn} disabled={loading} style={{width:'100%',background:loading?'var(--border)':'#4f9cf9',border:'none',borderRadius:8,color:loading?'var(--muted)':'#000',cursor:loading?'not-allowed':'pointer',padding:'12px 0',fontSize:14,fontWeight:700,marginTop:4}}>
                 {loading?'Signing in…':'Sign In'}
               </button>
@@ -2271,6 +2276,8 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
             <div style={{fontSize:13,color:'var(--muted)'}}>
               {chapters.length} chapter{chapters.length!==1?'s':''} · {totalConcepts} concepts · {totalQ} questions
               {visitedCount>0&&<span style={{color:'#7fda96',marginLeft:8}}>· {visitedCount}/{chapters.length} visited</span>}
+              {totalQ>0&&<span style={{color:'#4f9cf9',marginLeft:8}}>· {Math.round(chapters.reduce((a,c)=>a+(progress[c.id]?.openedQs?.length||0),0)/totalQ*100)}% questions opened</span>}
+              {chapters.length>0&&<span style={{color:'var(--muted)',marginLeft:8}}>· ~{Math.ceil(chapters.length*12)} min est.</span>}
             </div>
           </div>
         </div>
@@ -2916,6 +2923,30 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
         </div>
       </div>
     </div>
+
+      {/* Keyboard Shortcuts */}
+      {showShortcuts&&(
+        <div className="modal-overlay" onClick={()=>setShowShortcuts(false)}>
+          <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'24px 26px',maxWidth:380,width:'calc(100% - 32px)',margin:'auto',boxShadow:'var(--shadow)'}}>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'var(--text)',marginBottom:16}}>⌨️ Keyboard Shortcuts</div>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {[
+                ['/','Open course search'],
+                ['Escape','Close chatbot / modals'],
+                ['?','Show this shortcuts panel'],
+                ['Enter','Submit / confirm'],
+                ['Shift+Enter','New line in chatbot'],
+              ].map(([key,desc])=>(
+                <div key={key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:5,padding:'3px 8px',color:'var(--text)',letterSpacing:.5}}>{key}</span>
+                  <span style={{fontSize:12,color:'var(--muted)',flex:1,textAlign:'right'}}>{desc}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={()=>setShowShortcuts(false)} style={{width:'100%',marginTop:18,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,color:'var(--muted)',cursor:'pointer',padding:'9px 0',fontSize:12}}>Close</button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -3333,7 +3364,7 @@ function NotificationBell({user,courses,onNavigate}){
                         color:'var(--muted)',display:'flex',gap:10,flexWrap:'wrap',marginTop:2,
                         alignItems:'center'}}>
                         {n.courseId&&<span>📚 {courseMap[n.courseId]||n.courseId}</span>}
-                        <span>{new Date(n.time).toLocaleString()}</span>
+                        <span>{timeAgo(n.time)}</span>
                         {isClickable&&<span style={{color:p.color,fontSize:9}}>Tap to open →</span>}
                       </div>
                     </div>
@@ -3373,6 +3404,17 @@ function AssignmentsTab({courseId,user}){
   };
 
   const overdue=d=>d&&new Date(d)<new Date();
+const timeAgo=d=>{if(!d)return'';const s=Math.floor((Date.now()-new Date(d))/1000);if(s<60)return'just now';if(s<3600)return`${Math.floor(s/60)}m ago`;if(s<86400)return`${Math.floor(s/3600)}h ago`;if(s<604800)return`${Math.floor(s/86400)}d ago`;return new Date(d).toLocaleDateString('en-NG',{day:'numeric',month:'short'});};
+const daysUntil=d=>{if(!d)return null;const diff=Math.ceil((new Date(d)-new Date())/(1000*60*60*24));return diff;};
+const dueBadge=d=>{
+  if(!d)return null;
+  const n=daysUntil(d);
+  if(n<0) return{text:'Overdue',color:'#f05050',bg:'rgba(240,80,80,.1)'};
+  if(n===0) return{text:'Due today',color:'#f05050',bg:'rgba(240,80,80,.08)'};
+  if(n<=2) return{text:`${n}d left`,color:'#f9a84f',bg:'rgba(249,168,79,.1)'};
+  if(n<=7) return{text:`${n}d left`,color:'#f9a84f',bg:'rgba(249,168,79,.06)'};
+  return{text:new Date(d).toLocaleDateString('en-NG',{day:'numeric',month:'short'}),color:'var(--muted)',bg:'transparent'};
+};
   return(
     <div className="fade-up">
       <SectionLabel>Assignments</SectionLabel>
@@ -3391,7 +3433,7 @@ function AssignmentsTab({courseId,user}){
             <Field label="DUE DATE" type="date" value={form.due_date} onChange={e=>setForm(f=>({...f,due_date:e.target.value}))}/>
             <Field label="MARKS (optional)" type="number" value={form.marks} onChange={e=>setForm(f=>({...f,marks:e.target.value}))} placeholder="e.g. 20"/>
           </div>
-          <Field label="FILE / LINK (optional)" value={form.file_url} onChange={e=>setForm(f=>({...f,file_url:e.target.value}))} placeholder="https://..."/>
+          <Field label="FILE / LINK (optional)" value={form.file_url} onChange={e=>setForm(f=>({...f,file_url:e.target.value}))} placeholder="https://..." maxLength={500}/>
           <button onClick={save} disabled={loading||!form.title.trim()} style={{background:'#f9a84f',border:'none',borderRadius:7,color:'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>
             {loading?'Saving…':isSU2?'Save Assignment':'Submit for Approval'}
           </button>
@@ -3406,7 +3448,7 @@ function AssignmentsTab({courseId,user}){
                 <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:5}}>
                   <span style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{a.title}</span>
                   {a.marks&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(249,168,79,.15)',color:'#f9a84f',borderRadius:4,padding:'2px 7px'}}>{a.marks} marks</span>}
-                  {a.due_date&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:overdue(a.due_date)?'rgba(240,80,80,.15)':'rgba(127,218,150,.15)',color:overdue(a.due_date)?'#f05050':'#7fda96',borderRadius:4,padding:'2px 7px'}}>Due {new Date(a.due_date).toLocaleDateString()}{overdue(a.due_date)?'  ⚠ Overdue':''}</span>}
+                  {a.due_date&&(()=>{const db=dueBadge(a.due_date);return db?<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:db.bg||'transparent',color:db.color,borderRadius:4,padding:'2px 7px',fontWeight:db.color==='#f05050'?700:400}}>📅 {db.text}</span>:null;})()}
                 </div>
                 {a.description&&<p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.6,margin:'0 0 8px'}}>{a.description}</p>}
                 {a.file_url&&<a href={a.file_url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:'#4f9cf9',textDecoration:'none'}}>📎 View file / link</a>}
@@ -3532,7 +3574,7 @@ function CATab({courseId,user}){
 
 /* ═══════════════ COMMUNITY BOARD ═══════════════ */
 function CommunityBoard({courseId,user,subCfg={}}){
-  const[posts,setPosts]=useState([]);const[myVotes,setMyVotes]=useState([]);const[showForm,setShowForm]=useState(false);
+  const[posts,setPosts]=useState([]);const[communitySort,setCommunitySort]=useState('newest');const[myVotes,setMyVotes]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',url:'',description:''});const[loading,setLoading]=useState(false);
   const isPriv=user.role!==ROLE.USER;
   const isGuest=user.isGuest===true;
@@ -3588,18 +3630,32 @@ function CommunityBoard({courseId,user,subCfg={}}){
 
       {showForm&&!isGuest&&(
         <div className="scale-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:16}}>
-          <Field label="TITLE" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Great YouTube explanation"/>
-          <Field label="URL" value={form.url} onChange={e=>setForm(f=>({...f,url:e.target.value}))} placeholder="https://..."/>
-          <Field label="DESCRIPTION (optional)" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Brief note about this resource"/>
+          <Field label="TITLE" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Great YouTube explanation" maxLength={100}/>
+          <Field label="URL" value={form.url} onChange={e=>setForm(f=>({...f,url:e.target.value}))} placeholder="https://..." maxLength={500}/>
+          <Field label="DESCRIPTION (optional)" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Brief note about this resource" maxLength={200}/>
           <button onClick={submit} disabled={loading||!form.title.trim()||!form.url.trim()} style={{background:loading?'var(--border)':'#4f9cf9',border:'none',borderRadius:7,color:loading?'var(--muted)':'#000',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>
             {loading?'Submitting…':'Submit'}
           </button>
         </div>
       )}
 
+      {/* Sort bar */}
+      {posts.length>1&&(
+        <div style={{display:'flex',alignItems:'center',marginBottom:10}}>
+          <Mono color="var(--muted)" size={9}>{posts.length} POST{posts.length!==1?'S':''}</Mono>
+          <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+            {[{id:'newest',label:'Newest'},{id:'popular',label:'Popular'}].map(s=>(
+              <button key={s.id} onClick={()=>setCommunitySort(s.id)}
+                style={{background:communitySort===s.id?'rgba(79,156,249,.1)':'none',border:`1px solid ${communitySort===s.id?'rgba(79,156,249,.4)':'var(--border)'}`,borderRadius:20,color:communitySort===s.id?'#4f9cf9':'var(--muted)',cursor:'pointer',padding:'4px 12px',fontSize:11,fontWeight:communitySort===s.id?600:400}}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
         {posts.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No community posts yet{isGuest?' — sign up to be the first!':' — be the first to share!'}</div>}
-        {posts.map((p,i)=>{
+        {[...posts].sort((a,b)=>communitySort==='popular'?(b.upvote_count||0)-(a.upvote_count||0):new Date(b.submitted_at||0)-new Date(a.submitted_at||0)).map((p,i)=>{
           const voted=myVotes.includes(p.id);
           return(
             <div key={p.id} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'13px 16px',display:'flex',gap:12,alignItems:'flex-start'}}>
@@ -3610,7 +3666,7 @@ function CommunityBoard({courseId,user,subCfg={}}){
               <div style={{flex:1,minWidth:0}}>
                 <a href={p.url} target="_blank" rel="noopener noreferrer" style={{fontSize:14,fontWeight:600,color:'#4f9cf9',textDecoration:'none',wordBreak:'break-word'}}>{p.title}</a>
                 {p.description&&<p style={{fontSize:12,color:'var(--muted)',marginTop:3,lineHeight:1.5}}>{p.description}</p>}
-                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:4,letterSpacing:1}}>@{p.submitted_by} · {new Date(p.submitted_at).toLocaleDateString()}</div>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:4,letterSpacing:1}}>@{p.submitted_by} · {(()=>{const d=new Date(p.submitted_at);const now=new Date();const diff=Math.floor((now-d)/1000);if(diff<60)return'just now';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';if(diff<604800)return Math.floor(diff/86400)+'d ago';return d.toLocaleDateString();})()}</div>
               </div>
               {(isPriv||p.submitted_by===user.username)&&<button onClick={()=>del(p.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:12,flexShrink:0}}>✕</button>}
             </div>
@@ -3667,7 +3723,7 @@ function ResourcesTab({courseId,user}){
       {showForm&&isPriv&&(
         <div className="scale-in" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 18px',marginBottom:16}}>
           <Field label="TITLE" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Official lecture slides"/>
-          <Field label="URL" value={form.url} onChange={e=>setForm(f=>({...f,url:e.target.value}))} placeholder="https://..."/>
+          <Field label="URL" value={form.url} onChange={e=>setForm(f=>({...f,url:e.target.value}))} placeholder="https://..." maxLength={500}/>
           <div style={{marginBottom:14}}>
             <div style={{fontSize:11,color:'var(--muted)',marginBottom:6,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>TYPE</div>
             <div style={{display:'flex',gap:8}}>
@@ -3716,16 +3772,6 @@ function DefinitionRow({def,isLast}){
   );
 }
 
-// Course-level tabs (CourseTabView: COS341 overview)
-const COURSE_TABS=[
-  {id:'chapters',     label:'📚 Chapters'},
-  {id:'assignments',  label:'📋 Assignments'},
-  {id:'cas',          label:'📝 CAs & Tests'},
-  {id:'announcements',label:'📣 Notices'},
-  {id:'resources',    label:'🔗 Resources'},
-  {id:'community',    label:'💬 Community'},
-];
-
 // PDF-level tabs (CourseView: individual study note)
 const ALL_TABS=[
   {id:'notes',    label:'📖 Study Notes'},
@@ -3767,10 +3813,10 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
   // Cache for offline use
   useEffect(()=>{try{localStorage.setItem(CACHE_KEY(course.id),JSON.stringify({data:d,year:course.year,semester:course.semester||1,department:course.department||'Computer Science',cachedAt:Date.now()}));}catch{};},[]);
-  useEffect(()=>{if(!cp.viewed){const n={...progress,[course.id]:{...cp,viewed:true}};onProgressUpdate(n);}},[]);
+  useEffect(()=>{const n={...progress,[course.id]:{...cp,viewed:true,lastViewedAt:new Date().toISOString()}};onProgressUpdate(n);},[]);
 
   const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!(cp.openedQs||[]).includes(idx)){
-      awardXP('qa_reveal');const n={...progress,[course.id]:{...cp,openedQs:[...cp.openedQs,idx]}};onProgressUpdate(n);}};
+      awardXP('qa_reveal');const n={...progress,[course.id]:{...cp,openedQs:[...(cp.openedQs||[]),idx],lastViewedAt:new Date().toISOString()}};onProgressUpdate(n);}};
 
   const totalQ=(d.questions||[]).length;const pct=totalQ===0?0:Math.round((cp.openedQs||[]).length/totalQ*100);
   const hasAlgo=d.algorithms?.length>0;
@@ -3835,7 +3881,9 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
     const newLog=[...quizLog,{q:qs[quizIdx].question,correct,chosen:quizChoice,ok:isCorrect}];
     if(quizIdx+1>=qs.length){
       setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);
-      onProgressUpdate(course.id,{viewed:true,openedQs:cp.openedQs||[]});
+      // Build full progress update object
+      const qProg={...progress,[course.id]:{...cp,viewed:true,openedQs:cp.openedQs||[],lastViewedAt:new Date().toISOString()}};
+      onProgressUpdate(qProg);
       if(newScore===qs.length) awardXP('quiz_perfect');
       else if(newScore>=Math.ceil(qs.length*0.7)) awardXP('quiz_complete');
     }
@@ -3851,7 +3899,9 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
     const newLog=[...quizLog,{q:qs[quizIdx].question,correct,chosen:fillInput.trim()||'(no answer)',ok:isCorrect}];
     if(quizIdx+1>=qs.length){
       setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);
-      onProgressUpdate(course.id,{viewed:true,openedQs:cp.openedQs||[]});
+      // Build full progress update object
+      const qProg={...progress,[course.id]:{...cp,viewed:true,openedQs:cp.openedQs||[],lastViewedAt:new Date().toISOString()}};
+      onProgressUpdate(qProg);
       if(newScore===qs.length) awardXP('quiz_perfect');
       else if(newScore>=Math.ceil(qs.length*0.7)) awardXP('quiz_complete');
     }
@@ -3954,7 +4004,18 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           <Tag color="#f9a84f">{d.definitions?.length||0} terms</Tag>
           <Tag color="#7fda96">{totalQ} questions</Tag>
         </div>
-        {!isPriv&&<ProgressBar pct={pct} color={accent}/>}
+        {!isPriv&&(
+          <div style={{marginTop:8}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+              <Mono color="var(--muted)" size={8}>PROGRESS</Mono>
+              <Mono color={pct===100?'#7fda96':accent} size={8}>{pct===100?'✓ Complete':`${pct}%`}</Mono>
+            </div>
+            <div style={{height:3,background:'var(--border)',borderRadius:2}}>
+              <div style={{height:'100%',width:`${pct}%`,background:pct===100?'#7fda96':accent,borderRadius:2,transition:'width .5s ease'}}/>
+            </div>
+          </div>
+        )}
+      {pct===100&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#7fda96',letterSpacing:1,marginTop:4,display:'flex',alignItems:'center',gap:4}}><span>✓</span> COMPLETED</div>}
       </div>
 
       {/* Tabs */}
@@ -4063,7 +4124,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:10}}>
             <SectionLabel>Practice Q&A</SectionLabel>
             <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-              {!isPriv&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#4f9cf9'}}>{(cp.openedQs||[]).length}/{totalQ} opened</span>}
+              {!isPriv&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:(cp.openedQs||[]).length===totalQ&&totalQ>0?'#7fda96':'#4f9cf9'}}>{(cp.openedQs||[]).length}/{totalQ} {(cp.openedQs||[]).length===totalQ&&totalQ>0?'✓ all done':'opened'}</span>}
               {/* AI fresh questions button */}
               <button onClick={async()=>{
                 setAiFreshLoading(true);
@@ -4133,8 +4194,12 @@ Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
                   <span style={{color:'var(--muted)',fontSize:18,flexShrink:0,lineHeight:1}}>{isOpen?'−':'+'}</span>
                 </div>
                 {isOpen&&<div className="fade-in" style={{borderTop:'1px solid var(--border)',padding:'14px 17px',background:'rgba(79,156,249,.03)'}}>
-                  <Mono color="#7fda96" size={9}>Answer</Mono>
-                  <p style={{fontSize:13,color:'var(--text)',lineHeight:1.8,margin:'8px 0 0',whiteSpace:'pre-line'}}>{q.answer}</p>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                    <Mono color="#7fda96" size={9}>Answer</Mono>
+                    <button onClick={()=>navigator.clipboard.writeText(`Q: ${q.question}
+A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,opacity:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.5'}>📋 Copy</button>
+                  </div>
+                  <p style={{fontSize:13,color:'var(--text)',lineHeight:1.8,margin:'0',whiteSpace:'pre-line'}}>{q.answer}</p>
                 </div>}
               </div>
             );})}
@@ -4407,7 +4472,7 @@ Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
                 {quizScore===total&&total>0&&<div style={{fontSize:36,textAlign:'center',animation:'scale-in .4s ease',marginBottom:4}}>🎉</div>}
                 <div style={{fontFamily:"'DM Serif Display',serif",fontSize:36,color:quizScore===total?'#7fda96':quizScore>=Math.ceil(total*0.7)?'#f9a84f':'var(--text)',marginBottom:4,textAlign:'center'}}>{quizScore}<span style={{fontSize:20,color:'var(--muted)'}}>/{total}</span></div>
                 <div style={{fontSize:14,color:pctScore>=80?'#7fda96':pctScore>=60?'#f9a84f':'#f05050',fontWeight:700,marginBottom:4}}>{pctScore}%</div>
-                <div style={{fontSize:13,color:'var(--muted)'}}>{grade}</div>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,background:pctScore>=80?'rgba(127,218,150,.15)':pctScore>=60?'rgba(249,168,79,.15)':'rgba(240,80,80,.12)',color:pctScore>=80?'#7fda96':pctScore>=60?'#f9a84f':'#f05050',borderRadius:6,padding:'3px 12px',display:'inline-block',fontWeight:700,letterSpacing:.5}}>{grade}</div>
                 <div style={{marginTop:10,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:1}}>
                   {quizMode==='mc'?'MULTIPLE CHOICE':'FILL IN THE GAP'} · {total} QUESTIONS
                 </div>
@@ -4456,6 +4521,14 @@ Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
               {missed.length===0&&(
                 <div style={{textAlign:'center',padding:'20px',color:'#7fda96',fontSize:13,fontWeight:600}}>
                   🎉 Perfect score! You got every question right.
+                </div>
+              )}
+
+              {/* Study tip for low scores */}
+              {pctScore<60&&total>0&&(
+                <div className="fade-in" style={{background:'rgba(249,168,79,.06)',border:'1px solid rgba(249,168,79,.2)',borderRadius:10,padding:'10px 14px',marginBottom:14,marginTop:4}}>
+                  <div style={{fontSize:12,color:'#f9a84f',fontWeight:700,marginBottom:3}}>💡 Study Tip</div>
+                  <div style={{fontSize:11,color:'var(--muted)',lineHeight:1.6}}>Review the Study Notes tab before retrying — focus on the Concepts and Definitions sections for this chapter.</div>
                 </div>
               )}
 
@@ -5954,7 +6027,11 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
                     <div style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:5,padding:'3px 9px'}}><Mono color="#4f9cf9" size={9}>Sem {c.semester||1}</Mono></div>
                     <div style={{background:`${DEPT_COLOR[c.department]||'#4f9cf9'}12`,border:`1px solid ${DEPT_COLOR[c.department]||'#4f9cf9'}30`,borderRadius:5,padding:'3px 9px'}}><Mono color={DEPT_COLOR[c.department]||'#4f9cf9'} size={9}>{DEPT_SHORT[c.department]||'CS'}</Mono></div>
                   </div>
-                  <div style={{flex:1,minWidth:160}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>{c.courseName}</div><div style={{fontSize:14,color:'var(--text)',marginTop:2}}>{c.chapterTitle}</div></div>
+                  <div style={{flex:1,minWidth:160}}>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>{c.courseName}</div>
+            <div style={{fontSize:14,color:'var(--text)',marginTop:2}}>{c.chapterTitle}</div>
+            {c.addedAt&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',marginTop:2,opacity:.6}}>Added {new Date(c.addedAt).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}</div>}
+          </div>
                   <div style={{display:'flex',gap:6}}><Tag color="#4f9cf9">{c.conceptCount} concepts</Tag><Tag color="#7fda96">{c.qCount} questions</Tag></div>
                   <button onClick={()=>doDelete(c.id)} title={isSU2?'Delete permanently':'Submit deletion request'} style={{background:'rgba(240,80,80,.1)',border:'1px solid rgba(240,80,80,.3)',borderRadius:6,color:'#f05050',cursor:'pointer',padding:'5px 12px',fontSize:11,flexShrink:0}}>{isSU2?'✕ Delete':'↑ Request Delete'}</button>
                 </div>
@@ -6239,7 +6316,7 @@ function StatusChangeModal({user,onClose,onSubmitted}){
             </div>
 
             <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',fontSize:11,color:'var(--muted)',marginBottom:18,lineHeight:1.6}}>
-              ℹ️ Your request will be reviewed by an admin. You'll keep your current access until it's approved. You cannot submit another request while one is pending.
+              ℹ️ Your request will be reviewed by an admin. You will keep your current access until approved. You cannot submit another request while one is pending.
             </div>
 
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
@@ -6374,6 +6451,7 @@ function StatusChangesTab({reviewerUsername}){
 /* ═══════════════ COURSE CARD (memoised) ═══════════════ */
 const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect}){
   const accent=YEAR_COLORS[c.year]||CARD_ACCENTS[i%CARD_ACCENTS.length];
+  const isNew=c.addedAt&&(new Date()-new Date(c.addedAt))<7*24*60*60*1000;
   return(
     <div className={`stagger-${Math.min(i%4+1,4)}`}
       onClick={()=>onSelect(c.id)}
@@ -6383,6 +6461,7 @@ const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarke
       onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-3px)';e.currentTarget.style.boxShadow='0 8px 24px rgba(0,0,0,.2)';}}
       onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='none';}}>
       <div style={{position:'absolute',top:12,right:12,display:'flex',gap:6,alignItems:'center'}}>
+        {isNew&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:7,background:'rgba(127,218,150,.9)',color:'#000',borderRadius:3,padding:'2px 6px',letterSpacing:.5,fontWeight:700}}>NEW</span>}
         {viewed&&<div style={{width:7,height:7,borderRadius:'50%',background:'#7fda96'}} title="Visited"/>}
         {bookmarked&&<span style={{fontSize:12}}>🔖</span>}
       </div>
@@ -6397,6 +6476,7 @@ const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarke
         <Tag color={accent}>{c.qCount} Q&A</Tag>
       </div>
       {!isPriv&&<ProgressBar pct={pct} color={accent}/>}
+      {pct===100&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#7fda96',letterSpacing:1,marginTop:4,display:'flex',alignItems:'center',gap:4}}><span>✓</span> COMPLETED</div>}
       <div style={{marginTop:9,fontSize:10,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace"}}>Added {c.addedAt}</div>
     </div>
   );
@@ -6596,9 +6676,17 @@ function StudyTools({user,subCfg={}}){
                 </button>
               </div>
 
-              {/* Completion hint */}
+              {/* Clear completed + all-done hint */}
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:8}}>
+                {tasks.some(t=>t.done)&&(
+                  <button onClick={()=>{const kept=tasks.filter(t=>!t.done);setTasks(kept);try{localStorage.setItem(storageKey,JSON.stringify(kept));}catch{}}}
+                    style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,textDecoration:'underline',padding:0}}>
+                    Clear {tasks.filter(t=>t.done).length} completed
+                  </button>
+                )}
+              </div>
               {tasks.length>0&&tasks.every(t=>t.done)&&(
-                <div className="fade-in" style={{marginTop:12,textAlign:'center',padding:'10px',background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.2)',borderRadius:8,fontSize:12,color:'#7fda96',fontWeight:600}}>
+                <div className="fade-in" style={{marginTop:8,textAlign:'center',padding:'10px',background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.2)',borderRadius:8,fontSize:12,color:'#7fda96',fontWeight:600}}>
                   🎉 All done! Clear your list to start fresh.
                 </div>
               )}
@@ -6626,6 +6714,7 @@ function StudyTools({user,subCfg={}}){
                 }}
               />
               {/* Footer: char count + clear */}
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',padding:'0 16px 2px',textAlign:'right',opacity:.45}}>{pad.length.toLocaleString()} chars</div>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 16px 10px',borderTop:'1px solid var(--border)'}}>
                 <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:.5}}>
                   {pad.length} chars · auto-saved
@@ -6804,7 +6893,10 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <Avatar name={user.displayName} size={34}/>
             <div>
-              <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{user.displayName}</div>
+                {!user.isGuest&&<XPBadge xp={xp||0} size={8}/>}
+              </div>
               <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3,flexWrap:'wrap'}}>
                 <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
                 {!user.isGuest&&<SubscriptionBadge tier={user.subscription_tier||'free'} role={user.role} expiresAt={user.sub_expires_at}/>}
@@ -7027,6 +7119,32 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
       {/* ── BY YEAR mode ── */}
       {browseMode==='year'&&(<>
 
+      {/* Recently viewed courses */}
+      {(()=>{
+        const recent=[...courses].filter(c=>progress[c.id]?.viewed)
+          .sort((a,b)=>new Date(progress[b.id]?.lastViewedAt||0)-new Date(progress[a.id]?.lastViewedAt||0))
+          .slice(0,4);
+        if(!recent.length) return null;
+        return(
+          <div className="fade-in" style={{marginBottom:18}}>
+            <Mono color="var(--muted)" size={9}>RECENTLY VIEWED</Mono>
+            <div style={{display:'flex',gap:8,marginTop:8,flexWrap:'wrap'}}>
+              {recent.map(c=>{
+                const accent=YEAR_COLORS[c.year]||'#4f9cf9';
+                const isNew=c.addedAt&&(new Date()-new Date(c.addedAt))<7*24*60*60*1000;
+                return(
+                  <button key={c.id} onClick={()=>onSelectCourse(c.id)}
+                    style={{background:'var(--card)',border:`1px solid ${accent}30`,borderRadius:10,padding:'8px 14px',cursor:'pointer',textAlign:'left',display:'flex',flexDirection:'column',gap:3,flex:'1 1 160px',maxWidth:220}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:accent,letterSpacing:1}}>{c.courseName}</span>
+                    <span style={{fontSize:12,color:'var(--text)',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.chapterTitle}</span>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:pct(c.id)===100?'#7fda96':'var(--muted)'}}>{pct(c.id)===100?'✓ Complete':`${pct(c.id)}% done`}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
       {/* Year tabs */}
       <div className="stagger-1" style={{marginBottom:16}}>
         <Mono color="var(--muted)" size={9}>YEAR</Mono>
@@ -7148,7 +7266,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>
             {search?`No results for "${search}"`
              :accessibleYears&&activeYear!=='all'&&!accessibleYears.has(activeYear)?`Year ${activeYear} is Pro only`
-             :activeYear==='all'?'No courses yet'
+             :activeYear==='all'?'No courses uploaded yet — check back later'
              :`No Year ${activeYear}, Semester ${activeSemester} courses yet`}
           </div>
           <p style={{color:'var(--muted)',fontSize:13,lineHeight:1.6,maxWidth:280,margin:'0 auto 16px'}}>
@@ -7162,6 +7280,11 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           {!search&&isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Open Panel':'⚙ Open Panel'}</button>}
         </div>
       ):(
+        {courses.length===0&&!search&&(
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(278px,1fr))',gap:14,marginTop:16}}>
+            {[1,2,3,4,5,6].map(k=><div key={k} style={{height:136,borderRadius:14,background:'var(--surface)',border:'1px solid var(--border)',animation:'pulse 1.8s ease-in-out infinite',animationDelay:`${k*.1}s`}}/>)}
+          </div>
+        )}
         <div className="course-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(278px,1fr))',gap:14,marginTop:16}}>
           {visible.map((c,i)=>(
             <CourseCard key={c.id} course={c} index={i} pct={pct(c.id)}
@@ -7276,6 +7399,10 @@ function useKeyboardShortcuts({onSearch,onEscape}){
       }
       // Escape
       if(e.key==='Escape')onEscape?.();
+    // ? opens keyboard shortcuts help
+    if(e.key==='?'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){
+      setShowShortcuts(s=>!s);
+    }
     };
     window.addEventListener('keydown',h);
     return()=>window.removeEventListener('keydown',h);
@@ -7325,8 +7452,10 @@ class ErrorBoundary extends React.Component{
 export default function App(){
   const[dark,toggleTheme]=useTheme();
   const[bookmarks,toggleBookmark]=useBookmarks(user?.username||'guest');
+  const[xp]=useXP(user?.username);
   const online=useOnline();
   const[errMsg,setErrMsg]=useErrorToast();
+  const[showShortcuts,setShowShortcuts]=useState(false);
   const[confirm,ConfirmModal]=useConfirm();
 
   // Expose confirm globally so child components can call window.shConfirm()
@@ -7678,7 +7807,8 @@ export default function App(){
             onShowAdmin={()=>setView('admin')} onProgressUpdate={handleProgress}
             bookmarks={bookmarks} toggleBookmark={toggleBookmark}
             dark={dark} toggleTheme={toggleTheme}
-            onOpenCourseTab={handleOpenCourseTab}/>
+            onOpenCourseTab={handleOpenCourseTab}
+            onUserUpdate={updated=>setUser(u=>({...u,...updated}))}/>
         </div>
       )}
 
