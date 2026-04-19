@@ -7279,7 +7279,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           {!search&&accessibleYears&&activeYear!=='all'&&!accessibleYears.has(activeYear)&&<button onClick={()=>setShowPayment(true)} style={{background:'linear-gradient(135deg,rgba(249,168,79,.18),rgba(249,168,79,.08))',border:'1px solid rgba(249,168,79,.4)',borderRadius:8,color:'#f9a84f',cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:700}}>⭐ Upgrade to Pro</button>}
           {!search&&isPriv&&<button onClick={onShowAdmin} style={{background:ROLE_BG[user.role],border:`1px solid ${ROLE_COLOR[user.role]}40`,borderRadius:8,color:ROLE_COLOR[user.role],cursor:'pointer',padding:'8px 18px',fontSize:13,fontWeight:600}}>{user.role===ROLE.SUPERUSER?'⚡ Open Panel':'⚙ Open Panel'}</button>}
         </div>
-      ):(
+      ):(<>
         {courses.length===0&&!search&&(
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(278px,1fr))',gap:14,marginTop:16}}>
             {[1,2,3,4,5,6].map(k=><div key={k} style={{height:136,borderRadius:14,background:'var(--surface)',border:'1px solid var(--border)',animation:'pulse 1.8s ease-in-out infinite',animationDelay:`${k*.1}s`}}/>)}
@@ -7292,7 +7292,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               isPriv={isPriv} onSelect={onSelectCourse}/>
           ))}
         </div>
-      )}
+      </>)}
       </>)}
     </div>
   );
