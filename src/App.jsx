@@ -4797,7 +4797,7 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
       </div>
 
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
-        {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?'✅ You're all caught up — no pending requests.':'No reviewed actions yet — approvals and rejections will show here.'}</div>}
+        {list.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,border:'1px dashed var(--border)',borderRadius:12,fontSize:13}}>{tab==='pending'?"✅ All caught up — no pending requests.":'No reviewed actions yet — approvals and rejections will show here.'}</div>}
         {list.map((a,i)=>{
           const meta=ACTION_LABELS[a.action_type]||{icon:'❓',label:a.action_type,color:'#8892a4'};
           const isPending=a.status==='pending';
