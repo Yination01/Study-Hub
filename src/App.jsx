@@ -538,7 +538,7 @@ async function dbRedeemPromo(code){
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '4.5.0';
+const APP_VERSION    = '4.5.1';
 
 /* ═══════════════ XP / GAMIFICATION ═══════════════ */
 const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5,question_reveal:2};
@@ -3379,6 +3379,28 @@ function NotificationBell({user,courses,onNavigate}){
   );
 }
 
+/* ═══════════════ DATE / TIME HELPERS (module level) ═══════════════ */
+const overdue   = d => d && new Date(d) < new Date();
+const daysUntil = d => { if(!d) return null; return Math.ceil((new Date(d)-new Date())/(1000*60*60*24)); };
+const timeAgo   = d => {
+  if(!d) return '';
+  const s = Math.floor((Date.now()-new Date(d))/1000);
+  if(s<60)     return 'just now';
+  if(s<3600)   return `${Math.floor(s/60)}m ago`;
+  if(s<86400)  return `${Math.floor(s/3600)}h ago`;
+  if(s<604800) return `${Math.floor(s/86400)}d ago`;
+  return new Date(d).toLocaleDateString('en-NG',{day:'numeric',month:'short'});
+};
+const dueBadge = d => {
+  if(!d) return null;
+  const n = daysUntil(d);
+  if(n<0)  return {text:'Overdue',  color:'#f05050',bg:'rgba(240,80,80,.1)'};
+  if(n===0)return {text:'Due today',color:'#f05050',bg:'rgba(240,80,80,.08)'};
+  if(n<=2) return {text:`${n}d left`,color:'#f9a84f',bg:'rgba(249,168,79,.1)'};
+  if(n<=7) return {text:`${n}d left`,color:'#f9a84f',bg:'rgba(249,168,79,.06)'};
+  return {text:new Date(d).toLocaleDateString('en-NG',{day:'numeric',month:'short'}),color:'var(--muted)',bg:'transparent'};
+};
+
 /* ═══════════════ ASSIGNMENTS TAB ═══════════════ */
 function AssignmentsTab({courseId,user}){
   const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
@@ -3403,18 +3425,6 @@ function AssignmentsTab({courseId,user}){
     else{await dbSubmitPending('delete_resource',user.username,{id,_table:'assignments'});flash('✓ Deletion submitted for approval.');}
   };
 
-  const overdue=d=>d&&new Date(d)<new Date();
-const timeAgo=d=>{if(!d)return'';const s=Math.floor((Date.now()-new Date(d))/1000);if(s<60)return'just now';if(s<3600)return`${Math.floor(s/60)}m ago`;if(s<86400)return`${Math.floor(s/3600)}h ago`;if(s<604800)return`${Math.floor(s/86400)}d ago`;return new Date(d).toLocaleDateString('en-NG',{day:'numeric',month:'short'});};
-const daysUntil=d=>{if(!d)return null;const diff=Math.ceil((new Date(d)-new Date())/(1000*60*60*24));return diff;};
-const dueBadge=d=>{
-  if(!d)return null;
-  const n=daysUntil(d);
-  if(n<0) return{text:'Overdue',color:'#f05050',bg:'rgba(240,80,80,.1)'};
-  if(n===0) return{text:'Due today',color:'#f05050',bg:'rgba(240,80,80,.08)'};
-  if(n<=2) return{text:`${n}d left`,color:'#f9a84f',bg:'rgba(249,168,79,.1)'};
-  if(n<=7) return{text:`${n}d left`,color:'#f9a84f',bg:'rgba(249,168,79,.06)'};
-  return{text:new Date(d).toLocaleDateString('en-NG',{day:'numeric',month:'short'}),color:'var(--muted)',bg:'transparent'};
-};
   return(
     <div className="fade-up">
       <SectionLabel>Assignments</SectionLabel>
@@ -5863,7 +5873,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
   const[deleteConfirm,setDeleteConfirm]=useState(null); // username to delete
 
   useEffect(()=>{
-    Promise.all([dbLoadUsers(),dbLoadAdmins(),dbLoadSubConfig()]).then(([u,a,sc])=>{setAllUsers(u);setAdmins(a);const cfg={};(sc||[]).forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);});
+    Promise.all([dbLoadUsers(),dbLoadAdmins(),dbLoadSubConfig()]).then(([u,a,sc])=>{setAllUsers(u);setAdmins(a);setSubCfg(sc||{});});
     if(isSU2)dbCountPending().then(setPendingCount);
     dbCountPendingStatusRequests().then(setStatusPendingCount);
   },[]);
@@ -6029,7 +6039,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
                   </div>
                   <div style={{flex:1,minWidth:160}}>
             <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>{c.courseName}</div>
-            <div style={{fontSize:14,color:'var(--text)',marginTop:2}}>{c.chapterTitle}</div>
+            <div style={{fontSize:15,color:'var(--text)',marginTop:2,fontWeight:500}}>{c.chapterTitle}</div>
             {c.addedAt&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',marginTop:2,opacity:.6}}>Added {new Date(c.addedAt).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}</div>}
           </div>
                   <div style={{display:'flex',gap:6}}><Tag color="#4f9cf9">{c.conceptCount} concepts</Tag><Tag color="#7fda96">{c.qCount} questions</Tag></div>
@@ -6338,6 +6348,8 @@ function StatusChangesTab({reviewerUsername}){
   const[tab,setTab]=useState('pending');const[loading,setLoading]=useState(true);
   const[busy,setBusy]=useState('');const[rejectModal,setRejectModal]=useState(null);
   const[rejectNote,setRejectNote]=useState('');
+  const[histSort,setHistSort]=useState('newest');
+  const[histFilter,setHistFilter]=useState('all');
 
   const load=async()=>{
     setLoading(true);
@@ -6455,29 +6467,46 @@ const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarke
   return(
     <div className={`stagger-${Math.min(i%4+1,4)}`}
       onClick={()=>onSelect(c.id)}
-      style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'18px 20px',
-        cursor:'pointer',transition:'transform .18s,box-shadow .18s',
+      style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'20px 22px',
+        cursor:'pointer',transition:'transform .18s,box-shadow .18s',willChange:'transform',
         borderTop:`3px solid ${accent}`,position:'relative',boxShadow:'none'}}
       onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-3px)';e.currentTarget.style.boxShadow='0 8px 24px rgba(0,0,0,.2)';}}
       onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='none';}}>
-      <div style={{position:'absolute',top:12,right:12,display:'flex',gap:6,alignItems:'center'}}>
-        {isNew&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:7,background:'rgba(127,218,150,.9)',color:'#000',borderRadius:3,padding:'2px 6px',letterSpacing:.5,fontWeight:700}}>NEW</span>}
-        {viewed&&<div style={{width:7,height:7,borderRadius:'50%',background:'#7fda96'}} title="Visited"/>}
-        {bookmarked&&<span style={{fontSize:12}}>🔖</span>}
+      {/* Top-right badges */}
+      <div style={{position:'absolute',top:14,right:14,display:'flex',gap:6,alignItems:'center'}}>
+        {isNew&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:'rgba(127,218,150,.9)',color:'#000',borderRadius:3,padding:'2px 7px',letterSpacing:.5,fontWeight:700}}>NEW</span>}
+        {viewed&&<div style={{width:8,height:8,borderRadius:'50%',background:'#7fda96'}} title="Visited"/>}
+        {bookmarked&&<span style={{fontSize:13}}>🔖</span>}
       </div>
-      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:accent,letterSpacing:2,textTransform:'uppercase',marginBottom:4,display:'flex',alignItems:'center',gap:6}}>
-        {c.courseName} · SEM {c.semester}
-        <span style={{background:`${DEPT_COLOR[c.department]||'#4f9cf9'}18`,color:DEPT_COLOR[c.department]||'#4f9cf9',borderRadius:4,padding:'1px 6px',fontSize:8,letterSpacing:1}}>{DEPT_SHORT[c.department]||'CS'}</span>
+      {/* Course code + semester + dept */}
+      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:accent,letterSpacing:1.5,textTransform:'uppercase',marginBottom:6,display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'}}>
+        <span style={{fontWeight:700}}>{c.courseName}</span>
+        <span style={{opacity:.6}}>·</span>
+        <span>Sem {c.semester}</span>
+        <span style={{background:`${DEPT_COLOR[c.department]||'#4f9cf9'}20`,color:DEPT_COLOR[c.department]||'#4f9cf9',borderRadius:4,padding:'1px 7px',fontSize:9,letterSpacing:.5}}>{DEPT_SHORT[c.department]||'CS'}</span>
       </div>
-      <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:'var(--text)',marginBottom:11,lineHeight:1.3,paddingRight:30}}>{c.chapterTitle}</div>
-      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+      {/* Chapter title — bigger, easier to read */}
+      <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'var(--text)',marginBottom:12,lineHeight:1.35,paddingRight:28,fontWeight:400}}>{c.chapterTitle}</div>
+      {/* Stats row */}
+      <div style={{display:'flex',gap:7,flexWrap:'wrap',marginBottom:10}}>
         <Tag color={accent}>{c.conceptCount} concepts</Tag>
         <Tag color={accent}>{c.termCount} terms</Tag>
-        <Tag color={accent}>{c.qCount} Q&A</Tag>
+        <Tag color={accent}>{c.qCount} Q&amp;A</Tag>
       </div>
-      {!isPriv&&<ProgressBar pct={pct} color={accent}/>}
-      {pct===100&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#7fda96',letterSpacing:1,marginTop:4,display:'flex',alignItems:'center',gap:4}}><span>✓</span> COMPLETED</div>}
-      <div style={{marginTop:9,fontSize:10,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace"}}>Added {c.addedAt}</div>
+      {/* Progress */}
+      {!isPriv&&(
+        <div style={{marginTop:8}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:.5}}>PROGRESS</span>
+            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:pct===100?'#7fda96':accent}}>{pct===100?'✓ Complete':`${pct}%`}</span>
+          </div>
+          <div style={{height:3,background:'var(--border)',borderRadius:2}}>
+            <div style={{height:'100%',width:`${pct}%`,background:pct===100?'#7fda96':accent,borderRadius:2,transition:'width .5s ease'}}/>
+          </div>
+        </div>
+      )}
+      {/* Added date */}
+      {c.addedAt&&<div style={{marginTop:8,fontSize:10,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace",opacity:.55}}>Added {new Date(c.addedAt).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}</div>}
     </div>
   );
 });
@@ -7159,7 +7188,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           {YEARS.map(y=>{const active=activeYear===y;const st=yearStat(y);const locked=accessibleYears&&!accessibleYears.has(y);return(
             <button key={y} className="year-tab" onClick={()=>selectYear(y)} style={{background:active?YEAR_BG[y]:'var(--surface)',border:`1px solid ${active?YEAR_COLORS[y]+'60':locked?'var(--border)':'var(--border)'}`,borderRadius:10,cursor:'pointer',padding:'10px 18px',transition:'var(--transition)',textAlign:'left',opacity:locked?.55:1,position:'relative'}}>
               {locked&&<span style={{position:'absolute',top:6,right:8,fontSize:10}}>🔒</span>}
-              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:active?YEAR_COLORS[y]:locked?'var(--muted)':'var(--text)'}}>Year {y}</div>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:active?YEAR_COLORS[y]:locked?'var(--muted)':'var(--text)'}}>Year {y}</div>
               {locked?<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',marginTop:2}}>Pro only</div>
                 :(st&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:active?YEAR_COLORS[y]+'aa':'var(--muted)',marginTop:2}}>{st}</div>)}
             </button>
@@ -7286,7 +7315,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
             {[1,2,3,4,5,6].map(k=><div key={k} style={{height:136,borderRadius:14,background:'var(--surface)',border:'1px solid var(--border)',animation:'pulse 1.8s ease-in-out infinite',animationDelay:`${k*.1}s`}}/>)}
           </div>
         )}
-        <div className="course-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(278px,1fr))',gap:14,marginTop:16}}>
+        <div className="course-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(285px,1fr))',gap:16,marginTop:16}}>
           {visible.map((c,i)=>(
             <CourseCard key={c.id} course={c} index={i} pct={pct(c.id)}
               viewed={!!progress[c.id]?.viewed} bookmarked={bookmarks.includes(c.id)}
