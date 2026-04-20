@@ -7451,8 +7451,6 @@ class ErrorBoundary extends React.Component{
 
 export default function App(){
   const[dark,toggleTheme]=useTheme();
-  const[bookmarks,toggleBookmark]=useBookmarks(user?.username||'guest');
-  const[xp]=useXP(user?.username);
   const online=useOnline();
   const[errMsg,setErrMsg]=useErrorToast();
   const[showShortcuts,setShowShortcuts]=useState(false);
@@ -7477,6 +7475,9 @@ export default function App(){
   // Start as 'home' for course view — will switch once data loads async
   const[view,setView]=useState(savedSession?(savedNav?.view==='course'?'home':(savedNav?.view||'home')):'auth');
   const[user,setUser]=useState(savedSession||null);
+  // These hooks depend on user — must come AFTER user is declared
+  const[bookmarks,toggleBookmark]=useBookmarks(user?.username||'guest');
+  const[xp]=useXP(user?.username);
   const[courses,setCourses]=useState([]);
   const[active,setActive]=useState(null);
   const[activeCourseCode,setActiveCourseCode]=useState(savedNav?.activeCourseCode||null);
