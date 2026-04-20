@@ -6793,6 +6793,7 @@ function StudyTools({user,subCfg={}}){
 
 /* ═══════════════ HOME ═══════════════ */
 function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab,onUserUpdate}){
+  const[xp]=useXP(user?.username); // XP for badge in header
   const isExternal=user.role===ROLE.EXTERNAL;
   const[activeYear,setActiveYear]=useState(isExternal?'all':(user.year||1));
   const[activeSemester,setActiveSemester]=useState(1);
@@ -7477,7 +7478,6 @@ export default function App(){
   const[user,setUser]=useState(savedSession||null);
   // These hooks depend on user — must come AFTER user is declared
   const[bookmarks,toggleBookmark]=useBookmarks(user?.username||'guest');
-  const[xp]=useXP(user?.username);
   const[courses,setCourses]=useState([]);
   const[active,setActive]=useState(null);
   const[activeCourseCode,setActiveCourseCode]=useState(savedNav?.activeCourseCode||null);
