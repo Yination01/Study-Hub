@@ -51,6 +51,9 @@ const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Di
   @keyframes blink   {0%,100%{opacity:1}50%{opacity:0}}
   @keyframes shake   {0%,100%{transform:translateX(0)}25%,75%{transform:translateX(-5px)}50%{transform:translateX(5px)}}
   @keyframes shimmer {0%{opacity:.6}50%{opacity:1}100%{opacity:.6}}
+  @keyframes flipIn  {from{opacity:0;transform:rotateY(-90deg)}to{opacity:1;transform:rotateY(0)}}
+  @keyframes floatUp {0%{transform:translateY(0);opacity:1}100%{transform:translateY(-28px);opacity:0}}
+  @keyframes popIn   {0%{transform:scale(0.7);opacity:0}70%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}
 
   .fade-up   {animation:fadeUp .28s cubic-bezier(.4,0,.2,1) both}
   .fade-in   {animation:fadeIn .2s ease both}
@@ -472,7 +475,7 @@ footer{margin-top:30px;border-top:1px solid #ccc;padding-top:10px;font-size:10px
 
 /* ═══ SUBSCRIPTION ═══ */
 async function dbLoadSubConfig(){
-  try{const{data}=await supabase.from('subscription_config').select('*');const m={};(data||[]).forEach(r=>{m[r.key]=r.value;});return m;}catch{return{};}
+  try{const{data}=await supabase.from('subscription_config').select('*');const m={};(Array.isArray(data)?data:[]).forEach(r=>{m[r.key]=r.value;});return m;}catch{return{};}
 }
 async function dbSaveSubConfig(key,value,updatedBy){
   try{await supabase.from('subscription_config').upsert({key,value,updated_by:updatedBy,updated_at:new Date().toISOString()},{onConflict:'key'});}catch(e){console.error(e);}
@@ -1411,7 +1414,13 @@ function Chatbot({context,courses,user,subCfg={}}){
     try{return localStorage.getItem('sh-bot-open')==='1';}catch{return false;}
   });
   const[minimised,setMinimised]=useState(false);
-  const[messages,setMessages]=useState([]);
+  const chatKey=user?.username?`sh-chat-${user.username}`:'sh-chat';
+  const[messages,setMessages]=useState(()=>{
+    try{
+      const saved=JSON.parse(localStorage.getItem(chatKey)||'[]');
+      return Array.isArray(saved)&&saved.length>0?saved.slice(-30):[];  // keep last 30 msgs
+    }catch{return[];}
+  });
   const[input,setInput]=useState('');
   const[loading,setLoading]=useState(false);
   const[tab,setTab]=useState('chat');
@@ -1621,6 +1630,7 @@ function Chatbot({context,courses,user,subCfg={}}){
 function ProfileModal({user,onClose,onUpdate}){
   const[tab,setTab]=useState('name'); // 'name' | 'password'
   const[nameSaved,setNameSaved]=useState(false);
+  const[xpVal]=useXP(user?.username);
   const[displayName,setDisplayName]=useState(user.displayName||user.username);
   const[currentPw,setCurrentPw]=useState('');const[newPw,setNewPw]=useState('');const[confirmPw,setConfirmPw]=useState('');
   const[msg,setMsg]=useState('');const[error,setError]=useState('');const[saving,setSaving]=useState(false);
@@ -1659,7 +1669,11 @@ function ProfileModal({user,onClose,onUpdate}){
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:18,padding:'28px 26px',maxWidth:420,width:'calc(100% - 32px)',margin:'auto',boxShadow:'var(--shadow)'}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
-          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>Edit Profile</div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>Edit Profile</div>
+        {xpVal!=null&&<XPBadge xp={xpVal}/>}
+      </div>
+      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginBottom:14,letterSpacing:1}}>@{user.username}</div>
           <button onClick={onClose} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:20,lineHeight:1}}>✕</button>
         </div>
         {/* Tab picker */}
@@ -2287,7 +2301,7 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
       <div className="course-tabs-row" style={{display:'flex',gap:2,borderBottom:'1px solid var(--border)',marginBottom:22,overflowX:'auto',flexWrap:'nowrap'}}>
         {sections.map(s=>(
           <button key={s.id} onClick={()=>setActiveSection(s.id)}
-            style={{background:'none',border:'none',borderBottom:activeSection===s.id?`2px solid ${accent}`:'2px solid transparent',color:activeSection===s.id?accent:'var(--muted)',cursor:'pointer',padding:'9px 16px',fontSize:13,fontWeight:activeSection===s.id?600:400,whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+            style={{background:'none',border:'none',borderBottom:activeSection===s.id?`2px solid ${accent}`:'2px solid transparent',color:activeSection===s.id?accent:'var(--muted)',cursor:'pointer',padding:'9px 16px',fontSize:13,letterSpacing:.2,fontWeight:activeSection===s.id?600:400,whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
             {s.label}
             {s.count>0&&<span style={{background:activeSection===s.id?`${accent}20`:'var(--border)',color:activeSection===s.id?accent:'var(--muted)',borderRadius:10,padding:'1px 7px',fontSize:9,fontFamily:"'IBM Plex Mono',monospace"}}>{s.count}</span>}
           </button>
@@ -3381,6 +3395,17 @@ function NotificationBell({user,courses,onNavigate}){
 
 /* ═══════════════ DATE / TIME HELPERS (module level) ═══════════════ */
 const overdue   = d => d && new Date(d) < new Date();
+// Simple inline markdown renderer — bold **text**, italic *text*, `code`
+const renderMd = (text='') => {
+  if(!text) return null;
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
+  return parts.map((p,i) => {
+    if(p.startsWith('**') && p.endsWith('**')) return <strong key={i} style={{fontWeight:700}}>{p.slice(2,-2)}</strong>;
+    if(p.startsWith('*')  && p.endsWith('*'))  return <em key={i} style={{fontStyle:'italic'}}>{p.slice(1,-1)}</em>;
+    if(p.startsWith('`')  && p.endsWith('`'))  return <code key={i} style={{fontFamily:"'IBM Plex Mono',monospace",background:'rgba(79,156,249,.12)',borderRadius:3,padding:'1px 5px',fontSize:'0.9em'}}>{p.slice(1,-1)}</code>;
+    return p;
+  });
+};
 const daysUntil = d => { if(!d) return null; return Math.ceil((new Date(d)-new Date())/(1000*60*60*24)); };
 const timeAgo   = d => {
   if(!d) return '';
@@ -3811,7 +3836,8 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const[fcIdx,setFcIdx]=useState(0);const[fcFlipped,setFcFlipped]=useState(false);const[fcDeck,setFcDeck]=useState('definitions');const[fcKnown,setFcKnown]=useState(new Set());
   // Quiz state
   const[quizStarted,setQuizStarted]=useState(false);const[quizIdx,setQuizIdx]=useState(0);const[quizChoice,setQuizChoice]=useState(null);const[quizScore,setQuizScore]=useState(0);const[quizLog,setQuizLog]=useState([]);const[quizDone,setQuizDone]=useState(false);const[quizOpts,setQuizOpts]=useState([]);
-  const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' = fill the gap
+  const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' =
+  const[qSearch,setQSearch]=useState(''); fill the gap
   const[fillInput,setFillInput]=useState('');const[fillRevealed,setFillRevealed]=useState(false);
   const[explainIdx,setExplainIdx]=useState(null);const[explainText,setExplainText]=useState({});const[explainLoading,setExplainLoading]=useState(false);
   // AI fresh questions state
@@ -3937,7 +3963,23 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       <div className="topbar" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:10}}>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
           <Logo onClick={onBack} size="sm"/>
-          <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>← All Courses</button>
+          <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>← Back</button>
+          {(()=>{
+            const siblings=[...courses].filter(c=>c.year===course.year&&c.semester===course.semester).sort((a,b)=>a.courseName.localeCompare(b.courseName));
+            const idx=siblings.findIndex(c=>c.id===course.id);
+            const prev=siblings[idx-1]; const next=siblings[idx+1];
+            if(!prev&&!next) return null;
+            return(
+              <div style={{display:'flex',gap:6,marginLeft:4}}>
+                <button disabled={!prev} onClick={()=>prev&&onBack('prev',prev.id)}
+                  title={prev?prev.chapterTitle:'First chapter'}
+                  style={{background:'none',border:'1px solid var(--border)',borderRadius:7,color:prev?'var(--text)':'var(--border)',cursor:prev?'pointer':'default',padding:'5px 10px',fontSize:13,lineHeight:1}}>‹</button>
+                <button disabled={!next} onClick={()=>next&&onBack('next',next.id)}
+                  title={next?next.chapterTitle:'Last chapter'}
+                  style={{background:'none',border:'1px solid var(--border)',borderRadius:7,color:next?'var(--text)':'var(--border)',cursor:next?'pointer':'default',padding:'5px 10px',fontSize:13,lineHeight:1}}>›</button>
+              </div>
+            );
+          })()}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
           <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
@@ -4207,7 +4249,7 @@ Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <Mono color="#7fda96" size={9}>Answer</Mono>
                     <button onClick={()=>navigator.clipboard.writeText(`Q: ${q.question}
-A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,opacity:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.5'}>📋 Copy</button>
+A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,opacity:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.5'}>{copied?'✓ Copied!':'📋 Copy'}</button>
                   </div>
                   <p style={{fontSize:13,color:'var(--text)',lineHeight:1.8,margin:'0',whiteSpace:'pre-line'}}>{q.answer}</p>
                 </div>}
@@ -5380,7 +5422,7 @@ function SettingsTab({onReload,superuserName}){
       supabase.from('subscription_config').select('*'),
     ]);
     setDepts(d||[]);setTypes(t||[]);
-    const cfg={};(sc||[]).forEach(r=>{cfg[r.key]=r.value;});
+    const cfg={};(Array.isArray(sc)?sc:[]).forEach(r=>{cfg[r.key]=r.value;});
     setSubCfg(cfg);setSubEdits(cfg);
   };
   useEffect(()=>{loadAll();},[]);
@@ -5716,7 +5758,7 @@ function SubscriptionManager({u,onSaved,subCfg={}}){
   );
 }
 
-function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
+function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange,isOnline=false}){
   const[expanded,setExpanded]=useState(false);
   const[busy,setBusy]=useState('');
   const[localYear,setLocalYear]=useState(u.year||1);
@@ -5749,11 +5791,15 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange}){
     <div style={{background:'var(--surface)',border:`1px solid ${expanded?accentColor+'40':'var(--border)'}`,borderRadius:10,overflow:'hidden',transition:'border-color .2s'}}>
       {/* Row summary */}
       <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',cursor:isSU2?'pointer':'default'}} onClick={()=>isSU2&&setExpanded(e=>!e)}>
-        <Avatar name={u.display_name||u.username}/>
+        <button onClick={e=>{e.stopPropagation();navigator.clipboard?.writeText(u.username);}}
+          title={`Copy @${u.username}`} style={{background:'none',border:'none',cursor:'pointer',padding:0,flexShrink:0,position:'relative'}}>
+          <Avatar name={u.display_name||u.username}/>
+          {isOnline&&<div style={{position:'absolute',bottom:1,right:1,width:8,height:8,borderRadius:'50%',background:'#7fda96',border:'2px solid var(--surface)'}}/>}
+        </button>
         <div style={{flex:1,minWidth:130}}>
           <div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div>
           <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>
-            @{u.username} · {new Date(u.created_at).toLocaleDateString()}
+            @{u.username} · {u.created_at?new Date(u.created_at).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'}):'—'}
           </div>
         </div>
         <RolePill role={isAdm?ROLE.ADMIN:isExternal?ROLE.EXTERNAL:ROLE.USER} accountType={localAccountType}/>
@@ -5967,7 +6013,15 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
                 <RolePill role={user.role} accountType={user.accountType||user.account_type}/>
               </div>
             </div>
-            <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)'}}>Manage StudyHub</h2>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+              <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)',margin:0}}>Manage StudyHub</h2>
+              <button onClick={()=>{
+                Promise.all([dbLoadUsers(),dbLoadAdmins(),dbLoadSubConfig()]).then(([u,a,sc])=>{setAllUsers(u);setAdmins(a);setSubCfg(sc||{});});
+                if(isSU2){dbCountPending().then(setPendingCount);dbCountPendingStatusRequests().then(setStatusPendingCount);}
+              }} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontSize:12,display:'flex',alignItems:'center',gap:5}}>
+                ↻ Refresh
+              </button>
+            </div>
             {!isSU2&&<p style={{fontSize:12,color:'var(--muted)',marginTop:5}}>Your course & resource actions require superuser approval before taking effect.</p>}
           </div>
           <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'9px 18px',fontSize:13}}>← Back</button>
@@ -5977,17 +6031,18 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
 
         {/* Stats */}
         <div className="stagger-1" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:24}}>
-          {(()=>{const proU=allUsers.filter(u=>(u.subscription_tier||'free')==='pro').length;return[{label:'Courses',val:courses.length,color:'#4f9cf9'},{label:'Total Users',val:allUsers.length,color:'#7fda96'},{label:'⭐ Pro',val:proU,color:'#f9a84f'},{label:'Free',val:allUsers.length-proU,color:'#8892a4'},{label:'Admins',val:admins.length,color:'#da7ff0'},...(isSU2&&pendingCount>0?[{label:'⚡ Pending',val:pendingCount,color:'#f9a84f'}]:[]),{label:'Online Now',val:onlineUsers.size,color:'#7fda96'},...YEARS.map(y=>({label:`Year ${y}`,val:courses.filter(c=>c.year===y).length,color:YEAR_COLORS[y]}))];})().map((s,i)=>(
+          {(()=>{const proU=allUsers.filter(u=>(u.subscription_tier||'free')==='pro').length;return[{label:'Courses',val:courses.length,color:'#4f9cf9'},{label:'Avg Q&A',val:courses.length?Math.round(courses.reduce((a,c)=>a+(c.qCount||0),0)/courses.length):0,color:'#4f9cf9'},{label:'Total Users',val:allUsers.length,color:'#7fda96'},{label:'⭐ Pro',val:proU,color:'#f9a84f',pct:allUsers.length?Math.round(proU/allUsers.length*100):0},{label:'Free',val:allUsers.length-proU,color:'#8892a4',pct:allUsers.length?Math.round((allUsers.length-proU)/allUsers.length*100):0},{label:'Admins',val:admins.length,color:'#da7ff0'},...(isSU2&&pendingCount>0?[{label:'⚡ Pending',val:pendingCount,color:'#f9a84f'}]:[]),{label:'Online Now',val:onlineUsers.size,color:'#7fda96'},...YEARS.map(y=>({label:`Year ${y}`,val:courses.filter(c=>c.year===y).length,color:YEAR_COLORS[y]}))];})().map((s,i)=>(
             <div key={i} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
-              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:22,color:s.color,fontWeight:600}}>{s.val}</div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:22,color:s.color,fontWeight:700}}>{s.val}</div>
               <div style={{fontSize:11,color:'var(--muted)',marginTop:3}}>{s.label}</div>
+              {s.pct!=null&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:s.color,opacity:.55,marginTop:1}}>{s.pct}%</div>}
             </div>
           ))}
         </div>
 
         <div style={{display:'flex',gap:4,borderBottom:'1px solid var(--border)',marginBottom:22,flexWrap:'wrap'}}>
           {pTabs.map(t=>(
-            <button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?'rgba(249,168,79,.06)':'none',border:'none',borderBottom:tab===t.id?'2px solid #f9a84f':'2px solid transparent',color:tab===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'9px 16px',fontSize:13,fontWeight:tab===t.id?600:400,display:'flex',alignItems:'center',gap:6}}>
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?'rgba(249,168,79,.06)':'none',border:'none',borderBottom:tab===t.id?'2px solid #f9a84f':'2px solid transparent',color:tab===t.id?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'9px 16px',fontSize:13,letterSpacing:.2,fontWeight:tab===t.id?600:400,display:'flex',alignItems:'center',gap:6}}>
               {t.id==='approvals'?'⚡ Approvals':t.id==='status'?'🔄 Status Changes':t.label}
               {t.id==='approvals'&&t.pendingCount>0&&<span style={{background:'#f9a84f',color:'#000',borderRadius:10,padding:'1px 7px',fontSize:10,fontWeight:700}}>{t.pendingCount}</span>}
               {t.id==='status'&&t.statusCount>0&&<span style={{background:'#a8f94f',color:'#000',borderRadius:10,padding:'1px 7px',fontSize:10,fontWeight:700}}>{t.statusCount}</span>}
@@ -6061,6 +6116,10 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
             <div style={{marginBottom:10,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
               <SearchBar value={search} onChange={setSearch} placeholder="Search users…"/>
               {/* Sort */}
+              {isSU2&&<button onClick={()=>{
+                const csv=['Username,Display Name,Year,Type,Tier,Joined'].concat(allUsers.map(u=>`${u.username},${u.display_name||''},${u.year||''},${u.account_type||''},${u.subscription_tier||'free'},${u.created_at||''}`)).join('\n');
+                const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='studyhub-users.csv';a.click();
+              }} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:7,color:'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:11,whiteSpace:'nowrap'}}>⬇ Export CSV</button>}
               <select value={userSort} onChange={e=>setUserSort(e.target.value)}
                 style={{background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:7,color:'var(--text)',padding:'7px 10px',fontSize:11}}>
                 <option value="recent">↓ Newest</option>
@@ -6149,6 +6208,11 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
                   if(userSort==='tier') return(b.subscription_tier==='pro'?1:0)-(a.subscription_tier==='pro'?1:0);
                   return new Date(b.created_at||0)-new Date(a.created_at||0); // recent first
                 });
+                if(sortedUsers.length===0)return(
+                  <div style={{textAlign:'center',padding:'32px 16px',color:'var(--muted)',fontSize:13}}>
+                    {search?<>No users match <strong style={{color:'var(--text)'}}>"{search}"</strong></>:'No users yet.'}
+                  </div>
+                );
                 return sortedUsers.map((u,i)=>{
                 const isAdm=admins.includes(u.username.toLowerCase());
                 const role=isAdm?ROLE.ADMIN:u.account_type==='external'?ROLE.EXTERNAL:ROLE.USER;
@@ -6171,7 +6235,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
                     {/* Online dot */}
                     {isSU2&&<span title={isOnline?'Online now':'Offline'} style={{width:8,height:8,borderRadius:'50%',background:isOnline?'#7fda96':'var(--border)',flexShrink:0,marginTop:10,border:`1px solid ${isOnline?'rgba(127,218,150,.5)':'transparent'}`}}/>}
                     <div style={{flex:1}}>
-                      <UserRow u={u} role={role} isAdm={isAdm} isSU2={isSU2}
+                      <UserRow u={u} role={role} isAdm={isAdm} isSU2={isSU2} isOnline={onlineUsers?.has(u.username)}
                         onRoleChange={async(newAccountType)=>{
                           await dbApplyStatusChange(u.username,newAccountType);
                           const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
@@ -6837,6 +6901,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[showPWADebug,setShowPWADebug]=useState(false);
   const[showPayment,setShowPayment]=useState(false);
   const[showProfile,setShowProfile]=useState(false);
+  const[copied,setCopied]=useState(false);
   const[subCfg,setSubCfg]=useState({});
   const[drawerOpen,setDrawerOpen]=useState(false);
   const[browseMode,setBrowseMode]=useState('year'); // 'year' | 'course'
@@ -6847,7 +6912,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   // Load subscription config for PaymentPortal
   useEffect(()=>{
     supabase.from('subscription_config').select('*').then(({data})=>{
-      if(data){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
+      if(Array.isArray(data)){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
     }).catch(()=>{});
   },[]);
 
@@ -7038,7 +7103,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
                   <div style={{fontSize:9,color:'rgba(168,249,79,.6)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1,marginBottom:4}}>YOUR REFERRAL CODE</div>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
                     <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:15,fontWeight:700,color:'#a8f94f',letterSpacing:2}}>{genReferralCode(user.username)}</span>
-                    <button onClick={()=>navigator.clipboard.writeText(genReferralCode(user.username))}
+                    <button onClick={()=>{navigator.clipboard.writeText(genReferralCode(user.username));setCopied(true);setTimeout(()=>setCopied(false),2000);}}
                       style={{background:'rgba(168,249,79,.12)',border:'1px solid rgba(168,249,79,.3)',borderRadius:6,color:'#a8f94f',cursor:'pointer',padding:'3px 10px',fontSize:10,fontWeight:700}}>Copy</button>
                   </div>
                   <div style={{fontSize:9,color:'var(--muted)',marginTop:3}}>Share · earn ₦ credit per subscribing friend</div>
@@ -7576,7 +7641,7 @@ export default function App(){
     Promise.all([loadDepartments(),loadUserTypes()]).catch(()=>{});
     // Load subscription config
     supabase.from('subscription_config').select('*').then(({data})=>{
-      if(data){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
+      if(Array.isArray(data)){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
     }).catch(()=>{});
 
     // Reload courses silently, then restore active course if nav was persisted
@@ -7658,7 +7723,7 @@ export default function App(){
     const subCfgCh=supabase.channel('rt-sub-config')
       .on('postgres_changes',{event:'*',schema:'public',table:'subscription_config'},()=>{
         supabase.from('subscription_config').select('*').then(({data})=>{
-          if(data){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
+          if(Array.isArray(data)){const cfg={};data.forEach(r=>{cfg[r.key]=r.value;});setSubCfg(cfg);}
         });
       }).subscribe();
 
