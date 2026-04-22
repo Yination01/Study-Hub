@@ -3881,8 +3881,8 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const[fcIdx,setFcIdx]=useState(0);const[fcFlipped,setFcFlipped]=useState(false);const[fcDeck,setFcDeck]=useState('definitions');const[fcKnown,setFcKnown]=useState(new Set());
   // Quiz state
   const[quizStarted,setQuizStarted]=useState(false);const[quizIdx,setQuizIdx]=useState(0);const[quizChoice,setQuizChoice]=useState(null);const[quizScore,setQuizScore]=useState(0);const[quizLog,setQuizLog]=useState([]);const[quizDone,setQuizDone]=useState(false);const[quizOpts,setQuizOpts]=useState([]);
-  const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' =
-  const[qSearch,setQSearch]=useState(''); fill the gap
+  const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' = fill the gap
+  const[qSearch,setQSearch]=useState('');
   const[fillInput,setFillInput]=useState('');const[fillRevealed,setFillRevealed]=useState(false);
   const[explainIdx,setExplainIdx]=useState(null);const[explainText,setExplainText]=useState({});const[explainLoading,setExplainLoading]=useState(false);
   // AI fresh questions state
