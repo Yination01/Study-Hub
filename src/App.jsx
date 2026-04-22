@@ -4142,9 +4142,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                     <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>📖 Summary</div>
                     <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',borderRadius:4,padding:'2px 8px',letterSpacing:.5}}>READ FIRST</div>
                   </div>
-                  {summary.split(/
-
-+/).filter(Boolean).map((para,i)=>(
+                  {summary.split(/\n\n+/).filter(Boolean).map((para,i)=>(
                     <p key={i} style={{fontSize:14.5,color:'var(--text)',lineHeight:1.9,margin:'0 0 14px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
                       {renderMd(para)}
                     </p>
