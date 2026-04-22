@@ -3903,6 +3903,8 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const hasAlgo=d.algorithms?.length>0;
   const tabs=ALL_TABS;
   const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways'].includes(initSection)?initSection:'concepts'));
+  const[cSearch,setCSearch]=useState('');   // concept search in notes tab
+  const[dSearch,setDSearch]=useState('');   // definition search in notes tab
   const[practiceSection,setPracticeSection]=useState((['qa','flashcards','quiz'].includes(initSection)?initSection:'qa'));
   const filteredQ=(d.questions||[]).filter(q=>!filter||q.question.toLowerCase().includes(filter.toLowerCase()));
   const accent=YEAR_COLORS[course.year]||'#4f9cf9';
@@ -4186,7 +4188,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
               {notesSection==='concepts'&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
                 {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>💡 Key Concepts</div>}
                 {(()=>{
-                  const[cSearch,setCSearch]=React.useState('');
                   const filtered=(d.keyConcepts||[]).filter(c=>!cSearch||c.title.toLowerCase().includes(cSearch.toLowerCase())||c.description.toLowerCase().includes(cSearch.toLowerCase()));
                   return(<>
                     {(d.keyConcepts||[]).length>6&&<input value={cSearch} onChange={e=>setCSearch(e.target.value)} placeholder="Filter concepts…" style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'7px 12px',color:'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",marginBottom:12}}/>}
@@ -4206,7 +4207,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
               {notesSection==='definitions'&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
                 {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>📖 Definitions</div>}
                 {(()=>{
-                  const[dSearch,setDSearch]=React.useState('');
                   const filtDefs=(d.definitions||[]).filter(def=>!dSearch||def.term.toLowerCase().includes(dSearch.toLowerCase())||def.definition.toLowerCase().includes(dSearch.toLowerCase()));
                   return(<>
                     {(d.definitions||[]).length>8&&<input value={dSearch} onChange={e=>setDSearch(e.target.value)} placeholder="Search definitions…" style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'7px 12px',color:'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",marginBottom:10}}/>}
@@ -4215,8 +4215,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                     </div>
                     {!filtDefs.length&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>{dSearch?'No matching definitions.':'No definitions yet.'}</div>}
                     {filtDefs.length>0&&<div style={{marginTop:10,textAlign:'right'}}>
-                      <button onClick={()=>{const txt=filtDefs.map(d=>`${d.term}: ${d.definition}`).join('
-');navigator.clipboard?.writeText(txt).catch(()=>{});}}
+                      <button onClick={()=>{const txt=filtDefs.map(d=>`${d.term}: ${d.definition}`).join('\n');navigator.clipboard?.writeText(txt).catch(()=>{});}}
                         style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,textDecoration:'underline',padding:0}}>
                         📋 Copy all {filtDefs.length} definitions
                       </button>
