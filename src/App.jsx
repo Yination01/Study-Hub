@@ -541,7 +541,7 @@ async function dbRedeemPromo(code){
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '4.6.0';
+const APP_VERSION    = '4.7.0';
 
 /* ═══════════════ XP / GAMIFICATION ═══════════════ */
 const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5,question_reveal:2};
@@ -1994,51 +1994,53 @@ function safeParse(raw){
   }
 }
 
-const JSON_PROMPT=`Generate a StudyHub JSON study guide for this document.
+const JSON_PROMPT=`You are a university study guide generator. Read the full document carefully, then produce a complete JSON study guide.
 
-StudyHub shows students:
-• 📖 Study Notes  → a readable SUMMARY followed by sub-sections: concepts, definitions, mechanisms, algorithms, takeaways
-• 🎓 Practice     → questions for Q&A reveal, Flashcards, and auto-generated Quiz
-• 🔗 Resources    → external links (added separately by admins)
-• 💬 Community    → student discussion (added separately)
+IMPORTANT: Your output must cover EVERY topic, subtopic, and concept in the document — nothing should be left out.
 
-Your job: generate the Study Notes and Practice content only.
-
-Return ONLY valid JSON with this exact structure:
+Return ONLY valid JSON with this exact structure (no extra text, no markdown fences):
 {
   "courseName": "Course code only — e.g. COS 341 or MTH 201",
-  "chapterTitle": "Full descriptive chapter or topic title",
-  "summary": "A 3–5 paragraph plain-text summary of the entire chapter. Write it like a textbook note a student would actually read and learn from. Include the most important ideas, terminology, and relationships between concepts. Reference key terms (defined below) naturally. End with a sentence on what students should focus on for exams.",
+  "chapterTitle": "Full chapter or topic title from the document",
+  "summary": "Write 5–8 paragraphs covering the entire document. Use simple, clear English that a student can easily understand. Each paragraph should cover a distinct topic area from the document. Do NOT use bullet points — write in flowing sentences. Make sure every major section of the document is mentioned. End with what students must focus on for exams.",
+  "diagrams": [
+    {
+      "title": "Name of the diagram or figure",
+      "type": "flowchart|table|comparison|timeline|hierarchy|formula",
+      "content": "ASCII or plain-text representation of the diagram. For tables use | separators. For flowcharts use arrows like A --> B --> C. For hierarchies use indentation. Keep it clear and readable."
+    }
+  ],
   "keyConcepts": [
-    {"title": "Concept name", "description": "One clear sentence explaining what this concept is", "color": "blue|orange|green|purple"}
+    {"title": "Concept name", "description": "One simple sentence saying what this is and why it matters", "color": "blue|orange|green|purple"}
   ],
   "definitions": [
-    {"term": "Technical term", "definition": "Precise definition a student can memorise"}
+    {"term": "Technical term", "definition": "Short, clear definition a student can memorise easily"}
   ],
   "mechanisms": [
-    {"title": "Process or mechanism name", "body": "Step-by-step explanation. Use \\n\\n between paragraphs for readability."}
+    {"title": "Process or mechanism name", "body": "Step-by-step plain English explanation. Number each step. Use simple words."}
   ],
   "algorithms": [
-    {"name": "Algorithm or method name", "description": "What it does and how", "note": "Time complexity or key caveat — leave empty string if not applicable"}
+    {"name": "Algorithm or method name", "description": "What it does and how it works in plain English", "note": "Time complexity or key limitation — empty string if none"}
   ],
   "chapters": [
-    {"num": "Chapter 1", "name": "Chapter title", "takeaways": ["Key point 1", "Key point 2", "Key point 3"]}
+    {"num": "Topic 1", "name": "Topic title", "takeaways": ["Specific fact students must know", "Another specific exam point", "Third key takeaway"]}
   ],
   "questions": [
-    {"question": "Full exam-style question", "answer": "Complete worked answer with reasoning"}
+    {"question": "Full exam question", "answer": "Complete answer with reasoning and any relevant examples"}
   ]
 }
 
-Quality rules:
-- summary: 3–5 rich paragraphs. NO bullet points. Natural prose. Reference terminology from keyConcepts and definitions. This is the MOST important field.
-- keyConcepts: 12–18 items covering all major topics
-- definitions: 20–35 terms, precise and exam-ready
-- mechanisms: 4–7 items for processes, workflows, or multi-step concepts
-- algorithms: empty array [] if the document has none
-- chapters: 4–8 chapters, EXACTLY 3 takeaways each — make them specific and memorable
-- questions: EXACTLY 25 exam-style questions spanning all difficulty levels, with complete worked answers
-- Use plain text only — no markdown in any field value
-- Return ONLY the JSON object, nothing else`;
+Rules for each field:
+- summary: Cover EVERY section of the document. 5–8 paragraphs minimum. Simple English only. No bullet points.
+- diagrams: Create 2–6 diagrams that help explain the most visual or structural concepts. Use ASCII art for flowcharts, plain tables with | for data, indented lists for hierarchies. Skip this if document has no visual structure.
+- keyConcepts: 12–20 items. Cover ALL major topics. Short descriptions.
+- definitions: 20–40 terms. Every technical word in the document.
+- mechanisms: 3–8 items. Any process, workflow, or multi-step concept.
+- algorithms: Empty array [] only if document truly has no algorithms or methods.
+- chapters: 5–10 topics matching the document structure. 3 takeaways each.
+- questions: EXACTLY 25 questions covering easy, medium, and hard difficulty. Full worked answers.
+- Write everything in simple, clear English. Avoid complex academic phrasing.
+- Return ONLY the JSON object.`;
 
 
 /* Format descriptions shown in the info card when a chip is selected */
@@ -2567,6 +2569,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
     if(!data.chapterTitle) throw new Error('Missing chapterTitle in response');
     // Normalise all array fields so components never call .map() on null
     data.summary      = typeof data.summary === 'string' ? data.summary.trim() : '';
+    data.diagrams     = Array.isArray(data.diagrams)     ? data.diagrams     : [];
     data.keyConcepts  = Array.isArray(data.keyConcepts)  ? data.keyConcepts  : [];
     data.definitions  = Array.isArray(data.definitions)  ? data.definitions  : [];
     data.mechanisms   = Array.isArray(data.mechanisms)   ? data.mechanisms   : [];
@@ -3902,9 +3905,11 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const totalQ=(d.questions||[]).length;const pct=totalQ===0?0:Math.round((cp.openedQs||[]).length/totalQ*100);
   const hasAlgo=d.algorithms?.length>0;
   const tabs=ALL_TABS;
-  const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways'].includes(initSection)?initSection:'concepts'));
+  const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways','diagrams'].includes(initSection)?initSection:'concepts'));
   const[cSearch,setCSearch]=useState('');   // concept search in notes tab
   const[dSearch,setDSearch]=useState('');   // definition search in notes tab
+  const[regenLoading,setRegenLoading]=useState(false); // AI regenerate notes
+  const[regenMsg,setRegenMsg]=useState('');
   const[practiceSection,setPracticeSection]=useState((['qa','flashcards','quiz'].includes(initSection)?initSection:'qa'));
   const filteredQ=(d.questions||[]).filter(q=>!filter||q.question.toLowerCase().includes(filter.toLowerCase()));
   const accent=YEAR_COLORS[course.year]||'#4f9cf9';
@@ -4036,6 +4041,111 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           <button onClick={()=>toggleBookmark(course.id)} title={isBookmarked?'Remove bookmark':'Bookmark'} style={{background:isBookmarked?'rgba(249,168,79,.15)':'var(--surface)',border:`1px solid ${isBookmarked?'#f9a84f':'var(--border)'}`,borderRadius:8,color:isBookmarked?'#f9a84f':'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>
             {isBookmarked?'🔖':'🔖'}
           </button>
+          {/* ── Regenerate Notes from PDF (admin only) ── */}
+          {(user.role===ROLE.ADMIN||user.role===ROLE.SUPERUSER)&&(
+            <div style={{position:'relative'}}>
+              {/* Hidden file input */}
+              <input
+                id="regen-file-input"
+                type="file"
+                accept=".pdf,.docx,.txt,.md,.jpg,.jpeg,.png"
+                style={{display:'none'}}
+                onChange={async e=>{
+                  const f=e.target.files?.[0];
+                  if(!f) return;
+                  e.target.value=''; // reset so same file can be re-selected
+                  const ok=await window.shConfirm?.(`Re-generate notes from "${f.name}"? This will replace the current notes for "${d.chapterTitle}".`);
+                  if(!ok) return;
+                  setRegenLoading(true); setRegenMsg('');
+                  try{
+                    // Step 1: extract text from the uploaded file (same as UploadModal)
+                    setRegenMsg('⏳ Reading file…');
+                    const text=await extractText(f);
+                    let body;
+                    if(text==='__USE_VISION__'||text==='__IMAGE_NEEDED__'){
+                      setRegenMsg('⏳ Sending to AI vision model…');
+                      const b64=await toBase64(f);
+                      body={imageBase64:b64,mimeType:f.type||'image/jpeg'};
+                    } else if(text.startsWith('__STUDYHUB_JSON__:')){
+                      // User uploaded an existing JSON export — parse directly
+                      const parsed=safeParse(text.replace('__STUDYHUB_JSON__:',''));
+                      if(!parsed.chapterTitle) throw new Error('Invalid StudyHub JSON');
+                      body=null;
+                      // Use parsed directly
+                      const newData=parsed;
+                      newData.summary     = typeof newData.summary==='string'?newData.summary.trim():'';
+                      newData.diagrams    = Array.isArray(newData.diagrams)?newData.diagrams:[];
+                      newData.keyConcepts = Array.isArray(newData.keyConcepts)?newData.keyConcepts:[];
+                      newData.definitions = Array.isArray(newData.definitions)?newData.definitions:[];
+                      newData.mechanisms  = Array.isArray(newData.mechanisms)?newData.mechanisms:[];
+                      newData.algorithms  = Array.isArray(newData.algorithms)?newData.algorithms:[];
+                      newData.chapters    = Array.isArray(newData.chapters)?newData.chapters:[];
+                      newData.questions   = Array.isArray(newData.questions)?newData.questions:[];
+                      newData.courseName  = newData.courseName||d.courseName;
+                      newData.chapterTitle= newData.chapterTitle||d.chapterTitle;
+                      await supabase.from('courses').update({data:newData,concept_count:newData.keyConcepts.length,term_count:newData.definitions.length,q_count:newData.questions.length}).eq('id',course.id);
+                      setRegenMsg('✅ Notes updated from JSON! Reloading…');
+                      setTimeout(()=>window.location.reload(),1800);
+                      return;
+                    } else {
+                      setRegenMsg('⏳ Sending to AI… (this takes ~30s)');
+                      body={text};
+                    }
+                    // Step 2: call /api/generate exactly like UploadModal
+                    const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+                    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`Server error ${res.status}`);}
+                    const newData=await res.json();
+                    // Step 3: normalise all fields
+                    newData.summary     = typeof newData.summary==='string'?newData.summary.trim():'';
+                    newData.diagrams    = Array.isArray(newData.diagrams)?newData.diagrams:[];
+                    newData.keyConcepts = Array.isArray(newData.keyConcepts)?newData.keyConcepts:[];
+                    newData.definitions = Array.isArray(newData.definitions)?newData.definitions:[];
+                    newData.mechanisms  = Array.isArray(newData.mechanisms)?newData.mechanisms:[];
+                    newData.algorithms  = Array.isArray(newData.algorithms)?newData.algorithms:[];
+                    newData.chapters    = Array.isArray(newData.chapters)?newData.chapters:[];
+                    newData.questions   = Array.isArray(newData.questions)?newData.questions:[];
+                    newData.courseName  = newData.courseName||d.courseName;
+                    newData.chapterTitle= newData.chapterTitle||d.chapterTitle;
+                    // Step 4: update the existing course record in Supabase
+                    const{error:dbErr}=await supabase.from('courses').update({
+                      data:newData,
+                      concept_count:newData.keyConcepts.length,
+                      term_count:newData.definitions.length,
+                      q_count:newData.questions.length,
+                    }).eq('id',course.id);
+                    if(dbErr) throw new Error(dbErr.message);
+                    setRegenMsg('✅ Notes regenerated from PDF! Reloading…');
+                    setTimeout(()=>window.location.reload(),1800);
+                  }catch(e){
+                    const msg=e.message||'Unknown error';
+                    const friendly=msg.includes('control character')||msg.includes('JSON')
+                      ?'The file has formatting issues. Try saving as plain .txt and re-uploading.'
+                      :msg.includes('413')||msg.includes('too large')
+                      ?'File too large. Try splitting the PDF into smaller sections.'
+                      :'❌ Failed: '+msg;
+                    setRegenMsg(friendly);
+                  }
+                  finally{setRegenLoading(false);}
+                }}
+              />
+              {/* Visible button — triggers file picker */}
+              <button
+                onClick={()=>{if(!regenLoading)document.getElementById('regen-file-input').click();}}
+                disabled={regenLoading}
+                title="Upload the original PDF to regenerate all notes with AI (admin only)"
+                style={{background:'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.3)',borderRadius:8,color:'#a8f94f',cursor:regenLoading?'not-allowed':'pointer',padding:'7px 13px',fontSize:12,fontWeight:600,display:'flex',alignItems:'center',gap:5,opacity:regenLoading?.6:1,whiteSpace:'nowrap'}}>
+                {regenLoading
+                  ?<><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> {typeof regenMsg==='string'&&regenMsg.startsWith('⏳')?regenMsg.slice(2).trim():'Processing…'}</>
+                  :<>📄 Regen from PDF</>}
+              </button>
+            </div>
+          )}
+          {/* Status toast */}
+          {regenMsg&&!regenMsg.startsWith('⏳')&&(
+            <div className="slide-down" style={{position:'fixed',bottom:70,right:10,background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px',fontSize:12,color:'var(--text)',zIndex:300,boxShadow:'var(--shadow)',maxWidth:300,cursor:'pointer'}} onClick={()=>setRegenMsg('')}>
+              {regenMsg}
+            </div>
+          )}
           <button onClick={()=>exportCoursePDF(d,d.chapterTitle)} title="Export to PDF" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>⬇ PDF</button>
           {/* AI Suggest — all roles can request, routes to approvals */}
           <button onClick={askAiSuggestions} disabled={suggestLoading}
@@ -4126,6 +4236,29 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
       {tab==='notes'&&(
         <div className="fade-up">
+          {/* ── Sticky quick-nav bar ── */}
+          {(d.keyConcepts?.length||d.definitions?.length||d.mechanisms?.length)>0&&(
+            <div style={{position:'sticky',top:0,zIndex:20,background:'var(--bg)',paddingBottom:8,marginBottom:4}}>
+              <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:4,scrollbarWidth:'none'}}>
+                {[
+                  {id:'summary',  label:'📖 Summary',  show:!!(d.summary?.length>50)},
+                  {id:'concepts', label:'💡 Concepts',  show:!!(d.keyConcepts?.length)},
+                  {id:'definitions',label:'📖 Defs',   show:!!(d.definitions?.length)},
+                  {id:'mechanisms',label:'⚙️ Mechanisms',show:!!(d.mechanisms?.length)},
+                  {id:'diagrams', label:'🗺️ Diagrams',  show:!!(d.diagrams?.length)},
+                  {id:'algorithms',label:'🔢 Algorithms',show:!!(d.algorithms?.length)},
+                  {id:'takeaways',label:'✨ Takeaways', show:!!(d.chapters?.length)},
+                ].filter(s=>s.show).map(s=>(
+                  <button key={s.id}
+                    onClick={()=>s.id==='summary'?setNotesSection(null):setNotesSection(s.id)}
+                    style={{flexShrink:0,padding:'5px 12px',borderRadius:16,border:`1.5px solid ${(s.id==='summary'?!notesSection:notesSection===s.id)?'#4f9cf9':'var(--border)'}`,background:(s.id==='summary'?!notesSection:notesSection===s.id)?'rgba(79,156,249,.1)':'var(--surface)',color:(s.id==='summary'?!notesSection:notesSection===s.id)?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:11,fontWeight:(s.id==='summary'?!notesSection:notesSection===s.id)?700:400,whiteSpace:'nowrap',transition:'all .15s'}}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* ── Context banner ── */}
           <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.12)',borderRadius:8,padding:'8px 14px',marginBottom:18,display:'flex',gap:8,alignItems:'center',fontSize:12,color:'var(--muted)'}}>
             <span>ℹ️</span>
@@ -4149,12 +4282,13 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                       {renderMd(para)}
                     </p>
                   ))}
-                  <div style={{borderTop:'1px solid var(--border)',marginTop:8,paddingTop:12,display:'flex',gap:12,flexWrap:'wrap'}}>
+                  <div style={{borderTop:'1px solid var(--border)',marginTop:8,paddingTop:12,display:'flex',gap:8,flexWrap:'wrap'}}>
                     {[
                       {icon:'💡',label:'Concepts',count:d.keyConcepts?.length||0,id:'concepts'},
                       {icon:'📖',label:'Definitions',count:d.definitions?.length||0,id:'definitions'},
                       {icon:'⚙️',label:'Mechanisms',count:d.mechanisms?.length||0,id:'mechanisms'},
                       ...(d.algorithms?.length?[{icon:'🔢',label:'Algorithms',count:d.algorithms.length,id:'algorithms'}]:[]),
+                      ...(d.diagrams?.length?[{icon:'🗺️',label:'Diagrams',count:d.diagrams.length,id:'diagrams'}]:[]),
                       {icon:'✨',label:'Takeaways',count:d.chapters?.length||0,id:'takeaways'},
                     ].filter(s=>s.count>0).map(s=>(
                       <button key={s.id} onClick={()=>setNotesSection(notesSection===s.id?null:s.id)}
@@ -4166,7 +4300,13 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   </div>
                 </div>
               ) : (
-                /* No summary — fall back to chips layout */
+                /* No summary — fall back to chips layout with regen hint */
+                {(user?.role===ROLE.ADMIN||user?.role===ROLE.SUPERUSER)&&(
+                  <div className="fade-in" style={{background:'rgba(168,249,79,.04)',border:'1px dashed rgba(168,249,79,.25)',borderRadius:10,padding:'10px 14px',marginBottom:14,fontSize:12,color:'var(--muted)',display:'flex',alignItems:'center',gap:8}}>
+                    <span>📋</span>
+                    <span>This chapter was uploaded before the summary feature. Click <strong style={{color:'#a8f94f'}}>🔄 Regen Notes</strong> to generate a full summary with diagrams.</span>
+                  </div>
+                )}
                 <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
                   {[
                     {id:'concepts',   label:'💡 Concepts',   count:d.keyConcepts?.length||0},
@@ -4230,7 +4370,11 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   {(d.mechanisms||[]).map((m,i)=>(
                     <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'18px 22px'}}>
                       <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:10}}>{m.title}</div>
-                      <p style={{fontSize:13,color:'var(--muted)',lineHeight:1.85,margin:0,whiteSpace:'pre-line'}}>{m.body}</p>
+                      <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.85,marginTop:0}}>
+                        {(m.body||'').split(/\n\n+/).filter(Boolean).map((para,pi)=>(
+                          <p key={pi} style={{margin:'0 0 10px',whiteSpace:'pre-line'}}>{renderMd(para)}</p>
+                        ))}
+                      </div>
                     </div>
                   ))}
                   {!(d.mechanisms?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No mechanisms yet.</div>}
@@ -4245,6 +4389,22 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                       <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:'#da7ff0',marginBottom:5}}>{a.name}</div>
                       <p style={{fontSize:12,color:'var(--muted)',lineHeight:1.65,margin:'0 0 6px'}}>{a.description}</p>
                       {a.note&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#f9a84f',background:'rgba(249,168,79,.06)',borderRadius:4,padding:'3px 7px',marginTop:4}}>{a.note}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>}
+
+              {/* ── Diagrams section ── */}
+              {notesSection==='diagrams'&&d.diagrams?.length>0&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
+                {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>🗺️ Diagrams &amp; Visuals</div>}
+                <div style={{display:'flex',flexDirection:'column',gap:16}}>
+                  {(d.diagrams||[]).map((diag,i)=>(
+                    <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+                      <div style={{background:'rgba(79,156,249,.06)',borderBottom:'1px solid var(--border)',padding:'10px 18px',display:'flex',alignItems:'center',gap:10}}>
+                        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(79,156,249,.15)',color:'#4f9cf9',borderRadius:4,padding:'2px 8px',letterSpacing:.5,textTransform:'uppercase'}}>{diag.type||'diagram'}</span>
+                        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:'var(--text)'}}>{diag.title}</span>
+                      </div>
+                      <pre style={{margin:0,padding:'18px 20px',fontFamily:"'IBM Plex Mono',monospace",fontSize:12,color:'var(--text)',lineHeight:1.8,overflowX:'auto',whiteSpace:'pre',background:'var(--card)'}}>{diag.content}</pre>
                     </div>
                   ))}
                 </div>
@@ -4269,6 +4429,11 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
               </div>}
             </>);
           })()}
+          {/* Back to top */}
+          <button onClick={()=>window.scrollTo({top:0,behavior:'smooth'})}
+            style={{display:'block',margin:'28px auto 4px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,color:'var(--muted)',cursor:'pointer',padding:'7px 22px',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5}}>
+            ↑ BACK TO TOP
+          </button>
         </div>
       )}
       {tab==='practice'&&(
@@ -5072,7 +5237,10 @@ function ManageAdminsTab(){
       <div style={{display:'flex',flexDirection:'column',gap:10,marginTop:12}}>
         {filtered.map((u,i)=>{const isAdm=admins.includes(u.username.toLowerCase());return(
           <div key={i} style={{background:'var(--surface)',border:`1px solid ${isAdm?'rgba(218,127,240,.2)':'var(--border)'}`,borderRadius:10,padding:'13px 17px',display:'flex',alignItems:'center',gap:13,flexWrap:'wrap'}}>
-            <Avatar name={u.display_name||u.username} {u.created_at&&(new Date()-new Date(u.created_at))<7*24*3600*1000&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:7,background:'rgba(127,218,150,.9)',color:'#000',borderRadius:3,padding:'1px 5px',fontWeight:700,marginLeft:4}}>NEW</span>}/>
+            <div style={{position:'relative',flexShrink:0}}>
+              <Avatar name={u.display_name||u.username}/>
+              {u.created_at&&(new Date()-new Date(u.created_at))<7*24*3600*1000&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:7,background:'rgba(127,218,150,.9)',color:'#000',borderRadius:3,padding:'1px 5px',fontWeight:700,position:'absolute',top:-6,right:-6}}>NEW</span>}
+            </div>
             <div style={{flex:1,minWidth:140}}><div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>@{u.username} · Yr {u.year}</div></div>
             <RoleBadge role={isAdm?ROLE.ADMIN:ROLE.USER} accountType={u.account_type}/>
             <button onClick={()=>toggleAdmin(u)} disabled={busy===u.username} style={{background:isAdm?'rgba(240,80,80,.1)':'rgba(218,127,240,.1)',border:`1px solid ${isAdm?'rgba(240,80,80,.3)':'rgba(218,127,240,.3)'}`,borderRadius:7,color:isAdm?'#f05050':'#da7ff0',cursor:'pointer',padding:'6px 14px',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>
