@@ -2968,29 +2968,6 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
       </div>
     </div>
 
-      {/* Keyboard Shortcuts */}
-      {showShortcuts&&(
-        <div className="modal-overlay" onClick={()=>setShowShortcuts(false)}>
-          <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:'24px 26px',maxWidth:380,width:'calc(100% - 32px)',margin:'auto',boxShadow:'var(--shadow)'}}>
-            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:'var(--text)',marginBottom:16}}>⌨️ Keyboard Shortcuts</div>
-            <div style={{display:'flex',flexDirection:'column',gap:8}}>
-              {[
-                ['/','Open course search'],
-                ['Escape','Close chatbot / modals'],
-                ['?','Show this shortcuts panel'],
-                ['Enter','Submit / confirm'],
-                ['Shift+Enter','New line in chatbot'],
-              ].map(([key,desc])=>(
-                <div key={key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:5,padding:'3px 8px',color:'var(--text)',letterSpacing:.5}}>{key}</span>
-                  <span style={{fontSize:12,color:'var(--muted)',flex:1,textAlign:'right'}}>{desc}</span>
-                </div>
-              ))}
-            </div>
-            <button onClick={()=>setShowShortcuts(false)} style={{width:'100%',marginTop:18,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,color:'var(--muted)',cursor:'pointer',padding:'9px 0',fontSize:12}}>Close</button>
-          </div>
-        </div>
-      )}
     </>
   );
 }
@@ -4299,12 +4276,12 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                     ))}
                   </div>
                 </div>
-              ) : (
-                /* No summary — fall back to chips layout with regen hint */
+              ) : (<>
+                {/* No summary — fall back to chips layout with regen hint */}
                 {(user?.role===ROLE.ADMIN||user?.role===ROLE.SUPERUSER)&&(
                   <div className="fade-in" style={{background:'rgba(168,249,79,.04)',border:'1px dashed rgba(168,249,79,.25)',borderRadius:10,padding:'10px 14px',marginBottom:14,fontSize:12,color:'var(--muted)',display:'flex',alignItems:'center',gap:8}}>
                     <span>📋</span>
-                    <span>This chapter was uploaded before the summary feature. Click <strong style={{color:'#a8f94f'}}>🔄 Regen Notes</strong> to generate a full summary with diagrams.</span>
+                    <span>This chapter was uploaded before the summary feature. Click <strong style={{color:'#a8f94f'}}>📄 Regen from PDF</strong> to generate a full summary with diagrams.</span>
                   </div>
                 )}
                 <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
@@ -4322,7 +4299,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                     </button>
                   ))}
                 </div>
-              )}
+              </>)}
 
               {/* ── Section deep-dives ── */}
               {notesSection==='concepts'&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
