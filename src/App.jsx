@@ -3495,7 +3495,7 @@ function AssignmentsTab({courseId,user}){
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
         {items.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No assignments posted yet.</div>}
         {items.map((a,i)=>(
-          <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${overdue(a.due_date)?'rgba(240,80,80,.25)':'var(--border)'}`,borderRadius:10,padding:'14px 17px'}}>
+          <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${overdue(a.due_date)?'rgba(240,80,80,.3)':a.priority==='urgent'?'rgba(240,80,80,.2)':a.priority==='high'?'rgba(249,168,79,.2)':'var(--border)'}`,borderRadius:10,padding:'14px 17px'}}>
             <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
               <div style={{flex:1}}>
                 <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:5}}>
@@ -3882,7 +3882,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const totalQ=(d.questions||[]).length;const pct=totalQ===0?0:Math.round((cp.openedQs||[]).length/totalQ*100);
   const hasAlgo=d.algorithms?.length>0;
   const tabs=ALL_TABS;
-  const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways','diagrams'].includes(initSection)?initSection:'concepts'));
+  const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways','diagrams'].includes(initSection)?initSection:(d?.summary?.length>50?null:'concepts')));
   const[cSearch,setCSearch]=useState('');   // concept search in notes tab
   const[dSearch,setDSearch]=useState('');   // definition search in notes tab
   const[regenLoading,setRegenLoading]=useState(false); // AI regenerate notes
@@ -3992,7 +3992,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       <div className="topbar" style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:10}}>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
           <Logo onClick={onBack} size="sm"/>
-          <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>← Back</button>
+          <button onClick={onBack} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}} title="Back to course overview">← Back</button>
           {(()=>{
             const siblings=[...courses].filter(c=>c.year===course.year&&c.semester===course.semester).sort((a,b)=>a.courseName.localeCompare(b.courseName));
             const idx=siblings.findIndex(c=>c.id===course.id);
@@ -4213,199 +4213,206 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
       {tab==='notes'&&(
         <div className="fade-up">
-          {/* ── Sticky quick-nav bar ── */}
-          {(d.keyConcepts?.length||d.definitions?.length||d.mechanisms?.length)>0&&(
-            <div style={{position:'sticky',top:0,zIndex:20,background:'var(--bg)',paddingBottom:8,marginBottom:4}}>
-              <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:4,scrollbarWidth:'none'}}>
-                {[
-                  {id:'summary',  label:'📖 Summary',  show:!!(d.summary?.length>50)},
-                  {id:'concepts', label:'💡 Concepts',  show:!!(d.keyConcepts?.length)},
-                  {id:'definitions',label:'📖 Defs',   show:!!(d.definitions?.length)},
-                  {id:'mechanisms',label:'⚙️ Mechanisms',show:!!(d.mechanisms?.length)},
-                  {id:'diagrams', label:'🗺️ Diagrams',  show:!!(d.diagrams?.length)},
-                  {id:'algorithms',label:'🔢 Algorithms',show:!!(d.algorithms?.length)},
-                  {id:'takeaways',label:'✨ Takeaways', show:!!(d.chapters?.length)},
-                ].filter(s=>s.show).map(s=>(
-                  <button key={s.id}
-                    onClick={()=>s.id==='summary'?setNotesSection(null):setNotesSection(s.id)}
-                    style={{flexShrink:0,padding:'5px 12px',borderRadius:16,border:`1.5px solid ${(s.id==='summary'?!notesSection:notesSection===s.id)?'#4f9cf9':'var(--border)'}`,background:(s.id==='summary'?!notesSection:notesSection===s.id)?'rgba(79,156,249,.1)':'var(--surface)',color:(s.id==='summary'?!notesSection:notesSection===s.id)?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:11,fontWeight:(s.id==='summary'?!notesSection:notesSection===s.id)?700:400,whiteSpace:'nowrap',transition:'all .15s'}}>
+
+          {/* ── Sticky topic nav — single source of truth ── */}
+          <div style={{position:'sticky',top:0,zIndex:20,background:'var(--bg)',paddingBottom:8,marginBottom:12}}>
+            <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:2,scrollbarWidth:'none'}}>
+              {[
+                {id:null,       label:'📖 Summary',    show:!!(d.summary?.length>50)},
+                {id:'concepts', label:'💡 Concepts',   show:!!(d.keyConcepts?.length)},
+                {id:'definitions',label:'📖 Defs',    show:!!(d.definitions?.length)},
+                {id:'mechanisms',label:'⚙️ Mechanisms',show:!!(d.mechanisms?.length)},
+                {id:'diagrams', label:'🗺️ Diagrams',   show:!!(d.diagrams?.length)},
+                {id:'algorithms',label:'🔢 Algorithms',show:!!(d.algorithms?.length)},
+                {id:'takeaways',label:'✨ Takeaways',  show:!!(d.chapters?.length)},
+              ].filter(s=>s.show).map(s=>{
+                const active = s.id===null ? notesSection===null : notesSection===s.id;
+                return(
+                  <button key={s.id??'summary'}
+                    onClick={()=>setNotesSection(s.id)}
+                    style={{flexShrink:0,padding:'5px 13px',borderRadius:16,
+                      border:`1.5px solid ${active?'#4f9cf9':'var(--border)'}`,
+                      background:active?'rgba(79,156,249,.1)':'var(--surface)',
+                      color:active?'#4f9cf9':'var(--muted)',
+                      cursor:'pointer',fontSize:11,fontWeight:active?700:400,
+                      whiteSpace:'nowrap',transition:'all .15s'}}>
                     {s.label}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
-          )}
+          </div>
 
           {/* ── Context banner ── */}
-          <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.12)',borderRadius:8,padding:'8px 14px',marginBottom:18,display:'flex',gap:8,alignItems:'center',fontSize:12,color:'var(--muted)'}}>
+          <div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.12)',borderRadius:8,padding:'8px 14px',marginBottom:16,display:'flex',gap:8,alignItems:'center',fontSize:12,color:'var(--muted)'}}>
             <span>ℹ️</span>
             <span>Study guide for <strong style={{color:'var(--text)'}}>{d.chapterTitle}</strong>. Assignments &amp; community for <strong style={{color:'var(--text)'}}>{d.courseName}</strong> are on the <button onClick={onBack} style={{background:'none',border:'none',color:'#4f9cf9',cursor:'pointer',padding:0,fontSize:12,textDecoration:'underline'}}>course page ←</button></span>
           </div>
 
-          {/* ── Summary (main prose notes) ── */}
-          {(()=>{
-            const summary = d.summary || '';
-            const hasSummary = summary.length > 50;
-            // Section pill state lives above
-            return(<>
-              {hasSummary ? (
-                <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'22px 26px',marginBottom:22}}>
-                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
-                    <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>📖 Summary</div>
-                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',borderRadius:4,padding:'2px 8px',letterSpacing:.5}}>READ FIRST</div>
-                  </div>
-                  {summary.split(/\n\n+/).filter(Boolean).map((para,i)=>(
-                    <p key={i} style={{fontSize:14.5,color:'var(--text)',lineHeight:1.9,margin:'0 0 14px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
-                      {renderMd(para)}
-                    </p>
-                  ))}
-                  <div style={{borderTop:'1px solid var(--border)',marginTop:8,paddingTop:12,display:'flex',gap:8,flexWrap:'wrap'}}>
-                    {[
-                      {icon:'💡',label:'Concepts',count:d.keyConcepts?.length||0,id:'concepts'},
-                      {icon:'📖',label:'Definitions',count:d.definitions?.length||0,id:'definitions'},
-                      {icon:'⚙️',label:'Mechanisms',count:d.mechanisms?.length||0,id:'mechanisms'},
-                      ...(d.algorithms?.length?[{icon:'🔢',label:'Algorithms',count:d.algorithms.length,id:'algorithms'}]:[]),
-                      ...(d.diagrams?.length?[{icon:'🗺️',label:'Diagrams',count:d.diagrams.length,id:'diagrams'}]:[]),
-                      {icon:'✨',label:'Takeaways',count:d.chapters?.length||0,id:'takeaways'},
-                    ].filter(s=>s.count>0).map(s=>(
-                      <button key={s.id} onClick={()=>setNotesSection(notesSection===s.id?null:s.id)}
-                        style={{display:'flex',alignItems:'center',gap:5,padding:'5px 13px',borderRadius:20,border:`1.5px solid ${notesSection===s.id?'#4f9cf9':'var(--border)'}`,background:notesSection===s.id?'rgba(79,156,249,.1)':'var(--surface)',color:notesSection===s.id?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:notesSection===s.id?700:400,transition:'all .15s'}}>
-                        {s.icon} {s.label}
-                        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:notesSection===s.id?'rgba(79,156,249,.2)':'var(--border)',color:notesSection===s.id?'#4f9cf9':'var(--muted)',borderRadius:10,padding:'1px 5px'}}>{s.count}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (<>
-                {/* No summary — fall back to chips layout with regen hint */}
-                {(user?.role===ROLE.ADMIN||user?.role===ROLE.SUPERUSER)&&(
-                  <div className="fade-in" style={{background:'rgba(168,249,79,.04)',border:'1px dashed rgba(168,249,79,.25)',borderRadius:10,padding:'10px 14px',marginBottom:14,fontSize:12,color:'var(--muted)',display:'flex',alignItems:'center',gap:8}}>
-                    <span>📋</span>
-                    <span>This chapter was uploaded before the summary feature. Click <strong style={{color:'#a8f94f'}}>📄 Regen from PDF</strong> to generate a full summary with diagrams.</span>
-                  </div>
-                )}
-                <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
-                  {[
-                    {id:'concepts',   label:'💡 Concepts',   count:d.keyConcepts?.length||0},
-                    {id:'definitions',label:'📖 Definitions',count:d.definitions?.length||0},
-                    {id:'mechanisms', label:'⚙️ Mechanisms', count:d.mechanisms?.length||0},
-                    ...(d.algorithms?.length?[{id:'algorithms',label:'🔢 Algorithms',count:d.algorithms.length}]:[]),
-                    {id:'takeaways',  label:'✨ Takeaways',  count:d.chapters?.length||0},
-                  ].map(s=>(
-                    <button key={s.id} onClick={()=>setNotesSection(s.id)}
-                      style={{padding:'7px 16px',borderRadius:20,border:`1.5px solid ${notesSection===s.id?'#4f9cf9':'var(--border)'}`,background:notesSection===s.id?'rgba(79,156,249,.1)':'var(--surface)',color:notesSection===s.id?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:notesSection===s.id?700:400,transition:'all .15s',display:'flex',alignItems:'center',gap:6}}>
-                      {s.label}
-                      {s.count>0&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:notesSection===s.id?'rgba(79,156,249,.2)':'var(--border)',color:notesSection===s.id?'#4f9cf9':'var(--muted)',borderRadius:10,padding:'1px 6px'}}>{s.count}</span>}
-                    </button>
-                  ))}
-                </div>
-              </>)}
+          {/* ── No summary hint for admins ── */}
+          {!d.summary?.length&&(user?.role===ROLE.ADMIN||user?.role===ROLE.SUPERUSER)&&(
+            <div className="fade-in" style={{background:'rgba(168,249,79,.04)',border:'1px dashed rgba(168,249,79,.25)',borderRadius:10,padding:'10px 14px',marginBottom:16,fontSize:12,color:'var(--muted)',display:'flex',alignItems:'center',gap:8}}>
+              <span>📋</span>
+              <span>This chapter has no summary yet. Click <strong style={{color:'#a8f94f'}}>📄 Regen from PDF</strong> to generate one.</span>
+            </div>
+          )}
 
-              {/* ── Section deep-dives ── */}
-              {notesSection==='concepts'&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
-                {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>💡 Key Concepts</div>}
-                {(()=>{
-                  const filtered=(d.keyConcepts||[]).filter(c=>!cSearch||c.title.toLowerCase().includes(cSearch.toLowerCase())||c.description.toLowerCase().includes(cSearch.toLowerCase()));
-                  return(<>
-                    {(d.keyConcepts||[]).length>6&&<input value={cSearch} onChange={e=>setCSearch(e.target.value)} placeholder="Filter concepts…" style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'7px 12px',color:'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",marginBottom:12}}/>}
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))',gap:12}}>
-                    {filtered.map((c,i)=>{const col=(COLOR_MAP[c.color]||COLOR_MAP.blue).bar;return(
+          {/* ── Summary prose (shown when no section selected) ── */}
+          {notesSection===null&&(()=>{
+            const summary = d.summary||'';
+            if(summary.length>50) return(
+              <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'22px 26px',marginBottom:20}}>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
+                  <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>📖 Summary</div>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',background:'rgba(127,218,150,.12)',borderRadius:4,padding:'2px 8px',letterSpacing:.5,border:'1px solid rgba(127,218,150,.25)'}}>READ FIRST</div>
+                </div>
+                {summary.split(/
+
++/).filter(Boolean).map((para,i)=>(
+                  <p key={i} style={{fontSize:14.5,color:'var(--text)',lineHeight:1.9,margin:'0 0 14px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
+                    {renderMd(para)}
+                  </p>
+                ))}
+                <div style={{borderTop:'1px solid var(--border)',marginTop:4,paddingTop:10,fontSize:11,color:'var(--muted)'}}>
+                  👆 Tap a tab above to explore Concepts, Definitions, Mechanisms and more.
+                </div>
+              </div>
+            );
+            return(
+              <div style={{color:'var(--muted)',textAlign:'center',padding:'40px 20px',fontSize:13}}>
+                No summary yet — click a tab above to explore notes.
+              </div>
+            );
+          })()}
+
+          {/* ── Deep-dive sections ── */}
+          {notesSection==='concepts'&&(
+            <div className="fade-up">
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)'}}>💡 Key Concepts</div>{d.keyConcepts?.length>0&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'var(--surface)',color:'var(--muted)',borderRadius:4,padding:'2px 8px'}}>{d.keyConcepts.length} concepts</span>}</div>
+              {(d.keyConcepts||[]).length>6&&(
+                <input value={cSearch} onChange={e=>setCSearch(e.target.value)}
+                  placeholder="Filter concepts…"
+                  style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'7px 12px',color:'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",marginBottom:12}}/>
+              )}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(252px,1fr))',gap:12}}>
+                {(d.keyConcepts||[]).filter(c=>!cSearch||c.title.toLowerCase().includes(cSearch.toLowerCase())||c.description.toLowerCase().includes(cSearch.toLowerCase())).map((c,i)=>{
+                  const col=(COLOR_MAP[c.color]||COLOR_MAP.blue).bar;
+                  return(
                     <div key={i} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 18px',borderLeft:`3px solid ${col}`,position:'relative',overflow:'hidden'}}>
                       <div style={{position:'absolute',top:0,right:0,width:60,height:60,borderRadius:'0 12px 0 60px',background:`${col}08`}}/>
                       <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:col,marginBottom:6,letterSpacing:.5}}>{c.title}</div>
                       <p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.7,margin:0}}>{c.description}</p>
                     </div>
-                  );})}
-                  {!filtered.length&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,gridColumn:'1/-1'}}>{cSearch?'No matching concepts.':'No concepts yet.'}</div>}
-                </div></>
-                );})()} 
-              </div>}
+                  );
+                })}
+                {!(d.keyConcepts?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,gridColumn:'1/-1'}}>No concepts yet.</div>}
+              </div>
+            </div>
+          )}
 
-              {notesSection==='definitions'&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
-                {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>📖 Definitions</div>}
-                {(()=>{
-                  const filtDefs=(d.definitions||[]).filter(def=>!dSearch||def.term.toLowerCase().includes(dSearch.toLowerCase())||def.definition.toLowerCase().includes(dSearch.toLowerCase()));
-                  return(<>
-                    {(d.definitions||[]).length>8&&<input value={dSearch} onChange={e=>setDSearch(e.target.value)} placeholder="Search definitions…" style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'7px 12px',color:'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",marginBottom:10}}/>}
-                    <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
-                      {filtDefs.map((def,i)=><DefinitionRow key={i} def={def} isLast={i===filtDefs.length-1}/>)}
-                    </div>
-                    {!filtDefs.length&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>{dSearch?'No matching definitions.':'No definitions yet.'}</div>}
-                    {filtDefs.length>0&&<div style={{marginTop:10,textAlign:'right'}}>
-                      <button onClick={()=>{const txt=filtDefs.map(d=>`${d.term}: ${d.definition}`).join('\n');navigator.clipboard?.writeText(txt).catch(()=>{});}}
+          {notesSection==='definitions'&&(
+            <div className="fade-up">
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)'}}>📖 Definitions</div>{d.definitions?.length>0&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'var(--surface)',color:'var(--muted)',borderRadius:4,padding:'2px 8px'}}>{d.definitions.length} terms</span>}</div>
+              {(d.definitions||[]).length>8&&(
+                <input value={dSearch} onChange={e=>setDSearch(e.target.value)}
+                  placeholder="Search definitions…"
+                  style={{width:'100%',background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'7px 12px',color:'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",marginBottom:10}}/>
+              )}
+              {(()=>{
+                const filtDefs=(d.definitions||[]).filter(def=>!dSearch||def.term.toLowerCase().includes(dSearch.toLowerCase())||def.definition.toLowerCase().includes(dSearch.toLowerCase()));
+                return(<>
+                  <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+                    {filtDefs.map((def,i)=><DefinitionRow key={i} def={def} isLast={i===filtDefs.length-1}/>)}
+                  </div>
+                  {!filtDefs.length&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>{dSearch?'No matching definitions.':'No definitions yet.'}</div>}
+                  {filtDefs.length>0&&(
+                    <div style={{marginTop:10,textAlign:'right'}}>
+                      <button onClick={()=>{const txt=filtDefs.map(d=>`${d.term}: ${d.definition}`).join('\n');navigator.clipboard?.writeText(txt).then(()=>{const b=document.activeElement;if(b){b.textContent='✓ Copied!';setTimeout(()=>{b.textContent=`📋 Copy all ${filtDefs.length} definitions`;},2000);}}).catch(()=>{});}}
                         style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,textDecoration:'underline',padding:0}}>
                         📋 Copy all {filtDefs.length} definitions
                       </button>
-                    </div>}
-                  </>);
-                })()}
-              </div>}
-
-              {notesSection==='mechanisms'&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
-                {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>⚙️ Mechanisms</div>}
-                <div style={{display:'flex',flexDirection:'column',gap:13}}>
-                  {(d.mechanisms||[]).map((m,i)=>(
-                    <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'18px 22px'}}>
-                      <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:10}}>{m.title}</div>
-                      <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.85,marginTop:0}}>
-                        {(m.body||'').split(/\n\n+/).filter(Boolean).map((para,pi)=>(
-                          <p key={pi} style={{margin:'0 0 10px',whiteSpace:'pre-line'}}>{renderMd(para)}</p>
-                        ))}
-                      </div>
                     </div>
-                  ))}
-                  {!(d.mechanisms?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No mechanisms yet.</div>}
-                </div>
-              </div>}
+                  )}
+                </>);
+              })()}
+            </div>
+          )}
 
-              {notesSection==='algorithms'&&d.algorithms?.length>0&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
-                {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>🔢 Algorithms</div>}
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(228px,1fr))',gap:11}}>
-                  {(d.algorithms||[]).map((a,i)=>(
-                    <div key={i} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:8,padding:'13px 15px'}}>
-                      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:'#da7ff0',marginBottom:5}}>{a.name}</div>
-                      <p style={{fontSize:12,color:'var(--muted)',lineHeight:1.65,margin:'0 0 6px'}}>{a.description}</p>
-                      {a.note&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#f9a84f',background:'rgba(249,168,79,.06)',borderRadius:4,padding:'3px 7px',marginTop:4}}>{a.note}</div>}
-                    </div>
-                  ))}
-                </div>
-              </div>}
+          {notesSection==='mechanisms'&&(
+            <div className="fade-up">
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)'}}>⚙️ Mechanisms</div>{d.mechanisms?.length>0&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'var(--surface)',color:'var(--muted)',borderRadius:4,padding:'2px 8px'}}>{d.mechanisms.length} topics</span>}</div>
+              <div style={{display:'flex',flexDirection:'column',gap:13}}>
+                {(d.mechanisms||[]).map((m,i)=>(
+                  <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'18px 22px'}}>
+                    <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:10}}>{m.title}</div>
+                    <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.85}}>
+                      {(m.body||'').split(/
 
-              {/* ── Diagrams section ── */}
-              {notesSection==='diagrams'&&d.diagrams?.length>0&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
-                {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>🗺️ Diagrams &amp; Visuals</div>}
-                <div style={{display:'flex',flexDirection:'column',gap:16}}>
-                  {(d.diagrams||[]).map((diag,i)=>(
-                    <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
-                      <div style={{background:'rgba(79,156,249,.06)',borderBottom:'1px solid var(--border)',padding:'10px 18px',display:'flex',alignItems:'center',gap:10}}>
-                        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(79,156,249,.15)',color:'#4f9cf9',borderRadius:4,padding:'2px 8px',letterSpacing:.5,textTransform:'uppercase'}}>{diag.type||'diagram'}</span>
-                        <span style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:'var(--text)'}}>{diag.title}</span>
-                      </div>
-                      <pre style={{margin:0,padding:'18px 20px',fontFamily:"'IBM Plex Mono',monospace",fontSize:12,color:'var(--text)',lineHeight:1.8,overflowX:'auto',whiteSpace:'pre',background:'var(--card)'}}>{diag.content}</pre>
++/).filter(Boolean).map((para,pi)=>(
+                        <p key={pi} style={{margin:'0 0 10px',whiteSpace:'pre-line'}}>{renderMd(para)}</p>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>}
+                  </div>
+                ))}
+                {!(d.mechanisms?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No mechanisms yet.</div>}
+              </div>
+            </div>
+          )}
 
-              {notesSection==='takeaways'&&<div className="fade-up" style={{marginTop:hasSummary?4:0}}>
-                {hasSummary&&<div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>✨ Chapter Takeaways</div>}
-                <div style={{display:'flex',flexDirection:'column',gap:14}}>
-                  {(d.chapters||[]).map((ch,i)=>(
-                    <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
-                      <div style={{display:'flex',alignItems:'center',gap:9,marginBottom:10}}>
-                        <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',borderRadius:4,padding:'2px 8px'}}>{ch.num}</div>
-                        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:'var(--text)'}}>{ch.name}</div>
-                      </div>
-                      <ul style={{margin:0,paddingLeft:18,display:'flex',flexDirection:'column',gap:6}}>
-                        {(ch.takeaways||[]).map((t,j)=><li key={j} style={{fontSize:13,color:'var(--muted)',lineHeight:1.65}}>{t}</li>)}
-                      </ul>
+          {notesSection==='algorithms'&&(
+            <div className="fade-up">
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>🔢 Algorithms</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(228px,1fr))',gap:11}}>
+                {(d.algorithms||[]).map((a,i)=>(
+                  <div key={i} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:8,padding:'13px 15px'}}>
+                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:'#da7ff0',marginBottom:5}}>{a.name}</div>
+                    <p style={{fontSize:12,color:'var(--muted)',lineHeight:1.65,margin:'0 0 6px'}}>{a.description}</p>
+                    {a.note&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#f9a84f',background:'rgba(249,168,79,.06)',borderRadius:4,padding:'3px 7px',marginTop:4}}>{a.note}</div>}
+                  </div>
+                ))}
+                {!(d.algorithms?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No algorithms yet.</div>}
+              </div>
+            </div>
+          )}
+
+          {notesSection==='diagrams'&&(
+            <div className="fade-up">
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>🗺️ Diagrams &amp; Visuals</div>
+              <div style={{display:'flex',flexDirection:'column',gap:16}}>
+                {(d.diagrams||[]).map((diag,i)=>(
+                  <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+                    <div style={{background:'rgba(79,156,249,.06)',borderBottom:'1px solid var(--border)',padding:'10px 18px',display:'flex',alignItems:'center',gap:10}}>
+                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(79,156,249,.15)',color:'#4f9cf9',borderRadius:4,padding:'2px 8px',letterSpacing:.5,textTransform:'uppercase'}}>{diag.type||'diagram'}</span>
+                      <span style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:'var(--text)'}}>{diag.title}</span>
                     </div>
-                  ))}
-                  {!(d.chapters?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No takeaways yet.</div>}
-                </div>
-              </div>}
-            </>);
-          })()}
+                    <pre style={{margin:0,padding:'18px 20px',fontFamily:"'IBM Plex Mono',monospace",fontSize:12,color:'var(--text)',lineHeight:1.8,overflowX:'auto',whiteSpace:'pre',background:'var(--card)'}}>{diag.content}</pre>
+                  </div>
+                ))}
+                {!(d.diagrams?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No diagrams yet.</div>}
+              </div>
+            </div>
+          )}
+
+          {notesSection==='takeaways'&&(
+            <div className="fade-up">
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:14}}>✨ Chapter Takeaways</div>
+              <div style={{display:'flex',flexDirection:'column',gap:14}}>
+                {(d.chapters||[]).map((ch,i)=>(
+                  <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:9,marginBottom:10}}>
+                      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',borderRadius:4,padding:'2px 8px'}}>{ch.num}</div>
+                      <div style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:'var(--text)'}}>{ch.name}</div>
+                    </div>
+                    <ul style={{margin:0,paddingLeft:18,display:'flex',flexDirection:'column',gap:6}}>
+                      {(ch.takeaways||[]).map((t,j)=><li key={j} style={{fontSize:13,color:'var(--muted)',lineHeight:1.65}}>{t}</li>)}
+                    </ul>
+                  </div>
+                ))}
+                {!(d.chapters?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No takeaways yet.</div>}
+              </div>
+            </div>
+          )}
+
           {/* Back to top */}
           <button onClick={()=>window.scrollTo({top:0,behavior:'smooth'})}
             style={{display:'block',margin:'28px auto 4px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,color:'var(--muted)',cursor:'pointer',padding:'7px 22px',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5}}>
@@ -6019,7 +6026,7 @@ function SubscriptionManager({u,onSaved,subCfg={}}){
   );
 }
 
-function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange,isOnline=false}){
+function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange,isOnline=false,subCfg={},onUsersReload}){
   const[expanded,setExpanded]=useState(false);
   const[busy,setBusy]=useState('');
   const[localYear,setLocalYear]=useState(u.year||1);
@@ -6058,7 +6065,12 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange,isO
           {isOnline&&<div style={{position:'absolute',bottom:1,right:1,width:8,height:8,borderRadius:'50%',background:'#7fda96',border:'2px solid var(--surface)'}}/>}
         </button>
         <div style={{flex:1,minWidth:130}}>
-          <div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <div style={{fontSize:14,color:'var(--text)',fontWeight:500}}>{u.display_name||u.username}</div>
+            {u.created_at&&(new Date()-new Date(u.created_at))<7*24*3600*1000&&(
+              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:7,background:'rgba(127,218,150,.9)',color:'#000',borderRadius:3,padding:'1px 5px',fontWeight:700}}>NEW</span>
+            )}
+          </div>
           <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>
             @{u.username} · {u.created_at?new Date(u.created_at).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'}):'—'}
           </div>
@@ -6132,8 +6144,7 @@ function UserRow({u,role,isAdm,isSU2,onRoleChange,onAdminToggle,onYearChange,isO
             <div>
               <div style={{fontSize:11,color:'var(--muted)',marginBottom:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>SUBSCRIPTION</div>
               <SubscriptionManager u={u} subCfg={subCfg} onSaved={async()=>{
-                const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
-                setAllUsers(users);setAdmins(adms);
+                if(onUsersReload) await onUsersReload();
               }}/>
             </div>
           )}
@@ -6218,7 +6229,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
       const[u,a]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
       setAllUsers(u);setAdmins(a);
       setSelectedUsers(new Set());setBulkAction('');
-    }catch(e){flash('Error: '+e.message);}
+    }catch(e){flash((e.message||'').includes('duplicate')||( e.message||'').includes('already')?'A course with this name already exists in this year/semester.':'Something went wrong: '+(e.message||'Unknown error'));}
     setBulkBusy(false);
   };
 
@@ -6248,7 +6259,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
         await dbSubmitPending('delete_course',user.username,{id,chapterTitle:c?.chapterTitle,courseName:c?.courseName});
         flash('✓ Deletion request submitted — awaiting superuser approval.');
       }
-    }catch(e){flash('Error: '+e.message);}
+    }catch(e){flash((e.message||'').includes('duplicate')||( e.message||'').includes('already')?'A course with this name already exists in this year/semester.':'Something went wrong: '+(e.message||'Unknown error'));}
   };
 
   const pTabs=[
@@ -6275,7 +6286,10 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
               </div>
             </div>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
-              <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)',margin:0}}>Manage StudyHub</h2>
+              <div style={{display:'flex',alignItems:'baseline',gap:10}}>
+                <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)',margin:0}}>Manage StudyHub</h2>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',opacity:.5}}>v{APP_VERSION}</span>
+              </div>
               <button onClick={()=>{
                 Promise.all([dbLoadUsers(),dbLoadAdmins(),dbLoadSubConfig()]).then(([u,a,sc])=>{setAllUsers(u);setAdmins(a);setSubCfg(sc||{});});
                 if(isSU2){dbCountPending().then(setPendingCount);dbCountPendingStatusRequests().then(setStatusPendingCount);}
@@ -6499,6 +6513,11 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
                     {isSU2&&<span title={isOnline?'Online now':'Offline'} style={{width:8,height:8,borderRadius:'50%',background:isOnline?'#7fda96':'var(--border)',flexShrink:0,marginTop:10,border:`1px solid ${isOnline?'rgba(127,218,150,.5)':'transparent'}`}}/>}
                     <div style={{flex:1}}>
                       <UserRow u={u} role={role} isAdm={isAdm} isSU2={isSU2} isOnline={onlineUsers?.has(u.username)}
+                        subCfg={subCfg}
+                        onUsersReload={async()=>{
+                          const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
+                          setAllUsers(users);setAdmins(adms);
+                        }}
                         onRoleChange={async(newAccountType)=>{
                           await dbApplyStatusChange(u.username,newAccountType);
                           const[users,adms]=await Promise.all([dbLoadUsers(),dbLoadAdmins()]);
@@ -7075,7 +7094,7 @@ function StudyTools({user,subCfg={}}){
                 }}
               />
               {/* Footer: char count + clear */}
-              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',padding:'0 16px 2px',textAlign:'right',opacity:.45}}>{pad.length.toLocaleString()} chars</div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',padding:'0 16px 2px',textAlign:'right',opacity:.45}}>{pad.length.toLocaleString()} chars · {pad.split(/\s+/).filter(Boolean).length} words</div>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 16px 10px',borderTop:'1px solid var(--border)'}}>
                 <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'var(--muted)',letterSpacing:.5}}>
                   {pad.length} chars · auto-saved
