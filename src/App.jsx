@@ -541,7 +541,7 @@ async function dbRedeemPromo(code){
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '4.7.0';
+const APP_VERSION    = '4.9.0';
 
 /* ═══════════════ XP / GAMIFICATION ═══════════════ */
 const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5,question_reveal:2};
@@ -2325,7 +2325,7 @@ function CourseTabView({courseCode,courses,user,progress,onSelectCourse,onBack,b
             {s.label}
             {s.count>0&&<span style={{background:activeSection===s.id?`${accent}20`:'var(--border)',color:activeSection===s.id?accent:'var(--muted)',borderRadius:10,padding:'1px 7px',fontSize:9,fontFamily:"'IBM Plex Mono',monospace"}}>{s.count}</span>}
           </button>
-        ))}
+        ))})})()} 
       </div>
 
       {!dataLoaded&&activeSection!=='chapters'&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,fontSize:13}}>Loading…</div>}
@@ -3017,7 +3017,7 @@ function GlobalAnnouncementStrip({user}){
 
 /* ═══════════════ ANNOUNCEMENTS TAB ═══════════════ */
 function AnnouncementsTab({courseId,user,onNew}){
-  const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
+  const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);const[doneFilter,setDoneFilter]=useState('all');
   const[form,setForm]=useState({title:'',body:'',priority:'info',pinned:false,global:false});
   const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
@@ -3080,6 +3080,13 @@ function AnnouncementsTab({courseId,user,onNew}){
           </button>
         </div>
       )}
+      {items.length>0&&<div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+        {['all','pending','done'].map(f=>(
+          <button key={f} onClick={()=>setDoneFilter&&setDoneFilter(f)}
+            style={{padding:'4px 12px',borderRadius:16,border:'1px solid var(--border)',background:'var(--surface)',color:'var(--muted)',cursor:'pointer',fontSize:11,transition:'all .15s'}}>{f==='all'?`All (${items.length})`:f==='done'?`Done (${items.filter(a=>a.done).length})`:`Pending (${items.filter(a=>!a.done).length})`}
+          </button>
+        ))}
+      </div>}
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
         {items.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No announcements yet.</div>}
         {items.map((a,i)=>{
@@ -3447,10 +3454,10 @@ function AssignmentsTab({courseId,user}){
 
   const save=async()=>{
     if(!form.title.trim())return;setLoading(true);
-    const a={id:`as-${Date.now()}`,course_id:courseId,title:form.title,description:form.description,due_date:form.due_date||null,marks:form.marks?parseInt(form.marks):null,file_url:form.file_url||null,added_by:user.username,added_at:new Date().toISOString()};
+    const a={id:`as-${Date.now()}`,course_id:courseId,title:form.title,description:form.description,due_date:form.due_date||null,marks:form.marks?parseInt(form.marks):null,file_url:form.file_url||null,priority:form.priority||'normal',added_by:user.username,added_at:new Date().toISOString()};
     if(isSU2){await dbSaveAssignment(a);await load();}
     else{await dbSubmitPending('add_resource',user.username,{...a,_table:'assignments'});flash('✓ Submitted for superuser approval.');}
-    setForm({title:'',description:'',due_date:'',marks:'',file_url:''});setShowForm(false);setLoading(false);
+    setForm({title:'',description:'',due_date:'',marks:'',file_url:'',priority:'normal'});setShowForm(false);setLoading(false);
   };
   const del=async id=>{
     if(isSU2){await dbDeleteAssignment(id);await load();}
@@ -3459,7 +3466,7 @@ function AssignmentsTab({courseId,user}){
 
   return(
     <div className="fade-up">
-      <SectionLabel>Assignments</SectionLabel>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}><SectionLabel style={{marginBottom:0}}>Assignments</SectionLabel>{items.length>0&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',borderRadius:4,padding:'2px 8px'}}>{items.filter(a=>!a.done).length} pending · {items.length} total</span>}</div>
       {msg&&<div className="slide-down" style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,padding:'9px 14px',color:'#7fda96',fontSize:12,marginBottom:12}}>{msg}</div>}
       {!isPriv&&<div style={{background:'rgba(79,156,249,.05)',border:'1px solid rgba(79,156,249,.15)',borderRadius:8,padding:'9px 13px',fontSize:12,color:'var(--muted)',marginBottom:14}}>📋 Assignments posted by admins will appear here.</div>}
       {isPriv&&(
@@ -3492,9 +3499,17 @@ function AssignmentsTab({courseId,user}){
           </button>
         </div>
       )}
+      {/* Filter bar */}
+      {items.length>0&&<div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
+        {['all','pending','done'].map(f=>(
+          <button key={f} onClick={()=>setDoneFilter(f)}
+            style={{padding:'4px 13px',borderRadius:16,border:`1.5px solid ${doneFilter===f?'#4f9cf9':'var(--border)'}`,background:doneFilter===f?'rgba(79,156,249,.1)':'var(--surface)',color:doneFilter===f?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:11,fontWeight:doneFilter===f?700:400,transition:'all .15s',textTransform:'capitalize'}}>
+            {f==='all'?`All (${items.length})`:f==='done'?`Done (${items.filter(a=>a.done).length})`:`Pending (${items.filter(a=>!a.done).length})`}
+          </button>
+        ))}
+      </div>}
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
-        {items.length===0&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>No assignments posted yet.</div>}
-        {items.map((a,i)=>(
+        {(()=>{const visibleItems=items.filter(a=>doneFilter==='all'?true:doneFilter==='done'?a.done:!a.done);return visibleItems.length===0?<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>{doneFilter==='done'?'No completed assignments.':doneFilter==='pending'?'No pending assignments!':'No assignments posted yet.'}</div>:visibleItems.map((a,i)=>(
           <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${overdue(a.due_date)?'rgba(240,80,80,.3)':a.priority==='urgent'?'rgba(240,80,80,.2)':a.priority==='high'?'rgba(249,168,79,.2)':'var(--border)'}`,borderRadius:10,padding:'14px 17px'}}>
             <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
               <div style={{flex:1}}>
@@ -4008,6 +4023,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   style={{background:'none',border:'1px solid var(--border)',borderRadius:7,color:next?'var(--text)':'var(--border)',cursor:next?'pointer':'default',padding:'5px 10px',fontSize:13,lineHeight:1}}>›</button>
               </div>
             );
+            }catch(e){return null;}
           })()}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
@@ -4211,7 +4227,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
       {/* Tab content */}
 
-      {tab==='notes'&&(
+      {tab==='notes'&&d&&(
         <div className="fade-up">
 
           {/* ── Sticky topic nav — single source of truth ── */}
@@ -4229,14 +4245,14 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                 const active = s.id===null ? notesSection===null : notesSection===s.id;
                 return(
                   <button key={s.id??'summary'}
-                    onClick={()=>setNotesSection(s.id)}
+                    onClick={()=>{setNotesSection(s.id);setCSearch('');setDSearch('');}}
                     style={{flexShrink:0,padding:'5px 13px',borderRadius:16,
                       border:`1.5px solid ${active?'#4f9cf9':'var(--border)'}`,
                       background:active?'rgba(79,156,249,.1)':'var(--surface)',
                       color:active?'#4f9cf9':'var(--muted)',
                       cursor:'pointer',fontSize:11,fontWeight:active?700:400,
                       whiteSpace:'nowrap',transition:'all .15s'}}>
-                    {s.label}
+                    {s.label}{s.id&&({concepts:(d.keyConcepts||[]).length,definitions:(d.definitions||[]).length,mechanisms:(d.mechanisms||[]).length,algorithms:(d.algorithms||[]).length,diagrams:(d.diagrams||[]).length,takeaways:(d.chapters||[]).length}[s.id]>0)&&<span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,background:active?'rgba(79,156,249,.2)':'var(--border)',color:active?'#4f9cf9':'var(--muted)',borderRadius:8,padding:'1px 5px',marginLeft:4}}>{({concepts:(d.keyConcepts||[]).length,definitions:(d.definitions||[]).length,mechanisms:(d.mechanisms||[]).length,algorithms:(d.algorithms||[]).length,diagrams:(d.diagrams||[]).length,takeaways:(d.chapters||[]).length})[s.id]}</span>}
                   </button>
                 );
               })}
@@ -4259,28 +4275,27 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
           {/* ── Summary prose (shown when no section selected) ── */}
           {notesSection===null&&(()=>{
-            const summary = d.summary||'';
+            try{
+            const summary = (d&&d.summary)||'';
             if(summary.length>50) return(
               <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'22px 26px',marginBottom:20}}>
                 <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
                   <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>📖 Summary</div>
                   <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',background:'rgba(127,218,150,.12)',borderRadius:4,padding:'2px 8px',letterSpacing:.5,border:'1px solid rgba(127,218,150,.25)'}}>READ FIRST</div>
                 </div>
-                {summary.split(/
-
-+/).filter(Boolean).map((para,i)=>(
-                  <p key={i} style={{fontSize:14.5,color:'var(--text)',lineHeight:1.9,margin:'0 0 14px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
+                {summary.split(/\n\n+/).filter(Boolean).map((para,i)=>(
+                  <p key={i} style={{fontSize:15,color:'var(--text)',lineHeight:2.0,margin:'0 0 16px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
                     {renderMd(para)}
                   </p>
                 ))}
                 <div style={{borderTop:'1px solid var(--border)',marginTop:4,paddingTop:10,fontSize:11,color:'var(--muted)'}}>
-                  👆 Tap a tab above to explore Concepts, Definitions, Mechanisms and more.
+                  Tap a section above — 💡 Concepts · 📖 Definitions · ⚙️ Mechanisms · 🗺️ Diagrams · ✨ Takeaways
                 </div>
               </div>
             );
             return(
               <div style={{color:'var(--muted)',textAlign:'center',padding:'40px 20px',fontSize:13}}>
-                No summary yet — click a tab above to explore notes.
+                Select a tab above to read the study notes for this chapter.
               </div>
             );
           })()}
@@ -4298,14 +4313,15 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                 {(d.keyConcepts||[]).filter(c=>!cSearch||c.title.toLowerCase().includes(cSearch.toLowerCase())||c.description.toLowerCase().includes(cSearch.toLowerCase())).map((c,i)=>{
                   const col=(COLOR_MAP[c.color]||COLOR_MAP.blue).bar;
                   return(
-                    <div key={i} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 18px',borderLeft:`3px solid ${col}`,position:'relative',overflow:'hidden'}}>
+                    <div key={i} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 18px',borderLeft:`3px solid ${col}`,position:'relative',overflow:'hidden',cursor:'default',transition:'box-shadow .15s'}} onMouseEnter={e=>e.currentTarget.style.boxShadow='0 4px 16px rgba(0,0,0,.15)'} onMouseLeave={e=>e.currentTarget.style.boxShadow='none'}>
                       <div style={{position:'absolute',top:0,right:0,width:60,height:60,borderRadius:'0 12px 0 60px',background:`${col}08`}}/>
                       <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:col,marginBottom:6,letterSpacing:.5}}>{c.title}</div>
                       <p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.7,margin:0}}>{c.description}</p>
                     </div>
                   );
                 })}
-                {!(d.keyConcepts?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,gridColumn:'1/-1'}}>No concepts yet.</div>}
+                {!(d.keyConcepts?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40,gridColumn:'1/-1',fontSize:13}}>No concepts uploaded yet for this chapter.</div>}
+                {d.keyConcepts?.length>0&&(d.keyConcepts||[]).filter(c=>!cSearch||c.title.toLowerCase().includes(cSearch.toLowerCase())||c.description.toLowerCase().includes(cSearch.toLowerCase())).length===0&&cSearch&&<div style={{color:'var(--muted)',textAlign:'center',padding:30,gridColumn:'1/-1',fontSize:13}}>No concepts match &quot;{cSearch}&quot;.</div>}
               </div>
             </div>
           )}
@@ -4346,9 +4362,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   <div key={i} className={`stagger-${Math.min(i+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:'18px 22px'}}>
                     <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:'var(--text)',marginBottom:10}}>{m.title}</div>
                     <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.85}}>
-                      {(m.body||'').split(/
-
-+/).filter(Boolean).map((para,pi)=>(
+                      {(m.body||'').split(/\n\n+/).filter(Boolean).map((para,pi)=>(
                         <p key={pi} style={{margin:'0 0 10px',whiteSpace:'pre-line'}}>{renderMd(para)}</p>
                       ))}
                     </div>
@@ -4385,7 +4399,10 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                       <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(79,156,249,.15)',color:'#4f9cf9',borderRadius:4,padding:'2px 8px',letterSpacing:.5,textTransform:'uppercase'}}>{diag.type||'diagram'}</span>
                       <span style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:'var(--text)'}}>{diag.title}</span>
                     </div>
-                    <pre style={{margin:0,padding:'18px 20px',fontFamily:"'IBM Plex Mono',monospace",fontSize:12,color:'var(--text)',lineHeight:1.8,overflowX:'auto',whiteSpace:'pre',background:'var(--card)'}}>{diag.content}</pre>
+                    <div style={{position:'relative'}}>
+                      <button onClick={()=>navigator.clipboard?.writeText(diag.content||'').catch(()=>{})} style={{position:'absolute',top:8,right:8,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:6,color:'var(--muted)',cursor:'pointer',padding:'3px 8px',fontSize:10}}>📋 Copy</button>
+                      <pre style={{margin:0,padding:'18px 20px',fontFamily:"'IBM Plex Mono',monospace",fontSize:12,color:'var(--text)',lineHeight:1.8,overflowX:'auto',whiteSpace:'pre',background:'var(--card)'}}>{diag.content}</pre>
+                    </div>
                   </div>
                 ))}
                 {!(d.diagrams?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No diagrams yet.</div>}
@@ -4409,13 +4426,19 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   </div>
                 ))}
                 {!(d.chapters?.length)&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>No takeaways yet.</div>}
+                {d.chapters?.length>0&&(
+                  <button onClick={()=>{const txt=(d.chapters||[]).map(ch=>`${ch.num}: ${ch.name}\n${(ch.takeaways||[]).map((t,i)=>`  ${i+1}. ${t}`).join('\n')}`).join('\n\n');navigator.clipboard?.writeText(txt).catch(()=>{});}}
+                    style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,textDecoration:'underline',padding:'8px 0 0',display:'block'}}>
+                    📋 Copy all takeaways
+                  </button>
+                )}
               </div>
             </div>
           )}
 
           {/* Back to top */}
           <button onClick={()=>window.scrollTo({top:0,behavior:'smooth'})}
-            style={{display:'block',margin:'28px auto 4px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,color:'var(--muted)',cursor:'pointer',padding:'7px 22px',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5}}>
+            style={{display:'block',margin:'28px auto 4px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,color:'var(--muted)',cursor:'pointer',padding:'7px 22px',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5,transition:'all .2s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='#4f9cf9';e.currentTarget.style.color='#4f9cf9';}} onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--muted)';}}>
             ↑ BACK TO TOP
           </button>
         </div>
@@ -4673,6 +4696,7 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
               <div style={{marginBottom:18}}>
                 <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
                   <Mono color="var(--muted)" size={9}>Q{quizIdx+1} / {qs.length}</Mono>
+          <div style={{height:3,background:'var(--border)',borderRadius:2,marginBottom:10}}><div style={{height:'100%',width:`${Math.round(quizIdx/Math.max(qs.length,1)*100)}%`,background:'#4f9cf9',borderRadius:2,transition:'width .3s'}}/></div>
                   <Mono color="#7fda96" size={9}>{quizScore} correct so far</Mono>
                 </div>
                 <div style={{height:5,background:'var(--border)',borderRadius:3}}>
@@ -5081,7 +5105,7 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
       {/* Sub-tabs + bulk actions */}
       <div style={{display:'flex',alignItems:'center',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18,flexWrap:'wrap'}}>
         {[{id:'pending',label:`Pending${pending.length>0?` (${pending.length})`:''}`,color:pending.length>0?'#f9a84f':undefined},{id:'history',label:'History'}].map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
+          <button key={t.id} onClick={()=>setTab(t.id);setCSearch('');setDSearch('')} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
         ))}
         {tab==='history'&&(
           <div style={{marginLeft:'auto',display:'flex',gap:6,paddingBottom:4,alignItems:'center',flexWrap:'wrap'}}>
@@ -6287,7 +6311,10 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
             </div>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
               <div style={{display:'flex',alignItems:'baseline',gap:10}}>
-                <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)',margin:0}}>Manage StudyHub</h2>
+                <div>
+                <h2 style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'var(--text)',margin:0,lineHeight:1.2}}>Manage StudyHub</h2>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2,opacity:.6}}>v{APP_VERSION}</div>
+              </div>
                 <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',opacity:.5}}>v{APP_VERSION}</span>
               </div>
               <button onClick={()=>{
@@ -6306,11 +6333,14 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
 
         {/* Stats */}
         <div className="stagger-1" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:24}}>
-          {(()=>{const proU=allUsers.filter(u=>(u.subscription_tier||'free')==='pro').length;return[{label:'Courses',val:courses.length,color:'#4f9cf9'},{label:'Avg Q&A',val:courses.length?Math.round(courses.reduce((a,c)=>a+(c.qCount||0),0)/courses.length):0,color:'#4f9cf9'},{label:'Total Users',val:allUsers.length,color:'#7fda96'},{label:'⭐ Pro',val:proU,color:'#f9a84f',pct:allUsers.length?Math.round(proU/allUsers.length*100):0},{label:'Free',val:allUsers.length-proU,color:'#8892a4',pct:allUsers.length?Math.round((allUsers.length-proU)/allUsers.length*100):0},{label:'Admins',val:admins.length,color:'#da7ff0'},...(isSU2&&pendingCount>0?[{label:'⚡ Pending',val:pendingCount,color:'#f9a84f'}]:[]),{label:'Online Now',val:onlineUsers.size,color:'#7fda96'},...YEARS.map(y=>({label:`Year ${y}`,val:courses.filter(c=>c.year===y).length,color:YEAR_COLORS[y]}))];})().map((s,i)=>(
+          {(()=>{const proU=allUsers.filter(u=>(u.subscription_tier||'free')==='pro').length;return[{label:'Courses',val:courses.length,color:'#4f9cf9'},{label:'Avg Q&A',val:courses.length?Math.round(courses.reduce((a,c)=>a+(c.qCount||0),0)/courses.length):0,color:'#4f9cf9'},{label:'Total Users',val:allUsers.length,color:'#7fda96'},{label:'⭐ Pro',val:proU,color:'#f9a84f',pct:allUsers.length?allUsers.length?Math.round(proU/allUsers.length*100):0:0},{label:'Free',val:allUsers.length-proU,color:'#8892a4',pct:allUsers.length?Math.round((allUsers.length-proU)/allUsers.length*100):0},{label:'Admins',val:admins.length,color:'#da7ff0'},...(isSU2&&pendingCount>0?[{label:'⚡ Pending',val:pendingCount,color:'#f9a84f'}]:[]),{label:'Online Now',val:onlineUsers.size,color:'#7fda96'},...YEARS.map(y=>({label:`Year ${y}`,val:courses.filter(c=>c.year===y).length,color:YEAR_COLORS[y]}))];})().map((s,i)=>(
             <div key={i} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:22,color:s.color,fontWeight:700}}>{s.val}</div>
               <div style={{fontSize:11,color:'var(--muted)',marginTop:3}}>{s.label}</div>
-              {s.pct!=null&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:s.color,opacity:.55,marginTop:1}}>{s.pct}%</div>}
+              {s.pct!=null&&<div style={{marginTop:4}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:2}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:7,color:s.color,opacity:.6}}>{s.pct}%</span></div>
+              <div style={{height:2,background:'var(--border)',borderRadius:1}}><div style={{height:'100%',width:`${s.pct}%`,background:s.color,borderRadius:1,opacity:.7}}/></div>
+            </div>}
             </div>
           ))}
         </div>
