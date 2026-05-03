@@ -3526,33 +3526,20 @@ function AssignmentsTab({courseId,user}){
                 <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:6}}>Posted by @{a.added_by} · {new Date(a.added_at).toLocaleDateString()}</div>
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:6,flexShrink:0,alignItems:'flex-end'}}>
-                {/* AI Help button — opens chatbot in assignment mode */}
                 <button
                   onClick={()=>{
-                    // Store assignment context for chatbot to pick up
-                    window.__assignmentContext={
-                      mode:'assignment',
-                      assignmentTitle:a.title,
-                      assignmentDescription:a.description||'',
-                      assignmentQuestions:a.description||'',
-                      courseName:'',
-                    };
-                    // Open chatbot
+                    window.__assignmentContext={mode:'assignment',assignmentTitle:a.title,assignmentDescription:a.description||'',assignmentQuestions:a.description||'',courseName:''};
                     try{localStorage.setItem('sh-bot-open','1');}catch{}
-                    // Fire a custom event so chatbot can react
                     window.dispatchEvent(new CustomEvent('sh-open-bot-assignment',{detail:window.__assignmentContext}));
                   }}
-                  style={{background:'linear-gradient(135deg,rgba(79,156,249,.15),rgba(127,95,249,.15))',
-                    border:'1px solid rgba(79,156,249,.3)',borderRadius:7,
-                    color:'#4f9cf9',cursor:'pointer',padding:'6px 12px',fontSize:11,fontWeight:600,
-                    display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}>
+                  style={{background:'linear-gradient(135deg,rgba(79,156,249,.15),rgba(127,95,249,.15))',border:'1px solid rgba(79,156,249,.3)',borderRadius:7,color:'#4f9cf9',cursor:'pointer',padding:'6px 12px',fontSize:11,fontWeight:600,display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}>
                   🤖 AI Help
                 </button>
                 {isPriv&&<button onClick={()=>del(a.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:13}}>{isSU2?'✕':'↑'}</button>}
               </div>
             </div>
           </div>
-        ))}
+        ))})()}
       </div>
     </div>
   );
