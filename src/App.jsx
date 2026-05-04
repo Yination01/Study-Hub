@@ -4010,7 +4010,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   style={{background:'none',border:'1px solid var(--border)',borderRadius:7,color:next?'var(--text)':'var(--border)',cursor:next?'pointer':'default',padding:'5px 10px',fontSize:13,lineHeight:1}}>›</button>
               </div>
             );
-            }catch(e){return null;}
           })()}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
