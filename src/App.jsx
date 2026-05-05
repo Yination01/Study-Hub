@@ -4261,7 +4261,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
           {/* ── Summary prose (shown when no section selected) ── */}
           {notesSection===null&&(()=>{
-            try{
             const summary = (d&&d.summary)||'';
             if(summary.length>50) return(
               <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:'22px 26px',marginBottom:20}}>
