@@ -5090,7 +5090,7 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
       {/* Sub-tabs + bulk actions */}
       <div style={{display:'flex',alignItems:'center',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18,flexWrap:'wrap'}}>
         {[{id:'pending',label:`Pending${pending.length>0?` (${pending.length})`:''}`,color:pending.length>0?'#f9a84f':undefined},{id:'history',label:'History'}].map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id);setCSearch('');setDSearch('')} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
+          <button key={t.id} onClick={()=>{setTab(t.id);setCSearch('');setDSearch('');}} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
         ))}
         {tab==='history'&&(
           <div style={{marginLeft:'auto',display:'flex',gap:6,paddingBottom:4,alignItems:'center',flexWrap:'wrap'}}>
