@@ -27,6 +27,11 @@ const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Di
     --text:#1a1e2f; --muted:#5a6478; --input-bg:#f5f7ff;
     --shadow:0 8px 32px rgba(0,0,0,.1);
   }
+  [data-theme=oled] {
+    --bg:#000000; --surface:#0a0a0a; --card:#111111; --border:rgba(255,255,255,.1);
+    --text:#ffffff; --muted:#888888; --input-bg:#0d0d0d;
+    --shadow:0 4px 24px rgba(0,0,0,.9);
+  }
 
   *{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth;font-size:16px}
@@ -163,6 +168,20 @@ const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Di
   /* Smooth transitions on theme switch */
   *{transition:background-color .25s,border-color .25s,color .15s}
   button,input,textarea,select{transition:background-color .25s,border-color .25s,color .15s,transform .1s,box-shadow .15s}
+  /* Reading progress bar */
+  #reading-progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,#4f9cf9,#7f5ff9);z-index:9999;transition:width .1s;pointer-events:none;}
+  /* Highlight annotation */
+  .sh-highlight{background:rgba(249,213,79,.25);border-bottom:2px solid rgba(249,213,79,.6);cursor:pointer;border-radius:2px;}
+  /* Flashcard swipe */
+  .fc-swipe-hint{position:absolute;top:50%;transform:translateY(-50%);font-size:24px;opacity:.15;pointer-events:none;transition:opacity .3s;}
+  /* Focus mode pill */
+  .mode-pill{padding:5px 12px;border-radius:16px;border:1.5px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;font-size:11px;font-weight:400;white-space:nowrap;transition:all .15s;font-family:'IBM Plex Mono',monospace;}
+  .mode-pill.active{border-color:#4f9cf9;background:rgba(79,156,249,.1);color:#4f9cf9;font-weight:700;}
+  /* Easter egg animations */
+  @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+  @keyframes matrixRain{0%{opacity:1;transform:translateY(-100%)}100%{opacity:0;transform:translateY(100vh)}}
+  @keyframes candleFlicker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(.95)}}
+  @keyframes nepaFlicker{0%,100%{opacity:1}10%,30%,70%{opacity:0}20%,40%,80%{opacity:.3}}
   @media print{
     .no-print{display:none!important}
     body{background:#fff!important;color:#000!important}
@@ -541,7 +560,7 @@ async function dbRedeemPromo(code){
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '4.9.0';
+const APP_VERSION    = '5.0.0';
 
 /* ═══════════════ XP / GAMIFICATION ═══════════════ */
 const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5,question_reveal:2};
@@ -652,12 +671,16 @@ async function checkSuperuser(username, password){
 
 /* ═══════════════ HOOKS ═══════════════ */
 function useTheme(){
-  const [dark,setDark]=useState(()=>localStorage.getItem('sh-theme')!=='light');
+  const THEMES=['dark','light','oled'];
+  const [theme,setTheme]=useState(()=>localStorage.getItem('sh-theme')||'dark');
+  const dark=theme!=='light';
   useEffect(()=>{
-    document.documentElement.classList.toggle('light',!dark);
-    localStorage.setItem('sh-theme',dark?'dark':'light');
-  },[dark]);
-  return [dark,()=>setDark(d=>!d)];
+    document.documentElement.setAttribute('data-theme',theme);
+    document.documentElement.classList.toggle('light',theme==='light');
+    localStorage.setItem('sh-theme',theme);
+  },[theme]);
+  const toggle=()=>setTheme(t=>THEMES[(THEMES.indexOf(t)+1)%THEMES.length]);
+  return [dark,toggle,theme];
 }
 
 function useBookmarks(username='guest'){
@@ -1415,6 +1438,20 @@ function Chatbot({context,courses,user,subCfg={}}){
   });
   const[minimised,setMinimised]=useState(false);
   const[fullscreen,setFullscreen]=useState(false);
+  const[focusMode,setFocusMode]=useState('general'); // AI focus mode
+
+  const FOCUS_MODES={
+    general:  {label:'💬 General',  icon:'💬', sys:'You are a smart, helpful AI assistant. You can answer any question, help with any task, and search the web when needed. Be concise and clear.', web:true},
+    tutor:    {label:'🎓 Tutor',    icon:'🎓', sys:'You are a patient university tutor. Explain concepts step by step in simple language. Check understanding by asking follow-up questions. Use real examples relevant to Nigerian university students.', web:false},
+    essay:    {label:'✍️ Essay',    icon:'✍️', sys:'You are an expert academic writing coach. Help structure, draft, and improve essays. Ask for the topic, word count, and course before starting. Give specific actionable feedback.', web:false},
+    coder:    {label:'💻 Coder',    icon:'💻', sys:'You are a senior software developer and debugger. Write clean, well-commented code. Show your reasoning. When debugging, explain what caused the error and how to fix it. Support Python, C, C++, Java, JavaScript.', web:false},
+    solver:   {label:'🔢 Solver',   icon:'🔢', sys:'You are a STEM problem solver. Show FULL working for every problem — never skip steps. Explain each step in plain English. Cover Math, Physics, Chemistry, and Engineering.', web:false},
+    summarise:{label:'📄 Summarise',icon:'📄', sys:'You are a concise summariser. Extract the key points from any text, article, or URL. Output: 1-paragraph summary, bullet key points, and any important terms defined.', web:true},
+    quiz:     {label:'❓ Quiz',     icon:'❓', sys:'You are a quiz generator and examiner. Create challenging questions from any topic. After the student answers, give detailed feedback explaining why each answer is right or wrong.', web:false},
+    planner:  {label:'📅 Planner',  icon:'📅', sys:'You are a study planner and productivity coach. Help students create realistic study schedules, break down tasks, and prioritise. Ask about deadlines, available hours, and subjects before planning.', web:false},
+    brainstorm:{label:'💡 Brainstorm',icon:'💡',sys:'You are a creative brainstorming partner. Generate ideas, outlines, arguments, and approaches. Think divergently. Good for assignments, projects, and research topics.', web:false},
+    search:   {label:'🔍 Search',   icon:'🔍', sys:'You are a research assistant with web access. Find current information, news, and research with sources. Always cite where information comes from.', web:true},
+  };
   const chatKey=user?.username?`sh-chat-${user.username}`:'sh-chat';
   const[messages,setMessages]=useState(()=>{
     try{
@@ -1511,10 +1548,23 @@ function Chatbot({context,courses,user,subCfg={}}){
     const next=[...messages,{role:'user',content:msg}];
     setMessages(next);setLoading(true);
     try{
+      const mode=FOCUS_MODES[focusMode]||FOCUS_MODES.general;
       const ctx = assignmentCtx
-        ? {...assignmentCtx}
-        : {...context,courseName:context?.courseName,chapterTitle:context?.chapterTitle,allCourses:courses?.map(c=>c.chapterTitle+' ('+c.courseName+')').join(', ')};
-      const reply=await sendChatMessage(next.filter(m=>m.role!=='system'),ctx);
+        ? {...assignmentCtx,focusMode,systemPrompt:mode.sys,webSearch:mode.web}
+        : {...context,courseName:context?.courseName,chapterTitle:context?.chapterTitle,
+           allCourses:courses?.map(c=>c.chapterTitle+' ('+c.courseName+')').join(', '),
+           focusMode,systemPrompt:mode.sys,webSearch:mode.web,
+           keyConcepts:(context?.keyConcepts||[]).slice(0,8).map(c=>c.title).join(', '),
+           summaryPreview:(context?.summary||'').slice(0,300)};
+      // Smart paste detection — if message looks like JSON
+      const msgToSend=msg.trim().startsWith('{')||msg.trim().startsWith('[')
+        ?`I'm pasting study data for you to use as context:
+
+${msg}
+
+What would you like me to do with this?`
+        :msg;
+      const reply=await sendChatMessage([...next.slice(0,-1),{role:'user',content:msgToSend}].filter(m=>m.role!=='system'),ctx);
       setMessages(m=>[...m,{role:'assistant',content:reply}]);
     }catch{
       setMessages(m=>[...m,{role:'assistant',content:'Sorry, something went wrong. Please try again.'}]);
@@ -1577,6 +1627,19 @@ function Chatbot({context,courses,user,subCfg={}}){
           ))}
         </div>
 
+        {/* Focus mode pills */}
+        {!minimised&&(
+          <div style={{display:'flex',gap:4,overflowX:'auto',padding:'6px 10px',scrollbarWidth:'none',borderBottom:'1px solid var(--border)',background:'var(--card)'}}>
+            {Object.entries(FOCUS_MODES).map(([k,m])=>(
+              <button key={k}
+                onClick={()=>{setFocusMode(k);}}
+                style={{flexShrink:0,padding:'3px 10px',borderRadius:12,border:`1.5px solid ${focusMode===k?'#4f9cf9':'var(--border)'}`,background:focusMode===k?'rgba(79,156,249,.1)':'var(--surface)',color:focusMode===k?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:10,fontWeight:focusMode===k?700:400,whiteSpace:'nowrap',transition:'all .15s'}}>
+                {m.icon} {k.charAt(0).toUpperCase()+k.slice(1)}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Chat panel */}
         {tab==='chat'&&<>
           <div style={{flex:1,overflowY:'auto',padding:'12px 12px 6px'}}>
@@ -1621,9 +1684,40 @@ function Chatbot({context,courses,user,subCfg={}}){
 
         {/* Input */}
         <div style={{padding:'8px 10px',borderTop:'1px solid var(--border)',display:'flex',gap:7,alignItems:'flex-end',flexShrink:0}}>
+          {/* Image upload input */}
+          <input id="cb-img-input" type="file" accept="image/*,.pdf" style={{display:'none'}}
+            onChange={async e=>{
+              const f=e.target.files?.[0]; if(!f)return;
+              e.target.value='';
+              // Check daily image limit for free users
+              const isFree=(user?.subscription_tier||'free')==='free'&&user?.role!==ROLE.SUPERUSER;
+              if(isFree){
+                const today=new Date().toDateString();
+                const key='sh-img-sends';
+                const s=JSON.parse(localStorage.getItem(key)||'{}');
+                const count=s.date===today?s.count||0:0;
+                if(count>=3){setMessages(m=>[...m,{role:'assistant',content:'⚠️ Free users can send 3 images per day. Upgrade to Pro for unlimited.'}]);return;}
+                localStorage.setItem(key,JSON.stringify({date:today,count:count+1}));
+              }
+              setLoading(true);
+              try{
+                const b64=await toBase64(f);
+                const imgMsg={role:'user',content:[{type:'image',source:{type:'base64',media_type:f.type||'image/jpeg',data:b64}},{type:'text',text:input.trim()||'What is this? Please explain it in detail.'}]};
+                setInput('');
+                const next=[...messages,{role:'user',content:`📎 [Image: ${f.name}] ${input.trim()||'Explain this image'}`}];
+                setMessages(next);
+                const ctx={...context,focusMode,systemPrompt:(FOCUS_MODES[focusMode]||FOCUS_MODES.general).sys};
+                const reply=await sendChatMessage([...next.slice(0,-1),imgMsg].filter(m=>m.role!=='system'),ctx);
+                setMessages(m=>[...m,{role:'assistant',content:reply}]);
+              }catch(e){setMessages(m=>[...m,{role:'assistant',content:'Failed to process image: '+e.message}]);}
+              setLoading(false);
+            }}
+          />
+          <button onClick={()=>document.getElementById('cb-img-input').click()} title="Upload image or PDF"
+            style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 8px',fontSize:14,flexShrink:0}}>📎</button>
           <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}
-            placeholder={tab==='search'?'Ask about a course or topic…':'Ask anything… (Enter to send, Shift+Enter for new line)'}
+            placeholder={tab==='search'?'Ask about a course or topic…':`${(FOCUS_MODES[focusMode]||FOCUS_MODES.general).icon} ${focusMode.charAt(0).toUpperCase()+focusMode.slice(1)} mode — type or paste…`}
             maxLength={1600}
             rows={fullscreen?3:1} style={{flex:1,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'7px 10px',color:'var(--text)',fontSize:fullscreen?14:12.5,fontFamily:"'DM Sans',sans-serif",resize:'none',maxHeight:fullscreen?120:80,lineHeight:1.5}}/>
           <button onClick={()=>send()} disabled={!input.trim()||loading}
@@ -1996,51 +2090,45 @@ function safeParse(raw){
 
 const JSON_PROMPT=`You are a university study guide generator. Read the full document carefully, then produce a complete JSON study guide.
 
-IMPORTANT: Your output must cover EVERY topic, subtopic, and concept in the document — nothing should be left out.
+IMPORTANT: Your output must cover EVERY topic, subtopic, and concept in the document — nothing left out.
+Detect the course type from the courseName:
+- STEM (MTH/PHY/CHM/COS/CPE/CSC/EEE/MEE): include solvedProblems and formulaSheet
+- CS/Engineering (COS/CPE/CSC/EEE): also include codeExamples
+- Humanities (ENG/GST/SOC/POL/HIS): include essayOutlines
+- All courses: include diagrams where relevant
 
-Return ONLY valid JSON with this exact structure (no extra text, no markdown fences):
+Return ONLY valid JSON (no markdown fences):
 {
-  "courseName": "Course code only — e.g. COS 341 or MTH 201",
-  "chapterTitle": "Full chapter or topic title from the document",
-  "summary": "Write 5–8 paragraphs covering the entire document. Use simple, clear English that a student can easily understand. Each paragraph should cover a distinct topic area from the document. Do NOT use bullet points — write in flowing sentences. Make sure every major section of the document is mentioned. End with what students must focus on for exams.",
-  "diagrams": [
-    {
-      "title": "Name of the diagram or figure",
-      "type": "flowchart|table|comparison|timeline|hierarchy|formula",
-      "content": "ASCII or plain-text representation of the diagram. For tables use | separators. For flowcharts use arrows like A --> B --> C. For hierarchies use indentation. Keep it clear and readable."
-    }
-  ],
-  "keyConcepts": [
-    {"title": "Concept name", "description": "One simple sentence saying what this is and why it matters", "color": "blue|orange|green|purple"}
-  ],
-  "definitions": [
-    {"term": "Technical term", "definition": "Short, clear definition a student can memorise easily"}
-  ],
-  "mechanisms": [
-    {"title": "Process or mechanism name", "body": "Step-by-step plain English explanation. Number each step. Use simple words."}
-  ],
-  "algorithms": [
-    {"name": "Algorithm or method name", "description": "What it does and how it works in plain English", "note": "Time complexity or key limitation — empty string if none"}
-  ],
-  "chapters": [
-    {"num": "Topic 1", "name": "Topic title", "takeaways": ["Specific fact students must know", "Another specific exam point", "Third key takeaway"]}
-  ],
-  "questions": [
-    {"question": "Full exam question", "answer": "Complete answer with reasoning and any relevant examples"}
-  ]
+  "courseName": "Course code only e.g. COS 341",
+  "chapterTitle": "Full chapter or topic title",
+  "summary": "5-8 paragraphs of plain prose covering EVERY section. Simple clear English. No bullets. Reference key terms naturally.",
+  "keyConcepts": [{"title":"...","description":"One clear sentence","color":"blue|orange|green|purple"}],
+  "definitions": [{"term":"...","definition":"Short memorable definition"}],
+  "mechanisms": [{"title":"...","body":"Numbered step-by-step. Simple words. Use \\n\\n between steps."}],
+  "algorithms": [{"name":"...","description":"Plain English","note":"Complexity or caveat"}],
+  "diagrams": [{"title":"...","type":"flowchart|table|comparison|timeline|hierarchy|formula","content":"ASCII/text diagram"}],
+  "chapters": [{"num":"Topic 1","name":"...","takeaways":["fact 1","fact 2","fact 3"]}],
+  "questions": [{"question":"...","answer":"...","type":"mcq|short|application|truefalse","difficulty":"easy|medium|hard","options":["A...","B...","C...","D..."],"correct":"A"}],
+  "solvedProblems": [{"problem":"...","workings":"Step 1:\\n Step 2:\\n...","answer":"..."}],
+  "codeExamples": [{"title":"...","language":"python|c|java|js","code":"...","explanation":"..."}],
+  "essayOutlines": [{"title":"...","thesis":"...","points":["..."],"conclusion":"..."}],
+  "formulaSheet": [{"name":"...","formula":"...","variables":"...","useCase":"..."}]
 }
 
-Rules for each field:
-- summary: Cover EVERY section of the document. 5–8 paragraphs minimum. Simple English only. No bullet points.
-- diagrams: Create 2–6 diagrams that help explain the most visual or structural concepts. Use ASCII art for flowcharts, plain tables with | for data, indented lists for hierarchies. Skip this if document has no visual structure.
-- keyConcepts: 12–20 items. Cover ALL major topics. Short descriptions.
-- definitions: 20–40 terms. Every technical word in the document.
-- mechanisms: 3–8 items. Any process, workflow, or multi-step concept.
-- algorithms: Empty array [] only if document truly has no algorithms or methods.
-- chapters: 5–10 topics matching the document structure. 3 takeaways each.
-- questions: EXACTLY 25 questions covering easy, medium, and hard difficulty. Full worked answers.
-- Write everything in simple, clear English. Avoid complex academic phrasing.
-- Return ONLY the JSON object.`;
+Quality rules:
+- summary: 5-8 rich paragraphs. NO bullets. Cover EVERY section.
+- keyConcepts: 12-20 items
+- definitions: 20-40 terms
+- mechanisms: 3-8 items
+- diagrams: 2-6 visual representations
+- chapters: 5-10 topics, EXACTLY 3 takeaways each
+- questions: EXACTLY 25 questions. Mix types and difficulties. For MCQ include 4 plausible options — no obviously wrong distractors. Include application and scenario questions.
+- solvedProblems: 3-5 worked examples (STEM only)
+- codeExamples: 2-4 examples (CS only)
+- essayOutlines: 2-3 outlines (Humanities only)
+- formulaSheet: all formulas/equations (STEM only)
+- Simple clear English throughout
+- Return ONLY the JSON object`;
 
 
 /* Format descriptions shown in the info card when a chip is selected */
@@ -2569,8 +2657,20 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
     if(!data.chapterTitle) throw new Error('Missing chapterTitle in response');
     // Normalise all array fields so components never call .map() on null
     data.summary      = typeof data.summary === 'string' ? data.summary.trim() : '';
-    data.diagrams     = Array.isArray(data.diagrams)     ? data.diagrams     : [];
-    data.keyConcepts  = Array.isArray(data.keyConcepts)  ? data.keyConcepts  : [];
+    // Store compressed source text for regen-without-reupload
+    if(rawText&&typeof rawText==='string'&&rawText.length>100){
+      try{
+        // Simple compression: remove extra whitespace, limit to 50KB
+        const compressed=rawText.replace(/\s+/g,' ').trim().slice(0,50000);
+        data._src=compressed;
+      }catch{data._src='';}
+    }
+    data.diagrams       = Array.isArray(data.diagrams)       ? data.diagrams       : [];
+    data.solvedProblems = Array.isArray(data.solvedProblems) ? data.solvedProblems : [];
+    data.codeExamples   = Array.isArray(data.codeExamples)   ? data.codeExamples   : [];
+    data.essayOutlines  = Array.isArray(data.essayOutlines)  ? data.essayOutlines  : [];
+    data.formulaSheet   = Array.isArray(data.formulaSheet)   ? data.formulaSheet   : [];
+    data.keyConcepts    = Array.isArray(data.keyConcepts)    ? data.keyConcepts    : [];
     data.definitions  = Array.isArray(data.definitions)  ? data.definitions  : [];
     data.mechanisms   = Array.isArray(data.mechanisms)   ? data.mechanisms   : [];
     data.algorithms   = Array.isArray(data.algorithms)   ? data.algorithms   : [];
@@ -3841,6 +3941,44 @@ const ALL_TABS=[
   {id:'resources',label:'🔗 Resources'},
 ];
 
+/* ═══════════════ SPACED REPETITION (SM-2) ═══════════════ */
+function useSM2(courseId,username){
+  const key=`sh-sm2-${username||'guest'}-${courseId}`;
+  const[cards,setCards]=useState(()=>{try{return JSON.parse(localStorage.getItem(key)||'{}');}catch{return {};}});
+  const save=data=>{try{localStorage.setItem(key,JSON.stringify(data));}catch{}};
+
+  // Rate a card: 0=Again, 3=Hard, 4=Good, 5=Easy
+  const rate=(cardId,rating)=>{
+    const now=Date.now();
+    const c=cards[cardId]||{ef:2.5,interval:1,reps:0};
+    let{ef,interval,reps}=c;
+    if(rating<3){reps=0;interval=1;}
+    else{
+      if(reps===0)interval=1;
+      else if(reps===1)interval=6;
+      else interval=Math.round(interval*ef);
+      reps++;
+      ef=Math.max(1.3,ef+(0.1-(5-rating)*(0.08+(5-rating)*0.02)));
+    }
+    const next={ef,interval,reps,due:now+interval*86400000,lastRated:now};
+    const updated={...cards,[cardId]:next};
+    setCards(updated);save(updated);
+  };
+
+  const isDue=cardId=>{
+    const c=cards[cardId];
+    return !c||Date.now()>=c.due;
+  };
+
+  const dueCount=(total)=>{
+    if(!total)return 0;
+    return Array.from({length:total},(_,i)=>i).filter(i=>isDue(i)).length;
+  };
+
+  return{rate,isDue,dueCount,cards};
+}
+
+
 function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,toggleBookmark,courses,subCfg={}}){
   // Map legacy initialTab values to new PDF-level tab IDs
   const resolveInitialTab=(t)=>{
@@ -3885,8 +4023,17 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const hasAlgo=d.algorithms?.length>0;
   const tabs=ALL_TABS;
   const[notesSection,setNotesSection]=useState((['concepts','definitions','mechanisms','algorithms','takeaways','diagrams'].includes(initSection)?initSection:(d?.summary?.length>50?null:'concepts')));
-  const[cSearch,setCSearch]=useState('');   // concept search in notes tab
-  const[dSearch,setDSearch]=useState('');   // definition search in notes tab
+  const[cSearch,setCSearch]=useState('');
+  const[dSearch,setDSearch]=useState('');
+  const[noteFontSize,setNoteFontSize]=useState(()=>{try{return parseInt(localStorage.getItem('sh-note-font')||'15');}catch{return 15;}});
+  const sm2=useSM2(course?.id,user?.username);
+  const[weaknessData,setWeaknessData]=useState(()=>{try{return JSON.parse(localStorage.getItem(`sh-weak-${user?.username}-${course?.id}`)||'{}');}catch{return {};}});
+  const[quizReviewMode,setQuizReviewMode]=useState(false);
+  const[activeRecall,setActiveRecall]=useState(false);
+  const[mockExamMode,setMockExamMode]=useState(false);
+  const[mockExamTime,setMockExamTime]=useState(60*60); // 60 min default
+  const[mockExamRunning,setMockExamRunning]=useState(false);
+  const[mockExamVisited,setMockExamVisited]=useState(new Set());
   const[regenLoading,setRegenLoading]=useState(false); // AI regenerate notes
   const[regenMsg,setRegenMsg]=useState('');
   const[practiceSection,setPracticeSection]=useState((['qa','flashcards','quiz'].includes(initSection)?initSection:'qa'));
@@ -4107,6 +4254,32 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   finally{setRegenLoading(false);}
                 }}
               />
+              {/* If source text is stored, show quick-regen button */}
+              {d._src&&!regenLoading&&(
+                <button onClick={async()=>{
+                  const ok=await window.shConfirm?.(`Regenerate notes from stored source? No file upload needed.`);
+                  if(!ok) return;
+                  setRegenLoading(true);setRegenMsg('⏳ Regenerating from stored source…');
+                  try{
+                    const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:d._src})});
+                    if(!res.ok) throw new Error(`Server error ${res.status}`);
+                    const newData=await res.json();
+                    newData.summary=typeof newData.summary==='string'?newData.summary.trim():'';
+                    newData._src=d._src; // preserve source
+                    ['diagrams','keyConcepts','definitions','mechanisms','algorithms','chapters','questions','solvedProblems','codeExamples','essayOutlines','formulaSheet'].forEach(k=>{if(!Array.isArray(newData[k]))newData[k]=[];});
+                    newData.courseName=newData.courseName||d.courseName;
+                    newData.chapterTitle=newData.chapterTitle||d.chapterTitle;
+                    const{error:e}=await supabase.from('courses').update({data:newData,concept_count:newData.keyConcepts.length,term_count:newData.definitions.length,q_count:newData.questions.length}).eq('id',course.id);
+                    if(e) throw new Error(e.message);
+                    setRegenMsg('✅ Done! Reloading…');setTimeout(()=>window.location.reload(),1500);
+                  }catch(e){setRegenMsg('❌ '+e.message);}
+                  finally{setRegenLoading(false);}
+                }}
+                title="Regenerate from stored source — no file upload needed"
+                style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'7px 13px',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>
+                ♻️ Regen (stored)
+              </button>
+              )}
               {/* Visible button — triggers file picker */}
               <button
                 onClick={()=>{if(!regenLoading)document.getElementById('regen-file-input').click();}}
@@ -4125,7 +4298,13 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
               {regenMsg}
             </div>
           )}
-          <button onClick={()=>exportCoursePDF(d,d.chapterTitle)} title="Export to PDF" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>⬇ PDF</button>
+          <button onClick={()=>{const sizes=[13,15,17,19];const next=sizes[(sizes.indexOf(noteFontSize)+1)%sizes.length];setNoteFontSize(next);try{localStorage.setItem('sh-note-font',next);}catch{}}}
+            title={`Font size: ${noteFontSize}px (click to change)`}
+            style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:12,fontWeight:600,fontFamily:"'DM Serif Display',serif"}}>
+            Aa
+          </button>
+          <button onClick={()=>{if(window.__ttsSpeaking){window.speechSynthesis?.cancel();window.__ttsSpeaking=false;return;}const text=[(d.summary||''),(d.keyConcepts||[]).map(c=>c.title+'. '+c.description).join('. ')].filter(Boolean).join('. ');if(!text)return;const utt=new SpeechSynthesisUtterance(text);utt.rate=1.0;utt.onend=()=>{window.__ttsSpeaking=false;};window.speechSynthesis?.cancel();window.speechSynthesis?.speak(utt);window.__ttsSpeaking=true;}} title="Read notes aloud / stop" style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>🔊</button>
+          <button onClick={()=>exportCoursePDF(d,d.chapterTitle)} title="Export to PDF"  style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'7px 12px',fontSize:13}}>⬇ PDF</button>
           {/* AI Suggest — all roles can request, routes to approvals */}
           <button onClick={askAiSuggestions} disabled={suggestLoading}
             title="Ask AI to suggest improvements to this course"
@@ -4214,7 +4393,13 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       {/* Tab content */}
 
       {tab==='notes'&&d&&(
-        <div className="fade-up">
+        <div className="fade-up" onScroll={e=>{
+          const el=e.currentTarget;
+          const pct=Math.round((el.scrollTop/(el.scrollHeight-el.clientHeight||1))*100);
+          const bar=document.getElementById('reading-progress');
+          if(bar)bar.style.width=pct+'%';
+        }}>
+        <div id="reading-progress" style={{position:'fixed',top:0,left:0,height:3,background:'linear-gradient(90deg,#4f9cf9,#7f5ff9)',zIndex:9999,width:'0%',transition:'width .1s',pointerEvents:'none'}}/>
 
           {/* ── Sticky topic nav — single source of truth ── */}
           <div style={{position:'sticky',top:0,zIndex:20,background:'var(--bg)',paddingBottom:8,marginBottom:12}}>
@@ -4267,9 +4452,12 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                 <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
                   <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>📖 Summary</div>
                   <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#7fda96',background:'rgba(127,218,150,.12)',borderRadius:4,padding:'2px 8px',letterSpacing:.5,border:'1px solid rgba(127,218,150,.25)'}}>READ FIRST</div>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',background:'var(--surface)',borderRadius:4,padding:'2px 8px'}}>
+                    ~{Math.max(1,Math.ceil(summary.split(' ').length/200))} min read
+                  </div>
                 </div>
                 {summary.split(/\n\n+/).filter(Boolean).map((para,i)=>(
-                  <p key={i} style={{fontSize:15,color:'var(--text)',lineHeight:2.0,margin:'0 0 16px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
+                  <p key={i} style={{fontSize:noteFontSize,color:'var(--text)',lineHeight:2.0,margin:'0 0 16px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
                     {renderMd(para)}
                   </p>
                 ))}
@@ -4430,6 +4618,28 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       )}
       {tab==='practice'&&(
         <div className="fade-up">
+          {/* Weakness detector */}
+          {Object.keys(weaknessData).filter(k=>weaknessData[k].count>=2).length>0&&(
+            <div className="fade-in" style={{background:'rgba(240,80,80,.05)',border:'1px solid rgba(240,80,80,.2)',borderRadius:12,padding:'14px 18px',marginBottom:16}}>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:15,color:'#f05050',marginBottom:10}}>⚠️ Weak Areas</div>
+              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                {Object.entries(weaknessData).filter(([,v])=>v.count>=2).sort((a,b)=>b[1].count-a[1].count).slice(0,5).map(([k,v])=>(
+                  <div key={k} style={{display:'flex',alignItems:'center',gap:10,fontSize:12}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(240,80,80,.15)',color:'#f05050',borderRadius:4,padding:'2px 7px',flexShrink:0}}>{v.count}x</span>
+                    <span style={{color:'var(--text)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.q}</span>
+                    <button onClick={()=>{setMessages([{role:'assistant',content:`Let me help you understand this question:
+
+"${v.q}"
+
+The correct answer is: ${v.ans}
+
+Here is why...`}]);try{localStorage.setItem('sh-bot-open','1');}catch{};}}
+                      style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'#4f9cf9',cursor:'pointer',fontSize:10,padding:'2px 8px',flexShrink:0}}>AI Help</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
             {[
               {id:'qa',label:'❓ Q&A',count:totalQ},
@@ -7187,6 +7397,145 @@ function StudyTools({user,subCfg={}}){
 }
 
 /* ═══════════════ HOME ═══════════════ */
+/* ═══════════════ GLOBAL SEARCH ═══════════════ */
+function GlobalSearch({courses,progress,onSelect,onClose}){
+  const[query,setQuery]=useState('');
+  const[filters,setFilters]=useState({year:'all',semester:'all',type:'all'});
+  const[deepResults,setDeepResults]=useState([]);
+  const[deepLoading,setDeepLoading]=useState(false);
+  const inputRef=useRef(null);
+  useEffect(()=>{setTimeout(()=>inputRef.current?.focus(),100);},[]);
+
+  // Fast index search — title/courseName only
+  const fastResults=query.length>0?(courses||[]).filter(c=>{
+    const q=query.toLowerCase();
+    const matchText=c.courseName.toLowerCase().includes(q)||c.chapterTitle.toLowerCase().includes(q);
+    const matchYear=filters.year==='all'||String(c.year)===filters.year;
+    const matchSem=filters.semester==='all'||String(c.semester||1)===filters.semester;
+    return matchText&&matchYear&&matchSem;
+  }).slice(0,12):[];
+
+  // Deep search triggered on Enter
+  const runDeepSearch=async q=>{
+    if(!q.trim()||deepLoading)return;
+    setDeepLoading(true);
+    try{
+      // Load full data for top 5 fast results and search within
+      const targets=fastResults.slice(0,5);
+      const results=[];
+      for(const c of targets){
+        const data=await dbLoadCourseData(c.id);
+        if(!data)continue;
+        const lq=q.toLowerCase();
+        (data.keyConcepts||[]).forEach(k=>{if(k.title.toLowerCase().includes(lq)||k.description.toLowerCase().includes(lq))results.push({type:'concept',title:k.title,desc:k.description,course:c,section:'concepts'});});
+        (data.definitions||[]).forEach(d=>{if(d.term.toLowerCase().includes(lq)||d.definition.toLowerCase().includes(lq))results.push({type:'definition',title:d.term,desc:d.definition,course:c,section:'definitions'});});
+        (data.mechanisms||[]).forEach(m=>{if(m.title.toLowerCase().includes(lq))results.push({type:'mechanism',title:m.title,desc:m.body?.slice(0,100)||'',course:c,section:'mechanisms'});});
+      }
+      setDeepResults(results.slice(0,20));
+    }catch{}
+    setDeepLoading(false);
+  };
+
+  const years=[...new Set((courses||[]).map(c=>c.year))].sort();
+  const TYPE_ICONS={concept:'💡',definition:'📖',mechanism:'⚙️'};
+
+  return(
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="scale-in" style={{background:'var(--card)',borderRadius:16,padding:20,width:'min(600px,calc(100vw - 32px))',maxHeight:'80vh',display:'flex',flexDirection:'column',margin:'auto',boxShadow:'var(--shadow)'}}>
+        <div style={{display:'flex',gap:10,marginBottom:12}}>
+          <input ref={inputRef} value={query} onChange={e=>{setQuery(e.target.value);setDeepResults([]);}}
+            onKeyDown={e=>{if(e.key==='Enter')runDeepSearch(query);if(e.key==='Escape')onClose();}}
+            placeholder="Search courses, concepts, definitions… (Enter for deep search)"
+            style={{flex:1,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 14px',color:'var(--text)',fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,padding:'0 4px'}}>✕</button>
+        </div>
+
+        {/* Filters */}
+        <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
+          <select value={filters.year} onChange={e=>setFilters(f=>({...f,year:e.target.value}))}
+            style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:7,color:'var(--muted)',padding:'4px 8px',fontSize:11}}>
+            <option value="all">All Years</option>
+            {years.map(y=><option key={y} value={y}>Year {y}</option>)}
+          </select>
+          <select value={filters.semester} onChange={e=>setFilters(f=>({...f,semester:e.target.value}))}
+            style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:7,color:'var(--muted)',padding:'4px 8px',fontSize:11}}>
+            <option value="all">All Semesters</option>
+            <option value="1">Semester 1</option>
+            <option value="2">Semester 2</option>
+          </select>
+          {deepResults.length>0&&(
+            <select value={filters.type} onChange={e=>setFilters(f=>({...f,type:e.target.value}))}
+              style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:7,color:'var(--muted)',padding:'4px 8px',fontSize:11}}>
+              <option value="all">All Types</option>
+              <option value="concept">Concepts</option>
+              <option value="definition">Definitions</option>
+              <option value="mechanism">Mechanisms</option>
+            </select>
+          )}
+          {query&&<div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',padding:'4px 8px',alignSelf:'center'}}>
+            Press Enter for deep search in notes
+          </div>}
+        </div>
+
+        <div style={{overflowY:'auto',flex:1}}>
+          {/* Fast results */}
+          {fastResults.length>0&&(
+            <div style={{marginBottom:deepResults.length>0?16:0}}>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginBottom:8,letterSpacing:.5}}>CHAPTERS</div>
+              {fastResults.map((c,i)=>(
+                <div key={c.id} onClick={()=>{onSelect(c.id);onClose();}}
+                  style={{padding:'10px 14px',borderRadius:10,cursor:'pointer',display:'flex',alignItems:'center',gap:12,marginBottom:4,background:'var(--surface)',border:'1px solid var(--border)'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(79,156,249,.4)'}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{c.chapterTitle}</div>
+                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>{c.courseName} · Yr {c.year} Sem {c.semester||1}</div>
+                  </div>
+                  <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>Go →</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Deep results */}
+          {deepLoading&&<div style={{textAlign:'center',color:'var(--muted)',padding:20,fontSize:12}}>🔍 Searching inside notes…</div>}
+          {deepResults.filter(r=>filters.type==='all'||r.type===filters.type).length>0&&(
+            <div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginBottom:8,letterSpacing:.5}}>INSIDE NOTES</div>
+              {deepResults.filter(r=>filters.type==='all'||r.type===filters.type).map((r,i)=>(
+                <div key={i} onClick={()=>{onSelect(r.course.id,r.section);onClose();}}
+                  style={{padding:'10px 14px',borderRadius:10,cursor:'pointer',display:'flex',gap:10,marginBottom:4,background:'var(--surface)',border:'1px solid var(--border)'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(79,156,249,.4)'}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
+                  <span style={{fontSize:16,flexShrink:0}}>{TYPE_ICONS[r.type]||'📄'}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{r.title}</div>
+                    <div style={{fontSize:11,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.desc}</div>
+                    <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>{r.course.courseName} · {r.course.chapterTitle}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {query&&fastResults.length===0&&deepResults.length===0&&!deepLoading&&(
+            <div style={{textAlign:'center',color:'var(--muted)',padding:40,fontSize:13}}>
+              No results for &quot;{query}&quot;<br/>
+              <span style={{fontSize:11}}>Press Enter to search inside notes</span>
+            </div>
+          )}
+          {!query&&(
+            <div style={{textAlign:'center',color:'var(--muted)',padding:40,fontSize:13}}>
+              Start typing to search across all courses
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab,onUserUpdate}){
   const[xp]=useXP(user?.username); // XP for badge in header
   const isExternal=user.role===ROLE.EXTERNAL;
@@ -7379,7 +7728,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
               <div style={{fontSize:9,color:'var(--muted)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:2,padding:'4px 8px',marginTop:12,marginBottom:6}}>SETTINGS</div>
               {/* Theme toggle */}
               <button onClick={()=>{toggleTheme();}} style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'11px 12px',borderRadius:10,border:'none',background:'transparent',color:'var(--text)',cursor:'pointer',textAlign:'left',fontSize:13,marginBottom:2}}>
-                <span style={{fontSize:16,width:22,textAlign:'center'}}>{dark?'🌙':'☀️'}</span>
+                <span style={{fontSize:16,width:22,textAlign:'center'}}>{currentTheme==='light'?'🌙':currentTheme==='dark'?'⬛':'☀️'}</span>
                 {dark?'Dark Mode':'Light Mode'}
                 <span style={{marginLeft:'auto',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>ON</span>
               </button>
@@ -7848,7 +8197,7 @@ class ErrorBoundary extends React.Component{
 }
 
 export default function App(){
-  const[dark,toggleTheme]=useTheme();
+  const[dark,toggleTheme,currentTheme]=useTheme();
   const online=useOnline();
   const[errMsg,setErrMsg]=useErrorToast();
   const[showShortcuts,setShowShortcuts]=useState(false);
@@ -7925,14 +8274,81 @@ export default function App(){
     else document.title=base;
   },[view,active?.data?.chapterTitle,activeCourseCode]);
 
+  // ══ EASTER EGGS ══
+  useEffect(()=>{
+    let buf='';
+    const KONAMI=[38,38,40,40,37,39,37,39,66,65];
+    let kIdx=0;
+    const h=e=>{
+      // Text buffer for word triggers
+      if(e.key.length===1){buf=(buf+e.key).slice(-20);}
+      else{buf='';}
+
+      // KONAMI CODE → confetti
+      if(e.keyCode===KONAMI[kIdx]){kIdx++;if(kIdx===KONAMI.length){kIdx=0;window.dispatchEvent(new CustomEvent('sh-easter',{detail:'konami'}));}}
+      else{kIdx=0;}
+
+      const b=buf.toLowerCase();
+      // breathe → panic button
+      if(b.endsWith('breathe'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'breathe'}));
+      // redpill → matrix
+      if(b.endsWith('redpill'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'matrix'}));
+      // 42 → calculator
+      if(b.endsWith('42'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'calc'}));
+      // freeze → streak freeze
+      if(b.endsWith('freeze'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'freeze'}));
+      // credits → dev credits
+      if(b.endsWith('credits'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'credits'}));
+      // shortcuts
+      if(b.endsWith('shortcuts'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'shortcuts'}));
+      // elementary → sherlock
+      if(b.endsWith('elementary'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'sherlock'}));
+      // jamb wahala
+      if(b.endsWith('jambwahala'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'jamb'}));
+      // stealth mode: Shift+S x3
+      if(e.key==='S'&&e.shiftKey){
+        window.__stealthCount=(window.__stealthCount||0)+1;
+        if(window.__stealthCount>=3){window.__stealthCount=0;window.dispatchEvent(new CustomEvent('sh-easter',{detail:'stealth'}));}
+        setTimeout(()=>{window.__stealthCount=0;},2000);
+      }
+    };
+    window.addEventListener('keydown',h);
+
+    // Time-based Easter eggs
+    const h2=new Date().getHours();
+    if(h2>=23||h2<2)setTimeout(()=>pushNotification('🦉 Night Owl detected','Burning that midnight oil? You got this.'),3000);
+    if(new Date().getDay()===5){
+      const now=new Date();
+      if(now.getHours()===15&&now.getMinutes()<5)setTimeout(()=>window.dispatchEvent(new CustomEvent('sh-easter',{detail:'tgif'})),1000);
+    }
+    // NEPA after 2hrs
+    const nepaTimer=setTimeout(()=>window.dispatchEvent(new CustomEvent('sh-easter',{detail:'nepa'})),2*60*60*1000);
+
+    // DevTools console egg
+    console.log('%c📚 StudyHub','color:#4f9cf9;font-size:24px;font-weight:bold;');
+    console.log('%cNice to see you here. You\'re 5% smarter than average for checking this. 🧠','color:#7fda96;font-size:13px;');
+    console.log('%cBuilt with ❤️ by Yination & Excalibur','color:#f9a84f;font-size:11px;');
+
+    return()=>{window.removeEventListener('keydown',h);clearTimeout(nepaTimer);};
+  },[]);
+
+  const[easterEgg,setEasterEgg]=useState(null);
+  useEffect(()=>{
+    const h=e=>{
+      const{detail}=e;
+      setEasterEgg(detail);
+      if(detail!=='stealth')setTimeout(()=>setEasterEgg(null),detail==='breathe'?62000:detail==='calc'?300000:8000);
+    };
+    window.addEventListener('sh-easter',h);
+    return()=>window.removeEventListener('sh-easter',h);
+  },[]);
+
   // Global search ref for keyboard shortcut
   const searchRef=useRef(null);
   useKeyboardShortcuts({
     onToggleTheme:toggleTheme,
     onSearch:useCallback(()=>{
-      // Focus search bar in home or questions filter — best-effort
-      const el=document.querySelector('input[placeholder*="Search"]');
-      el?.focus();
+      setShowGlobalSearch(s=>!s);
     },[]),
     onEscape:useCallback(()=>{
       // Close course view → home, or home stays
@@ -8261,10 +8677,21 @@ export default function App(){
         <Chatbot context={view==='course'&&active?{
           courseName:active.data?.courseName,
           chapterTitle:active.data?.chapterTitle,
-          summary:active.data?.keyConcepts?.slice(0,5).map(c=>c.title).join(', '),
+          summary:active.data?.summary,
+          keyConcepts:active.data?.keyConcepts,
           isSuperuser:user?.role===ROLE.SUPERUSER
         }:null} courses={courses} user={user} subCfg={subCfg}/>
       )}
+
+      {/* ══ EASTER EGG OVERLAYS ══ */}
+      {easterEgg==='breathe'&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',zIndex:9999,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer'}} onClick={()=>setEasterEgg(null)}><div style={{width:130,height:130,borderRadius:'50%',border:'3px solid #4f9cf9',animation:'breathe 4s ease-in-out infinite',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:24}}><span style={{fontSize:44}}>🫁</span></div><div style={{color:'#fff',fontSize:22,fontFamily:"'DM Serif Display',serif",marginBottom:8}}>Breathe.</div><div style={{color:'rgba(255,255,255,.6)',fontSize:13}}>Inhale 4s · Hold 4s · Exhale 4s</div><div style={{color:'rgba(255,255,255,.35)',fontSize:11,marginTop:20}}>Tap to close · You got this.</div></div>}
+      {easterEgg==='matrix'&&<div style={{position:'fixed',inset:0,background:'#000',zIndex:9999,fontFamily:"'IBM Plex Mono',monospace",color:'#00ff41',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column'}} onClick={()=>setEasterEgg(null)}><div style={{fontSize:36,marginBottom:12}}>🟩</div><div style={{fontSize:14}}>The truth is...</div><div style={{fontSize:20,marginTop:8,fontWeight:700}}>It is just spaced repetition.</div><div style={{fontSize:10,marginTop:12,opacity:.5}}>Tap to exit the Matrix</div></div>}
+      {easterEgg==='calc'&&<div style={{position:'fixed',bottom:80,right:10,background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:20,zIndex:9999,boxShadow:'var(--shadow)',width:260}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:'var(--muted)'}}>Hidden Calculator 🔢</span><button onClick={()=>setEasterEgg(null)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:14}}>✕</button></div><input id="calc-display" readOnly style={{width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 12px',color:'var(--text)',fontSize:16,fontFamily:"'IBM Plex Mono',monospace",textAlign:'right',marginBottom:8,boxSizing:'border-box'}} defaultValue="0"/><div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:5}}>{['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+','C'].map(k=>(<button key={k} onClick={()=>{const d=document.getElementById('calc-display');if(!d)return;if(k==='C'){d.value='0';return;}if(k==='='){try{d.value=String(Function('"use strict";return ('+d.value+')')());}catch{d.value='Error';}return;}d.value=d.value==='0'?k:d.value+k;}} style={{padding:'10px 4px',borderRadius:7,border:'1px solid var(--border)',background:'var(--surface)',color:'var(--text)',cursor:'pointer',fontSize:13,fontWeight:600}}>{k}</button>))}</div></div>}
+      {easterEgg==='jamb'&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} onClick={()=>setEasterEgg(null)}><div style={{background:'var(--card)',borderRadius:16,padding:28,maxWidth:340,textAlign:'center',animation:'popIn .4s ease'}}><div style={{fontSize:36,marginBottom:12}}>😩</div><div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>JAMB Wahala Mode</div><div style={{fontSize:13,color:'var(--muted)',marginBottom:16}}>I no go gree! God abeg! The exam must not catch me lacking.</div><button onClick={()=>setEasterEgg(null)} style={{background:'#4f9cf9',border:'none',borderRadius:8,color:'#fff',cursor:'pointer',padding:'10px 24px',fontSize:13,fontWeight:700}}>I go read sha</button></div></div>}
+      {easterEgg==='credits'&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.92)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} onClick={()=>setEasterEgg(null)}><div style={{textAlign:'center',animation:'fadeUp .8s ease',color:'#fff',padding:24}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:26,marginBottom:20,color:'#4f9cf9'}}>StudyHub Credits</div>{[['Chief Architect','Yination'],['Co-Engineer','Excalibur'],['AI Partner','Claude · Anthropic'],['Fuel','Caffeine and Deadline Pressure'],["Inspiration","NACOS '027"]].map(([r,n])=>(<div key={n} style={{marginBottom:12}}><div style={{fontSize:10,color:'rgba(255,255,255,.4)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{r}</div><div style={{fontSize:17,fontWeight:700}}>{n}</div></div>))}<div style={{marginTop:18,fontSize:10,color:'rgba(255,255,255,.25)'}}>Tap to close</div></div></div>}
+      {easterEgg==='tgif'&&<div style={{position:'fixed',bottom:80,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'14px 28px',zIndex:9999,textAlign:'center',animation:'popIn .4s ease',boxShadow:'var(--shadow)'}}><div style={{fontSize:20,marginBottom:4}}>🎉 TGIF!</div><div style={{fontSize:12,color:'var(--muted)'}}>You survived another week. Now study for Monday.</div></div>}
+      {easterEgg==='nepa'&&<div style={{animation:'nepaFlicker .3s ease',pointerEvents:'none',position:'fixed',inset:0,background:'rgba(0,0,0,.97)',zIndex:9998,display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{color:'#f9a84f',fontFamily:"'IBM Plex Mono',monospace",textAlign:'center'}}><div style={{fontSize:32,marginBottom:8}}>💡</div><div style={{fontSize:14}}>NEPA just took light</div><div style={{fontSize:11,opacity:.5,marginTop:4}}>Good thing StudyHub saved your progress</div></div></div>}
+      {showGlobalSearch&&<GlobalSearch courses={courses} progress={progress} onSelect={(id,sec)=>{const c=courses.find(x=>x.id===id);if(c){setActive({data:null,entry:c});setView('course');if(sec)setTimeout(()=>window.dispatchEvent(new CustomEvent('sh-open-section',{detail:sec})),300);}}} onClose={()=>setShowGlobalSearch(false)}/>}
 
       {showWelcome&&user&&<WelcomeModal user={user} onClose={()=>setShowWelcome(false)}/>}
 
