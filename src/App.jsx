@@ -8234,6 +8234,8 @@ export default function App(){
   const[subCfg,setSubCfg]=useState({});
   const[announceKey,setAnnounceKey]=useState(0);
   const[onlineUsers,setOnlineUsers]=useState(new Set());
+  const[showGlobalSearch,setShowGlobalSearch]=useState(false);
+  const[easterEgg,setEasterEgg]=useState(null);
 
   // Single presence channel — tracks this user AND watches who's online
   // Only one channel ever exists, owned by root App, passed down as prop
@@ -8332,7 +8334,6 @@ export default function App(){
     return()=>{window.removeEventListener('keydown',h);clearTimeout(nepaTimer);};
   },[]);
 
-  const[easterEgg,setEasterEgg]=useState(null);
   useEffect(()=>{
     const h=e=>{
       const{detail}=e;
