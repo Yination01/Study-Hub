@@ -4627,13 +4627,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   <div key={k} style={{display:'flex',alignItems:'center',gap:10,fontSize:12}}>
                     <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,background:'rgba(240,80,80,.15)',color:'#f05050',borderRadius:4,padding:'2px 7px',flexShrink:0}}>{v.count}x</span>
                     <span style={{color:'var(--text)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.q}</span>
-                    <button onClick={()=>{setMessages([{role:'assistant',content:`Let me help you understand this question:
-
-"${v.q}"
-
-The correct answer is: ${v.ans}
-
-Here is why...`}]);try{localStorage.setItem('sh-bot-open','1');}catch{};}}
+                    <button onClick={()=>{try{localStorage.setItem('sh-bot-open','1');}catch{}window.dispatchEvent(new CustomEvent('sh-open-bot-assignment',{detail:{mode:'tutor',assignmentTitle:'Quiz Help',assignmentDescription:`Q: ${v.q}. Answer: ${v.ans}`}}));}}
                       style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'#4f9cf9',cursor:'pointer',fontSize:10,padding:'2px 8px',flexShrink:0}}>AI Help</button>
                   </div>
                 ))}
@@ -7536,7 +7530,7 @@ function GlobalSearch({courses,progress,onSelect,onClose}){
 }
 
 
-function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab,onUserUpdate}){
+function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgressUpdate,bookmarks,toggleBookmark,dark,toggleTheme,onOpenCourseTab,onOpenSearch,onUserUpdate}){
   const[xp]=useXP(user?.username); // XP for badge in header
   const isExternal=user.role===ROLE.EXTERNAL;
   const[activeYear,setActiveYear]=useState(isExternal?'all':(user.year||1));
@@ -7555,6 +7549,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
   const[copied,setCopied]=useState(false);
   const[subCfg,setSubCfg]=useState({});
   const[drawerOpen,setDrawerOpen]=useState(false);
+  const currentTheme=localStorage.getItem('sh-theme')||'dark'; // derived from storage
   const[browseMode,setBrowseMode]=useState('year'); // 'year' | 'course'
   const nativePrompt=usePWAPrompt();
   const[statusMsg,setStatusMsg]=useState('');
@@ -7665,6 +7660,9 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
             </button>
           )}
 
+          {/* 🔍 Search */}
+          <button onClick={()=>onOpenSearch?.()} title="Global search"
+            style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'7px 10px',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',width:38,height:38}}>🔍</button>
           {/* 🔔 Bell */}
           {!user.isGuest&&<NotificationBell user={user} courses={courses} onNavigate={(courseId,tab)=>{onSelectCourse(courseId,tab);}}/>}
 
@@ -8624,6 +8622,7 @@ export default function App(){
             bookmarks={bookmarks} toggleBookmark={toggleBookmark}
             dark={dark} toggleTheme={toggleTheme}
             onOpenCourseTab={handleOpenCourseTab}
+            onOpenSearch={()=>setShowGlobalSearch(true)}
             onUserUpdate={updated=>setUser(u=>({...u,...updated}))}/>
         </div>
       )}
