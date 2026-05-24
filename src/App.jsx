@@ -169,6 +169,7 @@ const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Di
   *{transition:background-color .25s,border-color .25s,color .15s}
   button,input,textarea,select{transition:background-color .25s,border-color .25s,color .15s,transform .1s,box-shadow .15s}
   /* Reading progress bar */
+  .notes-content{font-size:var(--note-fs,15px);}
   #reading-progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,#4f9cf9,#7f5ff9);z-index:9999;transition:width .1s;pointer-events:none;}
   /* Highlight annotation */
   .sh-highlight{background:rgba(249,213,79,.25);border-bottom:2px solid rgba(249,213,79,.6);cursor:pointer;border-radius:2px;}
@@ -248,6 +249,17 @@ async function dbLoadCourseIndex(){
 async function dbLoadCourseData(id){
   const{data}=await supabase.from('courses').select('data').eq('id',id).single();
   return data?.data||null;
+}
+function getNoteQuality(data){
+  if(!data)return 0;
+  let s=0;
+  if((data.summary||'').length>200)s+=25;
+  if((data.keyConcepts||[]).length>=10)s+=20;
+  if((data.definitions||[]).length>=15)s+=20;
+  if((data.mechanisms||[]).length>=3)s+=15;
+  if((data.diagrams||[]).length>=2)s+=10;
+  if((data.questions||[]).length>=20)s+=10;
+  return Math.min(100,s);
 }
 async function dbSaveCourse(entry,courseData){
   await supabase.from('courses').upsert({id:entry.id,year:entry.year,semester:entry.semester||1,department:entry.department||'Computer Science',course_name:entry.courseName,chapter_title:entry.chapterTitle,concept_count:entry.conceptCount,term_count:entry.termCount,q_count:entry.qCount,added_at:entry.addedAt,data:courseData},{onConflict:'id'});
@@ -1556,13 +1568,10 @@ function Chatbot({context,courses,user,subCfg={}}){
            focusMode,systemPrompt:mode.sys,webSearch:mode.web,
            keyConcepts:(context?.keyConcepts||[]).slice(0,8).map(c=>c.title).join(', '),
            summaryPreview:(context?.summary||'').slice(0,300)};
-      // Smart paste detection — if message looks like JSON
-      const msgToSend=msg.trim().startsWith('{')||msg.trim().startsWith('[')
-        ?`I'm pasting study data for you to use as context:
-
-${msg}
-
-What would you like me to do with this?`
+      // Smart paste detection
+      const looksLikeJson=msg.trim().startsWith('{')&&msg.trim().endsWith('}');
+      const msgToSend=looksLikeJson
+        ?`I am pasting study data as context:\n\n${msg}\n\nWhat would you like me to help with?`
         :msg;
       const reply=await sendChatMessage([...next.slice(0,-1),{role:'user',content:msgToSend}].filter(m=>m.role!=='system'),ctx);
       setMessages(m=>[...m,{role:'assistant',content:reply}]);
@@ -1627,16 +1636,18 @@ What would you like me to do with this?`
           ))}
         </div>
 
-        {/* Focus mode pills */}
+        {/* Focus mode pills — icon only on mobile, icon+label on active/fullscreen */}
         {!minimised&&(
-          <div style={{display:'flex',gap:4,overflowX:'auto',padding:'6px 10px',scrollbarWidth:'none',borderBottom:'1px solid var(--border)',background:'var(--card)'}}>
-            {Object.entries(FOCUS_MODES).map(([k,m])=>(
-              <button key={k}
-                onClick={()=>{setFocusMode(k);}}
-                style={{flexShrink:0,padding:'3px 10px',borderRadius:12,border:`1.5px solid ${focusMode===k?'#4f9cf9':'var(--border)'}`,background:focusMode===k?'rgba(79,156,249,.1)':'var(--surface)',color:focusMode===k?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:10,fontWeight:focusMode===k?700:400,whiteSpace:'nowrap',transition:'all .15s'}}>
-                {m.icon} {k.charAt(0).toUpperCase()+k.slice(1)}
-              </button>
-            ))}
+          <div style={{borderBottom:'1px solid var(--border)',background:'var(--card)'}}>
+            <div style={{display:'flex',gap:3,overflowX:'auto',padding:'5px 8px',scrollbarWidth:'none',WebkitOverflowScrolling:'touch'}}>
+              {Object.entries(FOCUS_MODES).map(([k,m])=>(
+                <button key={k} onClick={()=>setFocusMode(k)}
+                  style={{flexShrink:0,padding:fullscreen?'5px 11px':'3px 7px',borderRadius:10,border:`1.5px solid ${focusMode===k?'#4f9cf9':'var(--border)'}`,background:focusMode===k?'rgba(79,156,249,.1)':'transparent',color:focusMode===k?'#4f9cf9':'var(--muted)',cursor:'pointer',fontSize:10,fontWeight:focusMode===k?700:400,whiteSpace:'nowrap',transition:'all .15s',display:'flex',alignItems:'center',gap:3}}>
+                  <span style={{fontSize:13}}>{m.icon}</span>
+                  {(focusMode===k||fullscreen)&&<span style={{fontSize:9}}>{k.charAt(0).toUpperCase()+k.slice(1)}</span>}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1684,40 +1695,9 @@ What would you like me to do with this?`
 
         {/* Input */}
         <div style={{padding:'8px 10px',borderTop:'1px solid var(--border)',display:'flex',gap:7,alignItems:'flex-end',flexShrink:0}}>
-          {/* Image upload input */}
-          <input id="cb-img-input" type="file" accept="image/*,.pdf" style={{display:'none'}}
-            onChange={async e=>{
-              const f=e.target.files?.[0]; if(!f)return;
-              e.target.value='';
-              // Check daily image limit for free users
-              const isFree=(user?.subscription_tier||'free')==='free'&&user?.role!==ROLE.SUPERUSER;
-              if(isFree){
-                const today=new Date().toDateString();
-                const key='sh-img-sends';
-                const s=JSON.parse(localStorage.getItem(key)||'{}');
-                const count=s.date===today?s.count||0:0;
-                if(count>=3){setMessages(m=>[...m,{role:'assistant',content:'⚠️ Free users can send 3 images per day. Upgrade to Pro for unlimited.'}]);return;}
-                localStorage.setItem(key,JSON.stringify({date:today,count:count+1}));
-              }
-              setLoading(true);
-              try{
-                const b64=await toBase64(f);
-                const imgMsg={role:'user',content:[{type:'image',source:{type:'base64',media_type:f.type||'image/jpeg',data:b64}},{type:'text',text:input.trim()||'What is this? Please explain it in detail.'}]};
-                setInput('');
-                const next=[...messages,{role:'user',content:`📎 [Image: ${f.name}] ${input.trim()||'Explain this image'}`}];
-                setMessages(next);
-                const ctx={...context,focusMode,systemPrompt:(FOCUS_MODES[focusMode]||FOCUS_MODES.general).sys};
-                const reply=await sendChatMessage([...next.slice(0,-1),imgMsg].filter(m=>m.role!=='system'),ctx);
-                setMessages(m=>[...m,{role:'assistant',content:reply}]);
-              }catch(e){setMessages(m=>[...m,{role:'assistant',content:'Failed to process image: '+e.message}]);}
-              setLoading(false);
-            }}
-          />
-          <button onClick={()=>document.getElementById('cb-img-input').click()} title="Upload image or PDF"
-            style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 8px',fontSize:14,flexShrink:0}}>📎</button>
-          <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
+                    <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}
-            placeholder={tab==='search'?'Ask about a course or topic…':`${(FOCUS_MODES[focusMode]||FOCUS_MODES.general).icon} ${focusMode.charAt(0).toUpperCase()+focusMode.slice(1)} mode — type or paste…`}
+            placeholder={tab==='search'?'Search courses…':`${(FOCUS_MODES[focusMode]||FOCUS_MODES.general).icon} ${focusMode.charAt(0).toUpperCase()+focusMode.slice(1)} — ask anything or paste JSON…`}
             maxLength={1600}
             rows={fullscreen?3:1} style={{flex:1,background:'var(--input-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'7px 10px',color:'var(--text)',fontSize:fullscreen?14:12.5,fontFamily:"'DM Sans',sans-serif",resize:'none',maxHeight:fullscreen?120:80,lineHeight:1.5}}/>
           <button onClick={()=>send()} disabled={!input.trim()||loading}
@@ -2824,7 +2804,7 @@ function UploadModal({onClose,onDone,adminMode=false,requestedBy='',courses=[]})
 
         {/* Header */}
         <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
-          <Logo onClick={null} size="sm"/>
+          <Logo onClick={onBack||onClose||null} size="sm"/>
           <div>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)'}}>{adminMode?'Request New Course':'Add Course'}</div>
             {adminMode&&<div style={{fontSize:11,color:'#da7ff0',marginTop:2}}>🛡 Requires superuser approval</div>}
@@ -3998,9 +3978,20 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const initSection=resolveInitialSection(course.initialTab);
   const[tab,setTab]=useState(initTab);const[openQ,setOpenQ]=useState(null);const[filter,setFilter]=useState('');
   // Flashcard state
-  const[fcIdx,setFcIdx]=useState(0);const[fcFlipped,setFcFlipped]=useState(false);const[fcDeck,setFcDeck]=useState('definitions');const[fcKnown,setFcKnown]=useState(new Set());
+  const[fcIdx,setFcIdx]=useState(0);const[fcFlipped,setFcFlipped]=useState(false);
+  const[fcStuckTimer,setFcStuckTimer]=useState(null);const[showFcHint,setShowFcHint]=useState(false);const[fcDeck,setFcDeck]=useState('definitions');const[fcKnown,setFcKnown]=useState(new Set());
   // Quiz state
   const[quizStarted,setQuizStarted]=useState(false);const[quizIdx,setQuizIdx]=useState(0);const[quizChoice,setQuizChoice]=useState(null);const[quizScore,setQuizScore]=useState(0);const[quizLog,setQuizLog]=useState([]);const[quizDone,setQuizDone]=useState(false);const[quizOpts,setQuizOpts]=useState([]);
+  const[quizReviewMode,setQuizReviewMode]=useState(false);
+  const[quizReviewIdx,setQuizReviewIdx]=useState(0);
+  const[activeRecall,setActiveRecall]=useState(false);
+  const[activeRecallInput,setActiveRecallInput]=useState('');
+  const[activeRecallGraded,setActiveRecallGraded]=useState(null);
+  const[mockExamMode,setMockExamMode]=useState(false);
+  const[mockExamTime,setMockExamTime]=useState(60*60);
+  const[mockExamRunning,setMockExamRunning]=useState(false);
+  const[mockExamVisited,setMockExamVisited]=useState(new Set());
+  const[personalBests,setPersonalBests]=useState(()=>{try{return JSON.parse(localStorage.getItem(`sh-pb-${user?.username}-${course?.id}`)||'{}');}catch{return {};}});
   const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' = fill the gap
   const[qSearch,setQSearch]=useState('');
   const[fillInput,setFillInput]=useState('');const[fillRevealed,setFillRevealed]=useState(false);
@@ -4014,7 +4005,15 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
 
   // Cache for offline use
   useEffect(()=>{try{localStorage.setItem(CACHE_KEY(course.id),JSON.stringify({data:d,year:course.year,semester:course.semester||1,department:course.department||'Computer Science',cachedAt:Date.now()}));}catch{};},[]);
-  useEffect(()=>{const n={...progress,[course.id]:{...cp,viewed:true,lastViewedAt:new Date().toISOString()}};onProgressUpdate(n);},[]);
+  useEffect(()=>{
+    const isFirst=!cp.viewed;
+    const n={...progress,[course.id]:{...cp,viewed:true,lastViewedAt:new Date().toISOString()}};
+    onProgressUpdate(n);
+    if(isFirst){
+      awardXP('course_view');
+      setTimeout(()=>pushNotification('🎉 Chapter unlocked!',`You opened "${d.chapterTitle}" for the first time. +${XP_ACTIONS.course_view} XP`),800);
+    }
+  },[]);
 
   const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!(cp.openedQs||[]).includes(idx)){
       awardXP('qa_reveal');const n={...progress,[course.id]:{...cp,openedQs:[...(cp.openedQs||[]),idx],lastViewedAt:new Date().toISOString()}};onProgressUpdate(n);}};
@@ -4095,6 +4094,16 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
     const newLog=[...quizLog,{q:qs[quizIdx].question,correct,chosen:quizChoice,ok:isCorrect}];
     if(quizIdx+1>=qs.length){
       setQuizScore(newScore);setQuizLog(newLog);setQuizDone(true);
+              // Personal best
+              const pctNew=Math.round((newScore/qs.length)*100);
+              setPersonalBests(prev=>{
+                const key=course?.id;
+                const isNew=!prev[key]||pctNew>prev[key];
+                const updated={...prev,[key]:Math.max(pctNew,prev[key]||0)};
+                try{localStorage.setItem(`sh-pb-${user?.username}-${course?.id}`,JSON.stringify(updated));}catch{}
+                if(isNew&&pctNew>0)setTimeout(()=>pushNotification('🏆 Personal Best!',`You scored ${pctNew}% on ${d.chapterTitle}`),500);
+                return updated;
+              });
       // Build full progress update object
       const qProg={...progress,[course.id]:{...cp,viewed:true,openedQs:cp.openedQs||[],lastViewedAt:new Date().toISOString()}};
       onProgressUpdate(qProg);
@@ -4174,13 +4183,13 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
               <input
                 id="regen-file-input"
                 type="file"
-                accept=".pdf,.docx,.txt,.md,.jpg,.jpeg,.png"
+                accept=".json,.txt,.pdf,.docx,.md,.jpg,.jpeg,.png"
                 style={{display:'none'}}
                 onChange={async e=>{
                   const f=e.target.files?.[0];
                   if(!f) return;
                   e.target.value=''; // reset so same file can be re-selected
-                  const ok=await window.shConfirm?.(`Re-generate notes from "${f.name}"? This will replace the current notes for "${d.chapterTitle}".`);
+                  const ok=await window.shConfirm?.(`Regenerate notes from "${f.name}"? This will replace the current notes for "${d.chapterTitle}".`);
                   if(!ok) return;
                   setRegenLoading(true); setRegenMsg('');
                   try{
@@ -4280,15 +4289,42 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                 ♻️ Regen (stored)
               </button>
               )}
-              {/* Visible button — triggers file picker */}
+              {/* Regen button — stored or new JSON */}
               <button
-                onClick={()=>{if(!regenLoading)document.getElementById('regen-file-input').click();}}
+                onClick={()=>{
+                  if(d._src&&!regenLoading){
+                    // Has stored source — offer choice
+                    const choice=window.confirm('Source text is stored.\n\nOK = Regen from stored source (no upload needed)\nCancel = Upload new JSON/PDF');
+                    if(choice){
+                      // Use stored source
+                      setRegenLoading(true);setRegenMsg('⏳ Regenerating from stored source…');
+                      fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:d._src})})
+                        .then(r=>r.ok?r.json():r.json().then(e=>{throw new Error(e.error||'Server error');}))
+                        .then(async newData=>{
+                          newData.summary=typeof newData.summary==='string'?newData.summary.trim():'';
+                          newData._src=d._src;
+                          ['diagrams','keyConcepts','definitions','mechanisms','algorithms','chapters','questions','solvedProblems','codeExamples','essayOutlines','formulaSheet'].forEach(k=>{if(!Array.isArray(newData[k]))newData[k]=[];});
+                          newData.courseName=newData.courseName||d.courseName;
+                          newData.chapterTitle=newData.chapterTitle||d.chapterTitle;
+                          const{error:e}=await supabase.from('courses').update({data:newData,concept_count:newData.keyConcepts.length,term_count:newData.definitions.length,q_count:newData.questions.length}).eq('id',course.id);
+                          if(e)throw new Error(e.message);
+                          setRegenMsg('✅ Done! Reloading…');setTimeout(()=>window.location.reload(),1500);
+                        })
+                        .catch(e=>setRegenMsg('❌ '+e.message))
+                        .finally(()=>setRegenLoading(false));
+                    } else {
+                      document.getElementById('regen-file-input').click();
+                    }
+                  } else {
+                    document.getElementById('regen-file-input').click();
+                  }
+                }}
                 disabled={regenLoading}
-                title="Upload the original PDF to regenerate all notes with AI (admin only)"
+                title={d._src?"Regen from stored source or upload new JSON":"Upload JSON to regenerate notes"}
                 style={{background:'rgba(168,249,79,.08)',border:'1px solid rgba(168,249,79,.3)',borderRadius:8,color:'#a8f94f',cursor:regenLoading?'not-allowed':'pointer',padding:'7px 13px',fontSize:12,fontWeight:600,display:'flex',alignItems:'center',gap:5,opacity:regenLoading?.6:1,whiteSpace:'nowrap'}}>
                 {regenLoading
-                  ?<><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> {typeof regenMsg==='string'&&regenMsg.startsWith('⏳')?regenMsg.slice(2).trim():'Processing…'}</>
-                  :<>📄 Regen from PDF</>}
+                  ?<><span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Processing…</>
+                  :d._src?<>♻️ Regen JSON</>:<>📄 Upload JSON</>}
               </button>
             </div>
           )}
@@ -4393,7 +4429,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
       {/* Tab content */}
 
       {tab==='notes'&&d&&(
-        <div className="fade-up" onScroll={e=>{
+        <div className="fade-up" style={{'--note-fs':`${noteFontSize}px`}} onScroll={e=>{
           const el=e.currentTarget;
           const pct=Math.round((el.scrollTop/(el.scrollHeight-el.clientHeight||1))*100);
           const bar=document.getElementById('reading-progress');
@@ -4401,6 +4437,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
         }}>
         <div id="reading-progress" style={{position:'fixed',top:0,left:0,height:3,background:'linear-gradient(90deg,#4f9cf9,#7f5ff9)',zIndex:9999,width:'0%',transition:'width .1s',pointerEvents:'none'}}/>
 
+          <div className="notes-content">
           {/* ── Sticky topic nav — single source of truth ── */}
           <div style={{position:'sticky',top:0,zIndex:20,background:'var(--bg)',paddingBottom:8,marginBottom:12}}>
             <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:2,scrollbarWidth:'none'}}>
@@ -4440,7 +4477,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           {!d.summary?.length&&(user?.role===ROLE.ADMIN||user?.role===ROLE.SUPERUSER)&&(
             <div className="fade-in" style={{background:'rgba(168,249,79,.04)',border:'1px dashed rgba(168,249,79,.25)',borderRadius:10,padding:'10px 14px',marginBottom:16,fontSize:12,color:'var(--muted)',display:'flex',alignItems:'center',gap:8}}>
               <span>📋</span>
-              <span>This chapter has no summary yet. Click <strong style={{color:'#a8f94f'}}>📄 Regen from PDF</strong> to generate one.</span>
+              <span>This chapter has no summary yet. Click <strong style={{color:'#a8f94f'}}>📋 Regen from JSON</strong> to generate one.</span>
             </div>
           )}
 
@@ -4457,7 +4494,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   </div>
                 </div>
                 {summary.split(/\n\n+/).filter(Boolean).map((para,i)=>(
-                  <p key={i} style={{fontSize:noteFontSize,color:'var(--text)',lineHeight:2.0,margin:'0 0 16px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
+                  <p key={i} style={{fontSize:'1em',color:'var(--text)',lineHeight:2.0,margin:'0 0 16px',fontFamily:"'DM Sans',sans-serif",opacity:.92}}>
                     {renderMd(para)}
                   </p>
                 ))}
@@ -4489,7 +4526,11 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                     <div key={i} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 18px',borderLeft:`3px solid ${col}`,position:'relative',overflow:'hidden',cursor:'default',transition:'box-shadow .15s'}} onMouseEnter={e=>e.currentTarget.style.boxShadow='0 4px 16px rgba(0,0,0,.15)'} onMouseLeave={e=>e.currentTarget.style.boxShadow='none'}>
                       <div style={{position:'absolute',top:0,right:0,width:60,height:60,borderRadius:'0 12px 0 60px',background:`${col}08`}}/>
                       <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,color:col,marginBottom:6,letterSpacing:.5}}>{c.title}</div>
-                      <p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.7,margin:0}}>{c.description}</p>
+                      <p style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.7,margin:'0 0 8px'}}>{c.description}</p>
+                      <button onClick={()=>{window.dispatchEvent(new CustomEvent('sh-open-bot-assignment',{detail:{mode:'tutor',assignmentTitle:'Explain concept',assignmentDescription:`I do not understand "${c.title}". Explain it in simple terms with a real example.`}}));try{localStorage.setItem('sh-bot-open','1');}catch{};}}
+                        style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,padding:0,textDecoration:'underline',opacity:.7}}>
+                        🤔 I&apos;m confused
+                      </button>
                     </div>
                   );
                 })}
@@ -4610,7 +4651,31 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
           )}
 
           {/* Back to top */}
-          <button onClick={()=>window.scrollTo({top:0,behavior:'smooth'})}
+          {/* Related chapters */}
+          {(()=>{
+            const related=(courses||[]).filter(c=>c.id!==course?.id&&c.courseName===d.courseName).slice(0,3);
+            if(!related.length)return null;
+            return(
+              <div style={{marginTop:24,paddingTop:16,borderTop:'1px solid var(--border)'}}>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',letterSpacing:.5,marginBottom:10}}>RELATED CHAPTERS</div>
+                <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                  {related.map(c=>(
+                    <div key={c.id} onClick={()=>onBack('next',c.id)}
+                      style={{padding:'10px 14px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,cursor:'pointer',display:'flex',alignItems:'center',gap:10}}
+                      onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(79,156,249,.4)'}
+                      onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,color:'var(--text)',fontWeight:500}}>{c.chapterTitle}</div>
+                        <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:2}}>{c.courseName}</div>
+                      </div>
+                      <span style={{color:'var(--muted)',fontSize:12}}>→</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+                    <button onClick={()=>window.scrollTo({top:0,behavior:'smooth'})}
             style={{display:'block',margin:'28px auto 4px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,color:'var(--muted)',cursor:'pointer',padding:'7px 22px',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5,transition:'all .2s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='#4f9cf9';e.currentTarget.style.color='#4f9cf9';}} onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--muted)';}}>
             ↑ BACK TO TOP
           </button>
@@ -4787,6 +4852,17 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
 
             {/* Navigation */}
             <div style={{display:'flex',gap:10,marginTop:14,justifyContent:'center',flexWrap:'wrap'}}>
+              {/* SM-2 rating — show after flip */}
+              {fcFlipped&&(
+                <div style={{width:'100%',display:'flex',gap:6,justifyContent:'center',marginBottom:6}}>
+                  {[{r:0,l:'Again',c:'#f05050'},{r:3,l:'Hard',c:'#f9a84f'},{r:4,l:'Good',c:'#4f9cf9'},{r:5,l:'Easy',c:'#7fda96'}].map(b=>(
+                    <button key={b.r} onClick={()=>{sm2&&sm2.rate&&sm2.rate(fcIdx,b.r);if(fcIdx<fcTotal-1){setFcIdx(fcIdx+1);setFcFlipped(false);}}}
+                      style={{padding:'5px 12px',borderRadius:7,border:`1px solid ${b.c}22`,background:`${b.c}18`,color:b.c,cursor:'pointer',fontSize:11,fontWeight:600,flex:1}}>
+                      {b.l}
+                    </button>
+                  ))}
+                </div>
+              )}
               <button onClick={()=>{if(fcIdx>0){setFcIdx(fcIdx-1);setFcFlipped(false);}}}
                 disabled={fcIdx===0}
                 style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,color:fcIdx===0?'var(--border)':'var(--muted)',cursor:fcIdx===0?'not-allowed':'pointer',padding:'8px 18px',fontSize:13}}>
@@ -5067,11 +5143,15 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
                   style={{background:'rgba(79,156,249,.12)',border:'1px solid rgba(79,156,249,.35)',borderRadius:10,color:'#4f9cf9',cursor:'pointer',padding:'11px 24px',fontSize:13,fontWeight:700}}>
                   Retry Quiz
                 </button>
+                <button onClick={()=>{setQuizReviewMode(true);setQuizReviewIdx(0);}}
+                  style={{background:'rgba(127,218,150,.1)',border:'1px solid rgba(127,218,150,.3)',borderRadius:10,color:'#7fda96',cursor:'pointer',padding:'11px 20px',fontSize:13,fontWeight:600}}>
+                  📋 Review Answers
+                </button>
                 <button onClick={()=>{
                     const pct=Math.round(quizScore/(qs.length||1)*100);
                     const msg=`I scored ${quizScore}/${qs.length} (${pct}%) on "${d.chapterTitle}" — StudyHub 📚`;
                     if(navigator.share)navigator.share({text:msg});
-                    else navigator.clipboard.writeText(msg);
+                    else navigator.clipboard?.writeText(msg).catch(()=>{});
                   }} style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:10,color:'#4f9cf9',cursor:'pointer',padding:'11px 20px',fontSize:13,fontWeight:600}}>
                   📤 Share Result
                 </button>
@@ -5083,6 +5163,46 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
             </div>
           );
         })()}
+
+        {/* ── Quiz Review Mode ── */}
+        {quizReviewMode&&quizLog.length>0&&(
+          <div className="fade-up">
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',flex:1}}>📋 Review Answers</div>
+              <button onClick={()=>setQuizReviewMode(false)} style={{background:'none',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'5px 12px',fontSize:12}}>✕ Close</button>
+            </div>
+            <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:16}}>
+              {quizLog.map((_,i)=>(
+                <button key={i} onClick={()=>setQuizReviewIdx(i)}
+                  style={{width:34,height:34,borderRadius:6,border:`1.5px solid ${quizReviewIdx===i?'#4f9cf9':'var(--border)'}`,background:quizLog[i]?.correct?'rgba(127,218,150,.15)':'rgba(240,80,80,.12)',color:quizLog[i]?.correct?'#7fda96':'#f05050',cursor:'pointer',fontSize:11,fontWeight:600}}>
+                  {i+1}
+                </button>
+              ))}
+            </div>
+            {quizLog[quizReviewIdx]&&(
+              <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'20px 24px'}}>
+                <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginBottom:8}}>Q {quizReviewIdx+1} of {quizLog.length}</div>
+                <div style={{fontSize:15,color:'var(--text)',fontWeight:600,marginBottom:16,lineHeight:1.5}}>{quizLog[quizReviewIdx].q}</div>
+                <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
+                  <div style={{padding:'10px 14px',borderRadius:8,background:quizLog[quizReviewIdx].correct?'rgba(127,218,150,.1)':'rgba(240,80,80,.1)',border:`1px solid ${quizLog[quizReviewIdx].correct?'rgba(127,218,150,.3)':'rgba(240,80,80,.3)'}`,fontSize:13,color:quizLog[quizReviewIdx].correct?'#7fda96':'#f05050'}}>
+                    {quizLog[quizReviewIdx].correct?'✅':'❌'} Your answer: {quizLog[quizReviewIdx].chosen||'(skipped)'}
+                  </div>
+                  {!quizLog[quizReviewIdx].correct&&(
+                    <div style={{padding:'10px 14px',borderRadius:8,background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.2)',fontSize:13,color:'#7fda96'}}>
+                      ✅ Correct: {quizLog[quizReviewIdx].ok}
+                    </div>
+                  )}
+                </div>
+                <div style={{display:'flex',gap:8,justifyContent:'space-between',alignItems:'center'}}>
+                  <button onClick={()=>setQuizReviewIdx(i=>Math.max(0,i-1))} disabled={quizReviewIdx===0} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontSize:12,opacity:quizReviewIdx===0?.4:1}}>← Prev</button>
+                  <button onClick={()=>{const q=quizLog[quizReviewIdx];window.dispatchEvent(new CustomEvent('sh-open-bot-assignment',{detail:{mode:'tutor',assignmentTitle:'Quiz Review',assignmentDescription:`Explain: "${q.q}". Correct answer: ${q.ok}`}}));try{localStorage.setItem('sh-bot-open','1');}catch{};}}
+                    style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.3)',borderRadius:8,color:'#4f9cf9',cursor:'pointer',padding:'6px 14px',fontSize:12,fontWeight:600}}>🤖 Why?</button>
+                  <button onClick={()=>setQuizReviewIdx(i=>Math.min(quizLog.length-1,i+1))} disabled={quizReviewIdx===quizLog.length-1} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--muted)',cursor:'pointer',padding:'6px 14px',fontSize:12,opacity:quizReviewIdx===quizLog.length-1?.4:1}}>Next →</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>}
         </div>
       )}
@@ -7026,7 +7146,7 @@ function StatusChangesTab({reviewerUsername}){
 }
 
 /* ═══════════════ COURSE CARD (memoised) ═══════════════ */
-const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect}){
+const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect,lastViewed}){
   const accent=YEAR_COLORS[c.year]||CARD_ACCENTS[i%CARD_ACCENTS.length];
   const isNew=c.addedAt&&(new Date()-new Date(c.addedAt))<7*24*60*60*1000;
   return(
@@ -7629,7 +7749,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
         WebkitBackdropFilter:'blur(12px)',
       }}>
         <div style={{display:'flex',alignItems:'center',gap:16}}>
-          <Logo onClick={null} size="md"/>
+          <Logo onClick={()=>window.scrollTo({top:0,behavior:"smooth"})} size="md" style={{cursor:"pointer"}}/>
           <div style={{width:1,height:32,background:'var(--border)'}}/>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <Avatar name={user.displayName} size={34}/>
@@ -7668,9 +7788,9 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
 
           {/* ☰ Hamburger */}
           <button onClick={()=>setDrawerOpen(true)}
-            style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',cursor:'pointer',padding:'8px 10px',display:'flex',flexDirection:'column',gap:4,alignItems:'center',justifyContent:'center',width:38,height:38}}>
-            <span style={{display:'block',width:16,height:2,background:'currentColor',borderRadius:1}}/>
-            <span style={{display:'block',width:16,height:2,background:'currentColor',borderRadius:1}}/>
+            style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',cursor:'pointer',padding:'8px 10px',display:'flex',flexDirection:'column',gap:4,alignItems:'center',justifyContent:'center',width:40,height:40,flexShrink:0,WebkitTapHighlightColor:'transparent',touchAction:'manipulation'}}>
+            <span style={{display:'block',width:18,height:2,background:'currentColor',borderRadius:1}}/>
+            <span style={{display:'block',width:18,height:2,background:'currentColor',borderRadius:1}}/>
             <span style={{display:'block',width:12,height:2,background:'currentColor',borderRadius:1}}/>
           </button>
         </div>
@@ -8194,6 +8314,32 @@ class ErrorBoundary extends React.Component{
   }
 }
 
+function EasterCalc({onClose}){
+  const[val,setVal]=useState('0');
+  const press=k=>{
+    if(k==='C'){setVal('0');return;}
+    if(k==='='){try{setVal(String(eval(val.replace(/×/g,'*').replace(/÷/g,'/').replace(/−/g,'-'))));}catch{setVal('Err');}return;}
+    setVal(v=>v==='0'&&!['.','+','-','*','/'].includes(k)?k:v+k);
+  };
+  return(
+    <div style={{position:'fixed',bottom:80,right:10,background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:16,zIndex:9999,boxShadow:'var(--shadow)',width:240}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
+        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:'var(--muted)'}}>🔢 Calculator (42 unlocked!)</span>
+        <button onClick={onClose} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:14}}>✕</button>
+      </div>
+      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:20,color:'var(--text)',textAlign:'right',padding:'6px 8px',background:'var(--surface)',borderRadius:6,marginBottom:8,minHeight:36,overflowX:'auto'}}>{val}</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:4}}>
+        {['C','±','%','÷','7','8','9','×','4','5','6','−','1','2','3','+','0','.','=',''].map((k,i)=>(
+          k?<button key={i} onClick={()=>press(k)}
+            style={{padding:'10px 4px',borderRadius:7,border:'1px solid var(--border)',background:['÷','×','−','+','='].includes(k)?'rgba(79,156,249,.15)':'var(--surface)',color:['÷','×','−','+','='].includes(k)?'#4f9cf9':'var(--text)',cursor:'pointer',fontSize:13,fontFamily:"'IBM Plex Mono',monospace"}}>{k}</button>
+          :<div key={i}/>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
 export default function App(){
   const[dark,toggleTheme,currentTheme]=useTheme();
   const online=useOnline();
@@ -8297,6 +8443,8 @@ export default function App(){
       if(b.endsWith('42'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'calc'}));
       // freeze → streak freeze
       if(b.endsWith('freeze'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'freeze'}));
+      if(b.endsWith('igiveup'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'igiveup'}));
+      if(b.endsWith('floorisla'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'lava'}));
       // credits → dev credits
       if(b.endsWith('credits'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'credits'}));
       // shortcuts
@@ -8561,7 +8709,7 @@ export default function App(){
       const p=await dbLoadProgress(resolved.username).catch(()=>({}));
       setProgress(p);
     }
-    if(resolved.isNew) setShowWelcome(true);
+    if(resolved.isNew) setShowWelcome(true);setTimeout(()=>window.dispatchEvent(new CustomEvent('sh-easter',{detail:'konami'})),500);
     setView('home');
   },[]);
 
@@ -8691,6 +8839,29 @@ export default function App(){
       {easterEgg==='credits'&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.92)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} onClick={()=>setEasterEgg(null)}><div style={{textAlign:'center',animation:'fadeUp .8s ease',color:'#fff',padding:24}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:26,marginBottom:20,color:'#4f9cf9'}}>StudyHub Credits</div>{[['Chief Architect','Yination'],['Co-Engineer','Excalibur'],['AI Partner','Claude · Anthropic'],['Fuel','Caffeine and Deadline Pressure'],["Inspiration","NACOS '027"]].map(([r,n])=>(<div key={n} style={{marginBottom:12}}><div style={{fontSize:10,color:'rgba(255,255,255,.4)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{r}</div><div style={{fontSize:17,fontWeight:700}}>{n}</div></div>))}<div style={{marginTop:18,fontSize:10,color:'rgba(255,255,255,.25)'}}>Tap to close</div></div></div>}
       {easterEgg==='tgif'&&<div style={{position:'fixed',bottom:80,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'14px 28px',zIndex:9999,textAlign:'center',animation:'popIn .4s ease',boxShadow:'var(--shadow)'}}><div style={{fontSize:20,marginBottom:4}}>🎉 TGIF!</div><div style={{fontSize:12,color:'var(--muted)'}}>You survived another week. Now study for Monday.</div></div>}
       {easterEgg==='nepa'&&<div style={{animation:'nepaFlicker .3s ease',pointerEvents:'none',position:'fixed',inset:0,background:'rgba(0,0,0,.97)',zIndex:9998,display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{color:'#f9a84f',fontFamily:"'IBM Plex Mono',monospace",textAlign:'center'}}><div style={{fontSize:32,marginBottom:8}}>💡</div><div style={{fontSize:14}}>NEPA just took light</div><div style={{fontSize:11,opacity:.5,marginTop:4}}>Good thing StudyHub saved your progress</div></div></div>}
+      {/* Stealth mode */}
+      {easterEgg==='stealth'&&(
+        <div style={{position:'fixed',inset:0,background:'#fff',zIndex:9999}}>
+          <div style={{padding:'24px 32px',maxWidth:700,margin:'0 auto',fontFamily:'Arial,sans-serif',color:'#333',fontSize:14,lineHeight:1.6}}>
+            <div style={{fontSize:20,fontWeight:700,marginBottom:16,color:'#000'}}>Untitled Document</div>
+            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam...</p>
+            <p style={{color:'#555'}}>You are definitely studying right now and not using StudyHub. Nothing to see here. Very normal document.</p>
+            <button onClick={()=>setEasterEgg(null)} style={{marginTop:24,background:'#1a73e8',border:'none',borderRadius:4,color:'#fff',cursor:'pointer',padding:'8px 20px',fontSize:13}}>Exit Stealth Mode</button>
+          </div>
+        </div>
+      )}
+      {/* I give up */}
+      {easterEgg==='igiveup'&&(
+        <div onClick={()=>setEasterEgg(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.9)',zIndex:9999,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer'}}>
+          <div style={{fontSize:48,marginBottom:16,animation:'candleFlicker 1.5s ease-in-out infinite'}}>🕯️</div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'#e8eaf6',marginBottom:8}}>No you don&apos;t.</div>
+          <div style={{fontSize:13,color:'rgba(255,255,255,.6)'}}>One more page. You&apos;re closer than you think.</div>
+        </div>
+      )}
+      {/* Floor is lava */}
+      {easterEgg==='lava'&&(
+        <div style={{position:'fixed',bottom:0,left:0,right:0,height:4,background:'linear-gradient(90deg,#f05050,#f9a84f,#f05050)',zIndex:9999,animation:'pulse .5s ease-in-out infinite'}}/>
+      )}
       {showGlobalSearch&&<GlobalSearch courses={courses} progress={progress} onSelect={(id,sec)=>{const c=courses.find(x=>x.id===id);if(c){setActive({data:null,entry:c});setView('course');if(sec)setTimeout(()=>window.dispatchEvent(new CustomEvent('sh-open-section',{detail:sec})),300);}}} onClose={()=>setShowGlobalSearch(false)}/>}
 
       {showWelcome&&user&&<WelcomeModal user={user} onClose={()=>setShowWelcome(false)}/>}
