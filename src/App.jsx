@@ -4027,12 +4027,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const[noteFontSize,setNoteFontSize]=useState(()=>{try{return parseInt(localStorage.getItem('sh-note-font')||'15');}catch{return 15;}});
   const sm2=useSM2(course?.id,user?.username);
   const[weaknessData,setWeaknessData]=useState(()=>{try{return JSON.parse(localStorage.getItem(`sh-weak-${user?.username}-${course?.id}`)||'{}');}catch{return {};}});
-  const[quizReviewMode,setQuizReviewMode]=useState(false);
-  const[activeRecall,setActiveRecall]=useState(false);
-  const[mockExamMode,setMockExamMode]=useState(false);
-  const[mockExamTime,setMockExamTime]=useState(60*60); // 60 min default
-  const[mockExamRunning,setMockExamRunning]=useState(false);
-  const[mockExamVisited,setMockExamVisited]=useState(new Set());
   const[regenLoading,setRegenLoading]=useState(false); // AI regenerate notes
   const[regenMsg,setRegenMsg]=useState('');
   const[practiceSection,setPracticeSection]=useState((['qa','flashcards','quiz'].includes(initSection)?initSection:'qa'));
@@ -5203,9 +5197,6 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
             )}
           </div>
         )}
-      </div>}
-        </div>
-      )}
 
       {tab==='resources'&&<ResourcesTab courseId={course.id} user={user}/>}
     </div>
