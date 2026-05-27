@@ -4257,32 +4257,6 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   finally{setRegenLoading(false);}
                 }}
               />
-              {/* If source text is stored, show quick-regen button */}
-              {d._src&&!regenLoading&&(
-                <button onClick={async()=>{
-                  const ok=await window.shConfirm?.(`Regenerate notes from stored source? No file upload needed.`);
-                  if(!ok) return;
-                  setRegenLoading(true);setRegenMsg('⏳ Regenerating from stored source…');
-                  try{
-                    const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:d._src})});
-                    if(!res.ok) throw new Error(`Server error ${res.status}`);
-                    const newData=await res.json();
-                    newData.summary=typeof newData.summary==='string'?newData.summary.trim():'';
-                    newData._src=d._src; // preserve source
-                    ['diagrams','keyConcepts','definitions','mechanisms','algorithms','chapters','questions','solvedProblems','codeExamples','essayOutlines','formulaSheet'].forEach(k=>{if(!Array.isArray(newData[k]))newData[k]=[];});
-                    newData.courseName=newData.courseName||d.courseName;
-                    newData.chapterTitle=newData.chapterTitle||d.chapterTitle;
-                    const{error:e}=await supabase.from('courses').update({data:newData,concept_count:newData.keyConcepts.length,term_count:newData.definitions.length,q_count:newData.questions.length}).eq('id',course.id);
-                    if(e) throw new Error(e.message);
-                    setRegenMsg('✅ Done! Reloading…');setTimeout(()=>window.location.reload(),1500);
-                  }catch(e){setRegenMsg('❌ '+e.message);}
-                  finally{setRegenLoading(false);}
-                }}
-                title="Regenerate from stored source — no file upload needed"
-                style={{background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.3)',borderRadius:8,color:'#7fda96',cursor:'pointer',padding:'7px 13px',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>
-                ♻️ Regen (stored)
-              </button>
-              )}
               {/* Regen button — stored or new JSON */}
               <button
                 onClick={()=>{
@@ -5197,6 +5171,7 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
             )}
           </div>
         )}
+      </div>}
 
       {tab==='resources'&&<ResourcesTab courseId={course.id} user={user}/>}
     </div>
