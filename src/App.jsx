@@ -5172,6 +5172,8 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
           </div>
         )}
       </div>}
+        </div>
+      )}
 
       {tab==='resources'&&<ResourcesTab courseId={course.id} user={user}/>}
     </div>
