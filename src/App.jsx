@@ -4026,6 +4026,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const[dSearch,setDSearch]=useState('');
   const[noteFontSize,setNoteFontSize]=useState(()=>{try{return parseInt(localStorage.getItem('sh-note-font')||'15');}catch{return 15;}});
   const sm2=useSM2(course?.id,user?.username);
+  const[,awardXP]=useXP(user?.username);
   const[weaknessData,setWeaknessData]=useState(()=>{try{return JSON.parse(localStorage.getItem(`sh-weak-${user?.username}-${course?.id}`)||'{}');}catch{return {};}});
   const[regenLoading,setRegenLoading]=useState(false); // AI regenerate notes
   const[regenMsg,setRegenMsg]=useState('');
@@ -4760,7 +4761,7 @@ Return JSON only: {"questions":[{"question":"...","answer":"..."}]}`;
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <Mono color="#7fda96" size={9}>Answer</Mono>
                     <button onClick={()=>navigator.clipboard.writeText(`Q: ${q.question}
-A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,opacity:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.5'}>{copied?'✓ Copied!':'📋 Copy'}</button>
+A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,opacity:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.5'}>📋 Copy</button>
                   </div>
                   <p style={{fontSize:13,color:'var(--text)',lineHeight:1.8,margin:'0',whiteSpace:'pre-line'}}>{q.answer}</p>
                 </div>}
