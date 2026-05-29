@@ -4647,6 +4647,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
             style={{display:'block',margin:'28px auto 4px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,color:'var(--muted)',cursor:'pointer',padding:'7px 22px',fontSize:11,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:.5,transition:'all .2s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='#4f9cf9';e.currentTarget.style.color='#4f9cf9';}} onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--muted)';}}>
             ↑ BACK TO TOP
           </button>
+          </div>
         </div>
       )}
       {tab==='practice'&&(
