@@ -1533,6 +1533,36 @@ function Chatbot({context,courses,user,subCfg={}}){
     const msg=text||input.trim();
     if(!msg||loading)return;
 
+    // ── Chat Easter eggs ──────────────────────────────────────────
+    const msgLow=msg.toLowerCase().trim();
+    if(msgLow==='socrates'||msgLow.includes('socrates mode')){
+      setFocusMode('tutor');
+      setMessages(m=>[...m,{role:'user',content:msg},{role:'assistant',content:`🏛️ *Socratic mode activated*
+
+Very well. I shall answer no question directly — only with better questions. What is it you think you know?`}]);
+      setInput('');return;
+    }
+    if(msgLow==='elementary'||msgLow.includes('elementary my dear')){
+      setFocusMode('tutor');
+      setMessages(m=>[...m,{role:'user',content:msg},{role:'assistant',content:`🕵️ *Sherlock mode activated*
+
+Elementary. The data is before us — we need only observe. State your problem clearly and I shall deduce the answer through pure logic.`}]);
+      setInput('');return;
+    }
+    if(msgLow==='lecturer'||msgLow.includes('lecturer mode')){
+      setFocusMode('tutor');
+      setMessages(m=>[...m,{role:'user',content:msg},{role:'assistant',content:`📚 *Nigerian Lecturer mode activated*
+
+AH-ahn! You people should sit down and listen well-well! I said it in the last class, I said it again — pay attention! Now, who can tell me the answer? Nobody? You see this is why results are like this. Open your notes. Let us begin.`}]);
+      setInput('');return;
+    }
+    if(msgLow==='who made this'||msgLow.includes('who built this')||msgLow.includes('who created studyhub')){
+      setMessages(m=>[...m,{role:'user',content:msg},{role:'assistant',content:`✨ StudyHub was built at 2am during exam season by two CS students — **Yination** and **Excalibur** — who got tired of scattered notes and decided to build something better.
+
+Powered by Groq AI, Supabase, and an unreasonable amount of caffeine. Deployed on Vercel. Designed for NACOS '027. 🎓`}]);
+      setInput('');return;
+    }
+
     // Rate limit free users (not admins/superusers, not assignment mode)
     const isFree=!user?.isGuest&&user?.role!==ROLE.SUPERUSER&&(user?.subscription_tier||'free')==='free';
     if(isFree&&!assignmentCtx){
@@ -3099,7 +3129,7 @@ function GlobalAnnouncementStrip({user}){
 function AnnouncementsTab({courseId,user,onNew}){
   const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);const[doneFilter,setDoneFilter]=useState('all');
   const[form,setForm]=useState({title:'',body:'',priority:'info',pinned:false,global:false});
-  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
+  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');const[doneFilter,setDoneFilter]=useState('all');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
   const isSU2=user.role===ROLE.SUPERUSER;
   const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
@@ -3524,7 +3554,7 @@ const dueBadge = d => {
 function AssignmentsTab({courseId,user}){
   const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',description:'',due_date:'',marks:'',file_url:'',priority:'normal'});
-  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
+  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');const[doneFilter,setDoneFilter]=useState('all');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
   const isSU2=user.role===ROLE.SUPERUSER;
   const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
@@ -3589,7 +3619,7 @@ function AssignmentsTab({courseId,user}){
         ))}
       </div>}
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
-        {(()=>{const visibleItems=items.filter(a=>doneFilter==='all'?true:doneFilter==='done'?a.done:!a.done);return visibleItems.length===0?<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>{doneFilter==='done'?'No completed assignments.':doneFilter==='pending'?'No pending assignments!':'No assignments posted yet.'}</div>:visibleItems.map((a,i)=>(
+        {(()=>{const visibleItems=items.filter(a=>doneFilter==='all'?true:doneFilter==='done'?a.done:!a.done);return visibleItems.length===0?<div style={{color:'var(--muted)',textAlign:'center',padding:30,border:'1px dashed var(--border)',borderRadius:10,fontSize:13}}>{doneFilter==='done'?'No completed assignments.':doneFilter==='pending'?'No pending assignments!':doneFilter==='done'?'No completed assignments yet.':doneFilter==='pending'?'No pending assignments — all done! 🎉':'No assignments posted yet.'}</div>:visibleItems.map((a,i)=>(
           <div key={a.id} className={`stagger-${Math.min(i%4+1,4)}`} style={{background:'var(--card)',border:`1px solid ${overdue(a.due_date)?'rgba(240,80,80,.3)':a.priority==='urgent'?'rgba(240,80,80,.2)':a.priority==='high'?'rgba(249,168,79,.2)':'var(--border)'}`,borderRadius:10,padding:'14px 17px'}}>
             <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
               <div style={{flex:1}}>
@@ -3632,7 +3662,7 @@ const CA_COLORS={CA:'#da7ff0',Test:'#f05050',Quiz:'#4f9cf9',Lab:'#7fda96',Other:
 function CATab({courseId,user}){
   const[items,setItems]=useState([]);const[showForm,setShowForm]=useState(false);
   const[form,setForm]=useState({title:'',type:'CA',description:'',date:'',marks:'',file_url:''});
-  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');
+  const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');const[doneFilter,setDoneFilter]=useState('all');
   const isPriv=user.role===ROLE.SUPERUSER||user.role===ROLE.ADMIN;
   const isSU2=user.role===ROLE.SUPERUSER;
   const flash=m=>{setMsg(m);setTimeout(()=>setMsg(''),3000);};
@@ -8401,7 +8431,7 @@ export default function App(){
       else{buf='';}
 
       // KONAMI CODE → confetti
-      if(e.keyCode===KONAMI[kIdx]){kIdx++;if(kIdx===KONAMI.length){kIdx=0;window.dispatchEvent(new CustomEvent('sh-easter',{detail:'konami'}));}}
+      if(e.keyCode===KONAMI[kIdx]){kIdx++;if(kIdx===KONAMI.length){kIdx=0;burstConfetti();window.dispatchEvent(new CustomEvent('sh-easter',{detail:'konami'}));}}
       else{kIdx=0;}
 
       const b=buf.toLowerCase();
@@ -8413,16 +8443,18 @@ export default function App(){
       if(b.endsWith('42'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'calc'}));
       // freeze → streak freeze
       if(b.endsWith('freeze'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'freeze'}));
-      if(b.endsWith('igiveup'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'igiveup'}));
-      if(b.endsWith('floorisla'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'lava'}));
+      if(b.endsWith('i give up'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'igiveup'}));
+      if(b.endsWith('floor is lava'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'lava'}));
       // credits → dev credits
       if(b.endsWith('credits'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'credits'}));
       // shortcuts
       if(b.endsWith('shortcuts'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'shortcuts'}));
+      if(b.endsWith('socrates'))try{localStorage.setItem('sh-bot-open','1');}catch{}
+      if(b.endsWith('lecturer'))try{localStorage.setItem('sh-bot-open','1');}catch{}
       // elementary → sherlock
-      if(b.endsWith('elementary'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'sherlock'}));
+      if(b.endsWith('elementary')){window.dispatchEvent(new CustomEvent('sh-easter',{detail:'elementary'}));try{localStorage.setItem('sh-bot-open','1');}catch{}}
       // jamb wahala
-      if(b.endsWith('jambwahala'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'jamb'}));
+      if(b.endsWith('jamb wahala'))window.dispatchEvent(new CustomEvent('sh-easter',{detail:'jamb'}));
       // stealth mode: Shift+S x3
       if(e.key==='S'&&e.shiftKey){
         window.__stealthCount=(window.__stealthCount||0)+1;
@@ -8453,8 +8485,10 @@ export default function App(){
   useEffect(()=>{
     const h=e=>{
       const{detail}=e;
+      // konami already handled by burstConfetti() call — no overlay needed
+      if(detail==='konami') return;
       setEasterEgg(detail);
-      if(detail!=='stealth')setTimeout(()=>setEasterEgg(null),detail==='breathe'?62000:detail==='calc'?300000:8000);
+      if(detail!=='stealth')setTimeout(()=>setEasterEgg(null),detail==='breathe'?62000:detail==='calc'?300000:detail==='shortcuts'?60000:detail==='freeze'?4000:8000);
     };
     window.addEventListener('sh-easter',h);
     return()=>window.removeEventListener('sh-easter',h);
@@ -8804,7 +8838,7 @@ export default function App(){
       {/* ══ EASTER EGG OVERLAYS ══ */}
       {easterEgg==='breathe'&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',zIndex:9999,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer'}} onClick={()=>setEasterEgg(null)}><div style={{width:130,height:130,borderRadius:'50%',border:'3px solid #4f9cf9',animation:'breathe 4s ease-in-out infinite',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:24}}><span style={{fontSize:44}}>🫁</span></div><div style={{color:'#fff',fontSize:22,fontFamily:"'DM Serif Display',serif",marginBottom:8}}>Breathe.</div><div style={{color:'rgba(255,255,255,.6)',fontSize:13}}>Inhale 4s · Hold 4s · Exhale 4s</div><div style={{color:'rgba(255,255,255,.35)',fontSize:11,marginTop:20}}>Tap to close · You got this.</div></div>}
       {easterEgg==='matrix'&&<div style={{position:'fixed',inset:0,background:'#000',zIndex:9999,fontFamily:"'IBM Plex Mono',monospace",color:'#00ff41',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column'}} onClick={()=>setEasterEgg(null)}><div style={{fontSize:36,marginBottom:12}}>🟩</div><div style={{fontSize:14}}>The truth is...</div><div style={{fontSize:20,marginTop:8,fontWeight:700}}>It is just spaced repetition.</div><div style={{fontSize:10,marginTop:12,opacity:.5}}>Tap to exit the Matrix</div></div>}
-      {easterEgg==='calc'&&<div style={{position:'fixed',bottom:80,right:10,background:'var(--card)',border:'1px solid var(--border)',borderRadius:16,padding:20,zIndex:9999,boxShadow:'var(--shadow)',width:260}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:'var(--muted)'}}>Hidden Calculator 🔢</span><button onClick={()=>setEasterEgg(null)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:14}}>✕</button></div><input id="calc-display" readOnly style={{width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 12px',color:'var(--text)',fontSize:16,fontFamily:"'IBM Plex Mono',monospace",textAlign:'right',marginBottom:8,boxSizing:'border-box'}} defaultValue="0"/><div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:5}}>{['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+','C'].map(k=>(<button key={k} onClick={()=>{const d=document.getElementById('calc-display');if(!d)return;if(k==='C'){d.value='0';return;}if(k==='='){try{d.value=String(Function('"use strict";return ('+d.value+')')());}catch{d.value='Error';}return;}d.value=d.value==='0'?k:d.value+k;}} style={{padding:'10px 4px',borderRadius:7,border:'1px solid var(--border)',background:'var(--surface)',color:'var(--text)',cursor:'pointer',fontSize:13,fontWeight:600}}>{k}</button>))}</div></div>}
+      {easterEgg==='calc'&&<EasterCalc onClose={()=>setEasterEgg(null)}/>}
       {easterEgg==='jamb'&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} onClick={()=>setEasterEgg(null)}><div style={{background:'var(--card)',borderRadius:16,padding:28,maxWidth:340,textAlign:'center',animation:'popIn .4s ease'}}><div style={{fontSize:36,marginBottom:12}}>😩</div><div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:8}}>JAMB Wahala Mode</div><div style={{fontSize:13,color:'var(--muted)',marginBottom:16}}>I no go gree! God abeg! The exam must not catch me lacking.</div><button onClick={()=>setEasterEgg(null)} style={{background:'#4f9cf9',border:'none',borderRadius:8,color:'#fff',cursor:'pointer',padding:'10px 24px',fontSize:13,fontWeight:700}}>I go read sha</button></div></div>}
       {easterEgg==='credits'&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.92)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} onClick={()=>setEasterEgg(null)}><div style={{textAlign:'center',animation:'fadeUp .8s ease',color:'#fff',padding:24}}><div style={{fontFamily:"'DM Serif Display',serif",fontSize:26,marginBottom:20,color:'#4f9cf9'}}>StudyHub Credits</div>{[['Chief Architect','Yination'],['Co-Engineer','Excalibur'],['AI Partner','Claude · Anthropic'],['Fuel','Caffeine and Deadline Pressure'],["Inspiration","NACOS '027"]].map(([r,n])=>(<div key={n} style={{marginBottom:12}}><div style={{fontSize:10,color:'rgba(255,255,255,.4)',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:1}}>{r}</div><div style={{fontSize:17,fontWeight:700}}>{n}</div></div>))}<div style={{marginTop:18,fontSize:10,color:'rgba(255,255,255,.25)'}}>Tap to close</div></div></div>}
       {easterEgg==='tgif'&&<div style={{position:'fixed',bottom:80,left:'50%',transform:'translateX(-50%)',background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:'14px 28px',zIndex:9999,textAlign:'center',animation:'popIn .4s ease',boxShadow:'var(--shadow)'}}><div style={{fontSize:20,marginBottom:4}}>🎉 TGIF!</div><div style={{fontSize:12,color:'var(--muted)'}}>You survived another week. Now study for Monday.</div></div>}
@@ -8831,6 +8865,59 @@ export default function App(){
       {/* Floor is lava */}
       {easterEgg==='lava'&&(
         <div style={{position:'fixed',bottom:0,left:0,right:0,height:4,background:'linear-gradient(90deg,#f05050,#f9a84f,#f05050)',zIndex:9999,animation:'pulse .5s ease-in-out infinite'}}/>
+      )}
+            {/* Elementary / Sherlock */}
+      {easterEgg==='elementary'&&(
+        <div onClick={()=>setEasterEgg(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.92)',zIndex:9999,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer',padding:24}}>
+          <div style={{fontSize:52,marginBottom:16}}>🕵️</div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:'#e8e0c8',marginBottom:8}}>Elementary, my dear student.</div>
+          <div style={{fontSize:13,color:'rgba(255,255,255,.6)',maxWidth:320,textAlign:'center',lineHeight:1.7,marginBottom:16}}>The game is afoot. StudyBot is now in Sherlock mode — every question gets a deductive answer.</div>
+          <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'rgba(255,255,255,.3)'}}>Tap to dismiss · Open StudyBot to begin</div>
+        </div>
+      )}
+      {/* Shortcuts cheatsheet */}
+      {easterEgg==='shortcuts'&&(
+        <div onClick={()=>setEasterEgg(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.85)',backdropFilter:'blur(8px)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',padding:20}}>
+          <div className="scale-in" style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:18,padding:'28px 32px',maxWidth:400,width:'100%',boxShadow:'var(--shadow)'}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:'var(--text)',marginBottom:18,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              ⌨️ Keyboard Shortcuts
+              <button onClick={()=>setEasterEgg(null)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:18,lineHeight:1}}>✕</button>
+            </div>
+            {[
+              ['/','Focus course search bar'],
+              ['Escape','Go back / close overlay'],
+              ['Enter','Submit sign-in form'],
+              ['↑↑↓↓←→←→BA','Confetti (Konami code)'],
+              ['Shift+S ×3','Stealth mode (Google Docs skin)'],
+              ['Type "breathe"','Breathing exercise overlay'],
+              ['Type "redpill"','Matrix rain'],
+              ['Type "42"','Hidden calculator'],
+              ['Type "credits"','Dev credits roll'],
+              ['Type "freeze"','Streak freeze'],
+              ['Type "jamb wahala"','JAMB Wahala Mode 😩'],
+              ['Type "i give up"','Motivational candle 🕯️'],
+              ['Type "floor is lava"','Lava bar 🌋'],
+              ['Type "elementary" in chat','Sherlock mode 🕵️'],
+              ['Type "socrates" in chat','Socratic mode'],
+              ['Type "lecturer" in chat','Nigerian lecturer mode'],
+            ].map(([k,v])=>(
+              <div key={k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px solid var(--border)'}}>
+                <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:'#4f9cf9',background:'rgba(79,156,249,.1)',borderRadius:4,padding:'2px 8px',flexShrink:0}}>{k}</span>
+                <span style={{fontSize:12,color:'var(--muted)',textAlign:'right',marginLeft:12}}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Freeze toast */}
+      {easterEgg==='freeze'&&(
+        <div style={{position:'fixed',bottom:72,left:'50%',transform:'translateX(-50%)',background:'rgba(79,156,249,.97)',backdropFilter:'blur(8px)',border:'1px solid rgba(79,156,249,.5)',borderRadius:14,padding:'14px 24px',zIndex:9999,display:'flex',alignItems:'center',gap:12,boxShadow:'0 4px 24px rgba(79,156,249,.3)',maxWidth:340,width:'calc(100% - 32px)',animation:'slideUp .3s ease both'}}>
+          <span style={{fontSize:24}}>🧊</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:'#fff',marginBottom:2}}>Streak Freeze activated!</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,.7)'}}>Your streak is protected for today. Stay consistent!</div>
+          </div>
+        </div>
       )}
       {showGlobalSearch&&<GlobalSearch courses={courses} progress={progress} onSelect={(id,sec)=>{const c=courses.find(x=>x.id===id);if(c){setActive({data:null,entry:c});setView('course');if(sec)setTimeout(()=>window.dispatchEvent(new CustomEvent('sh-open-section',{detail:sec})),300);}}} onClose={()=>setShowGlobalSearch(false)}/>}
 
