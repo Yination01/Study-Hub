@@ -151,7 +151,6 @@ const css = `  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Di
   }
 
   @keyframes slideUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-  @keyframes slideDown {from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
   @keyframes slideRight {from{opacity:0;transform:translateX(-100%)}to{opacity:1;transform:translateX(0)}}
   @keyframes confettiFall{0%{transform:translateY(-10px) rotate(0deg);opacity:1}100%{transform:translateY(140px) rotate(720deg);opacity:0}}
   .confetti-piece{position:fixed;width:9px;height:9px;border-radius:2px;animation:confettiFall 1s ease-out forwards;pointer-events:none;z-index:9999}
@@ -572,7 +571,7 @@ async function dbRedeemPromo(code){
 // NOTE: No superuser credentials stored here.
 // Auth is validated server-side via /api/auth.
 // Add SU_USERNAME and SU_PASSWORD to Vercel environment variables.
-const APP_VERSION    = '5.0.0';
+const APP_VERSION    = '5.1.0';
 
 /* ═══════════════ XP / GAMIFICATION ═══════════════ */
 const XP_ACTIONS={quiz_complete:20,quiz_perfect:50,flashcard_session:10,qa_reveal:2,course_view:5,question_reveal:2};
@@ -710,16 +709,6 @@ function useBookmarks(username='guest'){
 
 function useOnline(){
   const [online,setOnline]=useState(navigator.onLine);
-  useEffect(()=>{
-    const on=()=>setOnline(true);const off=()=>setOnline(false);
-    window.addEventListener('online',on);window.addEventListener('offline',off);
-    return()=>{window.removeEventListener('online',on);window.removeEventListener('offline',off);};
-  },[]);
-  return online;
-}
-
-function useOnlineStatus(){
-  const[online,setOnline]=useState(()=>navigator.onLine);
   useEffect(()=>{
     const on=()=>setOnline(true);const off=()=>setOnline(false);
     window.addEventListener('online',on);window.addEventListener('offline',off);
@@ -1647,7 +1636,7 @@ Powered by Groq AI, Supabase, and an unreasonable amount of caffeine. Deployed o
           {context?.chapterTitle&&!minimised&&<div style={{background:'rgba(79,156,249,.1)',border:'1px solid rgba(79,156,249,.2)',borderRadius:4,padding:'2px 7px',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,color:'#4f9cf9',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{context.chapterTitle}</div>}
         </div>
         <div style={{display:'flex',gap:4,alignItems:'center'}}>
-          <button onClick={e=>{e.stopPropagation();setMessages([]);setAssignmentCtx(null);try{localStorage.removeItem(chatKey);}catch{}}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 6px'}} title="Clear conversation">CLR</button>
+          <button onClick={e=>{e.stopPropagation();setMessages([{role:'assistant',content:getWelcome()}]);setAssignmentCtx(null);try{localStorage.removeItem(chatKey);}catch{}}} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 6px'}} title="Clear conversation">CLR</button>
           <button onClick={e=>{e.stopPropagation();setFullscreen(f=>!f);setMinimised(false);}}
             title={fullscreen?'Exit fullscreen':'Fullscreen'}
             style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:14,padding:'0 3px',lineHeight:1}}>
@@ -1687,7 +1676,16 @@ Powered by Groq AI, Supabase, and an unreasonable amount of caffeine. Deployed o
             {messages.map((m,i)=>(
               <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start',marginBottom:9}}>
                 {m.role==='assistant'&&<div style={{width:22,height:22,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,flexShrink:0,marginRight:6,marginTop:2}}>🤖</div>}
-                <div style={{maxWidth:fullscreen?'70%':'80%',background:m.role==='user'?'linear-gradient(135deg,#4f9cf9,#7f5ff9)':'var(--surface)',color:m.role==='user'?'#fff':'var(--text)',borderRadius:m.role==='user'?'13px 13px 3px 13px':'13px 13px 13px 3px',padding:fullscreen?'12px 16px':'8px 12px',fontSize:fullscreen?14:12.5,lineHeight:1.7,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{m.content}</div>
+                <div style={{position:'relative',maxWidth:fullscreen?'70%':'80%',group:'msg'}} className="chat-msg-wrap">
+                  <div style={{background:m.role==='user'?'linear-gradient(135deg,#4f9cf9,#7f5ff9)':'var(--surface)',color:m.role==='user'?'#fff':'var(--text)',borderRadius:m.role==='user'?'13px 13px 3px 13px':'13px 13px 13px 3px',padding:fullscreen?'12px 16px':'8px 12px',fontSize:fullscreen?14:12.5,lineHeight:1.7,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{m.content}</div>
+                  {m.role==='assistant'&&(
+                    <button onClick={()=>{navigator.clipboard?.writeText(m.content).catch(()=>{});}} title="Copy response"
+                      style={{position:'absolute',bottom:-18,right:0,background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:10,opacity:.4,padding:'1px 4px',fontFamily:"'IBM Plex Mono',monospace"}}
+                      onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.4'}>
+                      📋 copy
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
             {loading&&<div style={{display:'flex',alignItems:'center',gap:7,marginBottom:9}}><div style={{width:22,height:22,borderRadius:'50%',background:'linear-gradient(135deg,#4f9cf9,#7f5ff9)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11}}>🤖</div><div style={{background:'var(--surface)',borderRadius:'13px 13px 13px 3px',padding:'9px 14px',display:'flex',gap:5,alignItems:'center'}}>{[0,1,2].map(i=><div key={i} style={{width:5,height:5,borderRadius:'50%',background:'#4f9cf9',animation:`blink 1.2s ease ${i*.2}s infinite`}}/>)}</div></div>}
@@ -1792,7 +1790,7 @@ function ProfileModal({user,onClose,onUpdate}){
         </div>
         {/* Tab picker */}
         <div style={{display:'flex',background:'var(--input-bg)',borderRadius:10,padding:3,marginBottom:20,gap:4}}>
-          {[{id:'name',label:'Display Name'},{id:'password',label:'Change Password'}].map(t=>(
+          {[{id:'name',label:'Display Name'},{id:'password',label:'Change Password'},{id:'year',label:'Change Year'}].map(t=>(
             <button key={t.id} onClick={()=>{setTab(t.id);setMsg('');setError('');}}
               style={{flex:1,padding:'8px 0',borderRadius:8,border:'none',background:tab===t.id?'var(--card)':'transparent',color:tab===t.id?'var(--text)':'var(--muted)',cursor:'pointer',fontSize:12,fontWeight:tab===t.id?600:400,transition:'all .15s'}}>
               {t.label}
@@ -1812,6 +1810,25 @@ function ProfileModal({user,onClose,onUpdate}){
               style={{width:'100%',background:'#4f9cf9',border:'none',borderRadius:9,color:'#fff',cursor:saving?'not-allowed':'pointer',padding:'11px 0',fontSize:13,fontWeight:700}}>
               {saving?'Saving…':'Save Name'}
             </button>
+          </div>
+        )}
+        {tab==='year'&&user.role===ROLE.USER&&(
+          <div>
+            <div style={{fontSize:12,color:'var(--muted)',marginBottom:12,lineHeight:1.5}}>Change which year your dashboard shows. This affects which courses appear by default.</div>
+            <div style={{display:'flex',gap:8,marginBottom:16}}>
+              {[1,2,3,4].map(y=>(
+                <button key={y} onClick={async()=>{
+                  await supabase.from('users').update({year:y}).eq('username',user.username);
+                  onUpdate({...user,year:y});
+                  flash('✓ Year updated to Year '+y);
+                }} style={{flex:1,padding:'12px 0',borderRadius:8,cursor:'pointer',
+                  border:`1px solid ${user.year===y?YEAR_COLORS[y]+'70':'var(--border)'}`,
+                  background:user.year===y?YEAR_BG[y]:'var(--input-bg)',
+                  color:user.year===y?YEAR_COLORS[y]:'var(--muted)',
+                  fontWeight:user.year===y?700:400,fontSize:14}}>Year {y}</button>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:'var(--muted)'}}>Currently set to <strong style={{color:YEAR_COLORS[user.year]||'#4f9cf9'}}>Year {user.year}</strong>. Changes take effect immediately.</div>
           </div>
         )}
         {tab==='password'&&(
@@ -1837,7 +1854,7 @@ function ProfileModal({user,onClose,onUpdate}){
 /* ═══════════════ AUTH SCREEN ═══════════════ */
 function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
   const[tab,setTab]=useState('signin');
-  const[f,setF]=useState({username:'',password:'',confirm:'',year:3,accountType:'student'});
+  const[f,setF]=useState({username:'',password:'',confirm:'',displayName:'',year:3,accountType:'student'});
   const[showPw,setShowPw]=useState(false);
   const[errs,setErrs]=useState({});const[loading,setLoading]=useState(false);
   const set=(k,v)=>{setF(p=>({...p,[k]:v}));setErrs(p=>({...p,[k]:''}));};
@@ -1881,9 +1898,9 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
       const users=await dbLoadUsers();
       if(users.find(u=>u.username.toLowerCase()===f.username.toLowerCase())){setErrs({username:'Username already taken.'});setLoading(false);return;}
       const isExternal = f.accountType==='external';
-      const nu={username:f.username,pw_hash:hashStr(f.password),display_name:f.username,year:isExternal?0:f.year,account_type:isExternal?'external':'student',created_at:new Date().toISOString()};
+      const nu={username:f.username,pw_hash:hashStr(f.password),display_name:(f.displayName||'').trim()||f.username,year:isExternal?0:f.year,account_type:isExternal?'external':'student',created_at:new Date().toISOString()};
       await dbSaveUser(nu);
-      onLogin({username:nu.username,displayName:nu.display_name,year:nu.year,role:isExternal?ROLE.EXTERNAL:ROLE.USER,isNew:true});
+      onLogin({username:nu.username,displayName:nu.display_name,year:nu.year,role:isExternal?ROLE.EXTERNAL:ROLE.USER,isNew:true,accountType:isExternal?'external':'student'});
     }catch{setErrs({password:'Connection error. Try again.'});setLoading(false);}
   };
 
@@ -1932,6 +1949,7 @@ function AuthScreen({onLogin,onGuest,dark,toggleTheme}){
                 )}
               </div>
 
+              <Field label="DISPLAY NAME (optional)" value={f.displayName||''} onChange={e=>set('displayName',e.target.value)} placeholder="e.g. Chimdi — how others see you"/>
               <Field label="USERNAME" value={f.username} onChange={e=>set('username',e.target.value)} placeholder="min 3 chars, no spaces" error={errs.username}/>
               <Field label="PASSWORD" type="password" value={f.password} onChange={e=>set('password',e.target.value)} placeholder="min 6 characters" error={errs.password}/>
               {f.password.length>0&&f.password.length<20&&(
@@ -3840,7 +3858,17 @@ function CommunityBoard({courseId,user,subCfg={}}){
                 {p.description&&<p style={{fontSize:12,color:'var(--muted)',marginTop:3,lineHeight:1.5}}>{p.description}</p>}
                 <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',marginTop:4,letterSpacing:1}}>@{p.submitted_by} · {(()=>{const d=new Date(p.submitted_at);const now=new Date();const diff=Math.floor((now-d)/1000);if(diff<60)return'just now';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';if(diff<604800)return Math.floor(diff/86400)+'d ago';return d.toLocaleDateString();})()}</div>
               </div>
-              {(isPriv||p.submitted_by===user.username)&&<button onClick={()=>del(p.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:12,flexShrink:0}}>✕</button>}
+              <div style={{display:'flex',gap:6,flexShrink:0}}>
+                {!isPriv&&p.submitted_by!==user.username&&!user.isGuest&&(
+                  <button onClick={async()=>{
+                    const ok=await(window.shConfirm?.({title:'Report this post?',message:'It will be flagged for admin review.',confirmLabel:'Report'})??Promise.resolve(true));
+                    if(!ok)return;
+                    await dbSubmitPending('delete_resource',user.username,{id:p.id,_table:'community_posts',_reason:'User report'},`🚩 Community post reported by @${user.username}: "${p.title}"`);
+                    pushNotification('🚩 Post reported','An admin will review it shortly.');
+                  }} title="Report post" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:12,opacity:.5}} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.5'}>🚩</button>
+                )}
+                {(isPriv||p.submitted_by===user.username)&&<button onClick={()=>del(p.id)} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:12}}>✕</button>}
+              </div>
             </div>
           );
         })}
@@ -4014,14 +4042,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const[quizStarted,setQuizStarted]=useState(false);const[quizIdx,setQuizIdx]=useState(0);const[quizChoice,setQuizChoice]=useState(null);const[quizScore,setQuizScore]=useState(0);const[quizLog,setQuizLog]=useState([]);const[quizDone,setQuizDone]=useState(false);const[quizOpts,setQuizOpts]=useState([]);
   const[quizReviewMode,setQuizReviewMode]=useState(false);
   const[quizReviewIdx,setQuizReviewIdx]=useState(0);
-  const[activeRecall,setActiveRecall]=useState(false);
-  const[activeRecallInput,setActiveRecallInput]=useState('');
-  const[activeRecallGraded,setActiveRecallGraded]=useState(null);
-  const[mockExamMode,setMockExamMode]=useState(false);
-  const[mockExamTime,setMockExamTime]=useState(60*60);
-  const[mockExamRunning,setMockExamRunning]=useState(false);
-  const[mockExamVisited,setMockExamVisited]=useState(new Set());
-  const[personalBests,setPersonalBests]=useState(()=>{try{return JSON.parse(localStorage.getItem(`sh-pb-${user?.username}-${course?.id}`)||'{}');}catch{return {};}});
+                const[personalBests,setPersonalBests]=useState(()=>{try{return JSON.parse(localStorage.getItem(`sh-pb-${user?.username}-${course?.id}`)||'{}');}catch{return {};}});
   const[quizMode,setQuizMode]=useState('mc'); // 'mc' = multiple choice | 'fill' = fill the gap
   const[qSearch,setQSearch]=useState('');
   const[fillInput,setFillInput]=useState('');const[fillRevealed,setFillRevealed]=useState(false);
@@ -4046,7 +4067,16 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   },[]);
 
   const revealQ=idx=>{setOpenQ(openQ===idx?null:idx);if(!(cp.openedQs||[]).includes(idx)){
-      awardXP('qa_reveal');const n={...progress,[course.id]:{...cp,openedQs:[...(cp.openedQs||[]),idx],lastViewedAt:new Date().toISOString()}};onProgressUpdate(n);}};
+      awardXP('qa_reveal');
+      const newOpenedQs=[...(cp.openedQs||[]),idx];
+      const n={...progress,[course.id]:{...cp,openedQs:newOpenedQs,lastViewedAt:new Date().toISOString()}};
+      onProgressUpdate(n);
+      // 100% completion celebration
+      if(totalQ>0&&newOpenedQs.length===totalQ){
+        setTimeout(()=>{burstConfetti();pushNotification('🏆 Chapter Complete!',`You revealed all ${totalQ} answers in "${d.chapterTitle}". Outstanding!`);},300);
+        awardXP('quiz_perfect');
+      }
+    }};
 
   const totalQ=(d.questions||[]).length;const pct=totalQ===0?0:Math.round((cp.openedQs||[]).length/totalQ*100);
   const hasAlgo=d.algorithms?.length>0;
@@ -4073,6 +4103,26 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
   const fcCard=fcCards[fcIdx]||null;
   const fcTotal=fcCards.length;
   const fcKnownCount=fcKnown.size;
+
+  // Flashcard keyboard navigation
+  useEffect(()=>{
+    if(practiceSection!=='flashcards'||!fcTotal) return;
+    const h=e=>{
+      if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) return;
+      if(e.key===' '||e.key==='Enter'){e.preventDefault();setFcFlipped(f=>!f);}
+      if(e.key==='ArrowRight'||e.key==='ArrowDown'){if(fcIdx<fcTotal-1){setFcIdx(i=>i+1);setFcFlipped(false);}}
+      if(e.key==='ArrowLeft'||e.key==='ArrowUp'){if(fcIdx>0){setFcIdx(i=>i-1);setFcFlipped(false);}}
+      // 1=Again 2=Hard 3=Good 4=Easy (only after flip)
+      if(fcFlipped&&sm2?.rate){
+        if(e.key==='1'){sm2.rate(fcIdx,0);if(fcIdx<fcTotal-1){setFcIdx(i=>i+1);setFcFlipped(false);}}
+        if(e.key==='2'){sm2.rate(fcIdx,3);if(fcIdx<fcTotal-1){setFcIdx(i=>i+1);setFcFlipped(false);}}
+        if(e.key==='3'){sm2.rate(fcIdx,4);if(fcIdx<fcTotal-1){setFcIdx(i=>i+1);setFcFlipped(false);}}
+        if(e.key==='4'){sm2.rate(fcIdx,5);if(fcIdx<fcTotal-1){setFcIdx(i=>i+1);setFcFlipped(false);}}
+      }
+    };
+    window.addEventListener('keydown',h);
+    return()=>window.removeEventListener('keydown',h);
+  },[practiceSection,fcIdx,fcTotal,fcFlipped,sm2]);
 
   // Quiz option generator
   const buildQuizOpts=useCallback((idx)=>{
@@ -4293,7 +4343,7 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                 onClick={()=>{
                   if(d._src&&!regenLoading){
                     // Has stored source — offer choice
-                    const choice=window.confirm('Source text is stored.\n\nOK = Regen from stored source (no upload needed)\nCancel = Upload new JSON/PDF');
+                    const choice=await(window.shConfirm?.({title:'Regenerate Notes',message:'Use stored source text — no upload needed — or upload a new file?',confirmLabel:'Use stored source',cancelLabel:'Upload new file'})??Promise.resolve(true));
                     if(choice){
                       // Use stored source
                       setRegenLoading(true);setRegenMsg('⏳ Regenerating from stored source…');
@@ -4555,10 +4605,17 @@ function CourseView({course,user,progress,onBack,onProgressUpdate,bookmarks,togg
                   </div>
                   {!filtDefs.length&&<div style={{color:'var(--muted)',textAlign:'center',padding:40}}>{dSearch?'No matching definitions.':'No definitions yet.'}</div>}
                   {filtDefs.length>0&&(
-                    <div style={{marginTop:10,textAlign:'right'}}>
+                    <div style={{marginTop:10,textAlign:'right',display:'flex',gap:14,justifyContent:'flex-end'}}>
                       <button onClick={()=>{const txt=filtDefs.map(d=>`${d.term}: ${d.definition}`).join('\n');navigator.clipboard?.writeText(txt).then(()=>{const b=document.activeElement;if(b){b.textContent='✓ Copied!';setTimeout(()=>{b.textContent=`📋 Copy all ${filtDefs.length} definitions`;},2000);}}).catch(()=>{});}}
                         style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,textDecoration:'underline',padding:0}}>
                         📋 Copy all {filtDefs.length} definitions
+                      </button>
+                      <button onClick={()=>{
+                        const csv='Term,Definition\n'+filtDefs.map(def=>`"${(def.term||'').replace(/"/g,'""')}","${(def.definition||'').replace(/"/g,'""')}"`).join('\n');
+                        const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+                        a.download=`${d.courseName||'definitions'}-terms.csv`;a.click();
+                      }} style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,textDecoration:'underline',padding:0}}>
+                        ⬇ Export CSV
                       </button>
                     </div>
                   )}
@@ -4831,7 +4888,15 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
 
             {/* Card */}
             <div onClick={()=>setFcFlipped(f=>!f)}
-              style={{cursor:'pointer',minHeight:200,background:'var(--card)',border:`2px solid ${fcCard?.color||'#4f9cf9'}40`,borderRadius:16,padding:'32px 28px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center',position:'relative',userSelect:'none',boxShadow:`0 4px 24px ${fcCard?.color||'#4f9cf9'}18`,transition:'all .2s'}}>
+              onTouchStart={e=>{e.currentTarget._tx=e.touches[0].clientX;}}
+              onTouchEnd={e=>{
+                const dx=e.changedTouches[0].clientX-(e.currentTarget._tx||0);
+                if(Math.abs(dx)>50){
+                  if(dx<0&&fcIdx<fcTotal-1){setFcIdx(i=>i+1);setFcFlipped(false);}
+                  if(dx>0&&fcIdx>0){setFcIdx(i=>i-1);setFcFlipped(false);}
+                }
+              }}
+              style={{cursor:'pointer',minHeight:200,background:'var(--card)',border:`2px solid ${fcCard?.color||'#4f9cf9'}40`,borderRadius:16,padding:'32px 28px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center',position:'relative',userSelect:'none',boxShadow:`0 4px 24px ${fcCard?.color||'#4f9cf9'}18`,transition:'all .2s',touchAction:'pan-y'}}>
               <div style={{position:'absolute',top:12,right:14,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)'}}>
                 {fcFlipped?'← BACK — tap to flip':'FRONT — tap to flip →'}
               </div>
@@ -4889,11 +4954,14 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
               </button>
             </div>
             {/* Reset */}
-            <div style={{textAlign:'center',marginTop:10}}>
+            <div style={{textAlign:'center',marginTop:10,display:'flex',gap:12,justifyContent:'center',alignItems:'center'}}>
               <button onClick={()=>{setFcIdx(0);setFcFlipped(false);setFcKnown(new Set());}}
                 style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:11,textDecoration:'underline'}}>
                 Reset deck
               </button>
+              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--muted)',opacity:.5}}>
+                Space=flip · ←→=navigate · 1-4=rate
+              </span>
             </div>
           </>
         )}
@@ -5068,7 +5136,7 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
         {quizDone&&(()=>{
           const total=d.questions?.length||0;
           const pctScore=Math.round(quizScore/total*100);
-          const grade=pctScore>=80?'🏆 Excellent!':pctScore>=60?'👍 Good job!':pctScore>=40?'📚 Keep studying':'💪 Keep at it!';
+          const grade=pctScore>=70?'🏆 Excellent!':pctScore>=50?'👍 Good job!':pctScore>=40?'📚 Keep studying':'💪 Keep at it!';
           const missed=quizLog.filter(l=>!l.ok);
           return(
             <div>
@@ -5189,7 +5257,7 @@ A: ${q.answer}`)} style={{background:'none',border:'none',color:'var(--muted)',c
                   </div>
                   {!quizLog[quizReviewIdx].correct&&(
                     <div style={{padding:'10px 14px',borderRadius:8,background:'rgba(127,218,150,.08)',border:'1px solid rgba(127,218,150,.2)',fontSize:13,color:'#7fda96'}}>
-                      ✅ Correct: {quizLog[quizReviewIdx].ok}
+                      ✅ Correct: {quizLog[quizReviewIdx].correct}
                     </div>
                   )}
                 </div>
@@ -5414,7 +5482,7 @@ function ApprovalsTab({onCourseChange,courses,reviewerUsername}){
       {/* Sub-tabs + bulk actions */}
       <div style={{display:'flex',alignItems:'center',gap:4,borderBottom:'1px solid var(--border)',marginBottom:18,flexWrap:'wrap'}}>
         {[{id:'pending',label:`Pending${pending.length>0?` (${pending.length})`:''}`,color:pending.length>0?'#f9a84f':undefined},{id:'history',label:'History'}].map(t=>(
-          <button key={t.id} onClick={()=>{setTab(t.id);setCSearch('');setDSearch('');}} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:'none',border:'none',borderBottom:tab===t.id?`2px solid ${t.color||'#f9a84f'}`:'2px solid transparent',color:tab===t.id?(t.color||'#f9a84f'):'var(--muted)',cursor:'pointer',padding:'8px 16px',fontSize:13,fontWeight:tab===t.id?600:400}}>{t.label}</button>
         ))}
         {tab==='history'&&(
           <div style={{marginLeft:'auto',display:'flex',gap:6,paddingBottom:4,alignItems:'center',flexWrap:'wrap'}}>
@@ -5901,7 +5969,8 @@ function PromoCodesTab({superuserName}){
   };
 
   const remove=async(code)=>{
-    if(!window.confirm(`Delete promo "${code}"?`))return;
+    const okPromo=await(window.shConfirm?.({title:`Delete promo "${code}"?`,message:'This promo code will be permanently removed.',danger:true,confirmLabel:'Delete'})??Promise.resolve(true));
+    if(!okPromo)return;
     await dbDeletePromo(code);await load();flash('Deleted.');
   };
 
@@ -6578,7 +6647,7 @@ function AdminPanel({user,courses,onClose,onCoursesChange,onlineUsers=new Set()}
         confirmLabel:isSU2?'Delete':'Submit Request'
       });
     } else {
-      ok=window.confirm(isSU2?'Delete this course permanently?':'Submit deletion request for superuser approval?');
+      ok=await(window.shConfirm?.({title:isSU2?'Delete course permanently?':'Submit deletion request?',message:isSU2?'This course and all its data will be permanently removed.':'Your deletion request will be sent to the superuser for approval.',danger:isSU2,confirmLabel:isSU2?'Delete':'Submit Request'})??Promise.resolve(true));
     }
     if(!ok)return;
     try{
@@ -7146,7 +7215,7 @@ function StatusChangesTab({reviewerUsername}){
 }
 
 /* ═══════════════ COURSE CARD (memoised) ═══════════════ */
-const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect,lastViewed}){
+const CourseCard=memo(function CourseCard({course:c,index:i,pct,viewed,bookmarked,isPriv,onSelect,toggleBookmark}){
   const accent=YEAR_COLORS[c.year]||CARD_ACCENTS[i%CARD_ACCENTS.length];
   const isNew=c.addedAt&&(new Date()-new Date(c.addedAt))<7*24*60*60*1000;
   return(
@@ -8154,7 +8223,7 @@ function Home({user,courses,progress,onSelectCourse,onLogout,onShowAdmin,onProgr
           {visible.map((c,i)=>(
             <CourseCard key={c.id} course={c} index={i} pct={pct(c.id)}
               viewed={!!progress[c.id]?.viewed} bookmarked={bookmarks.includes(c.id)}
-              isPriv={isPriv} onSelect={onSelectCourse}/>
+              isPriv={isPriv} onSelect={onSelectCourse} toggleBookmark={toggleBookmark}/>
           ))}
         </div>
       </>)}
@@ -8807,7 +8876,7 @@ export default function App(){
       {view==='course'&&active&&user&&(
         <div style={{paddingTop:user?.isGuest?48:0}}>
           <CourseView course={active} user={user} progress={progress}
-            onBack={()=>{activeCourseCode?setView('coursetab'):setView('home');}}
+            onBack={(dir,id)=>{if((dir==='prev'||dir==='next')&&id){handleSelect(id);}else{activeCourseCode?setView('coursetab'):setView('home');}}}
             onProgressUpdate={handleProgress}
             bookmarks={bookmarks} toggleBookmark={toggleBookmark}
             courses={courses} subCfg={subCfg}/>
@@ -8919,7 +8988,7 @@ export default function App(){
           </div>
         </div>
       )}
-      {showGlobalSearch&&<GlobalSearch courses={courses} progress={progress} onSelect={(id,sec)=>{const c=courses.find(x=>x.id===id);if(c){setActive({data:null,entry:c});setView('course');if(sec)setTimeout(()=>window.dispatchEvent(new CustomEvent('sh-open-section',{detail:sec})),300);}}} onClose={()=>setShowGlobalSearch(false)}/>}
+      {showGlobalSearch&&<GlobalSearch courses={courses} progress={progress} onSelect={async(id,sec)=>{await handleSelect(id);if(sec)setTimeout(()=>window.dispatchEvent(new CustomEvent('sh-open-section',{detail:sec})),600);}} onClose={()=>setShowGlobalSearch(false)}/>}
 
       {showWelcome&&user&&<WelcomeModal user={user} onClose={()=>setShowWelcome(false)}/>}
 
